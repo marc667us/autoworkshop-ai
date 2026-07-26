@@ -49,9 +49,20 @@ afterAll(async () => {
   await pool?.end().catch(() => undefined);
 });
 
+interface QueryResultLike {
+  rows: Array<Record<string, unknown>>;
+}
+interface ClientLike {
+  query: (text: string, values?: unknown[]) => Promise<QueryResultLike>;
+  release: () => void;
+}
+
 /** Mirrors DatabaseService.withTenant without needing the Nest container. */
-async function withTenant<T>(c: TenantContext, work: (client: any) => Promise<T>): Promise<T> {
-  const client = await pool!.connect();
+async function withTenant<T>(
+  c: TenantContext,
+  work: (client: ClientLike) => Promise<T>,
+): Promise<T> {
+  const client = (await pool!.connect()) as unknown as ClientLike;
   try {
     await client.query('BEGIN');
     for (const stmt of tenantSessionStatements(c)) {
@@ -85,7 +96,7 @@ describe('DatabaseService.withTenant — RLS enforcement (integration)', () => {
       c.query('SELECT id, tenant_id FROM identity.organizations'),
     );
     expect(a.rows.length).toBeGreaterThan(0);
-    expect(a.rows.every((r: any) => r.tenant_id === TENANT_A)).toBe(true);
+    expect(a.rows.every((r) => r.tenant_id === TENANT_A)).toBe(true);
   });
 
   it('cannot read another tenant by direct id', async () => {
