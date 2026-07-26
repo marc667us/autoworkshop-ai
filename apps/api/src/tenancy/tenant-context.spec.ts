@@ -83,11 +83,24 @@ describe('resolveTenantContext', () => {
     );
     // Every statement must be transaction-local (the `true` third argument),
     // or a pooled connection would carry one tenant's context into the next.
-    expect(stmts.every((s) => s.startsWith('SELECT set_config('))).toBe(true);
-    expect(stmts.every((s) => s.endsWith(', true)'))).toBe(true);
-    expect(stmts.some((s) => s.includes('app.current_role'))).toBe(true);
+    expect(stmts.every((s) => s.text === 'SELECT set_config($1, $2, true)')).toBe(true);
+    expect(stmts.map((s) => s.values[0])).toContain('app.current_role');
+
+    // SECURITY: values are BOUND, never interpolated into the SQL text.
+    // A crafted role or tenant string must reach PostgreSQL as data.
+    const evil = tenantSessionStatements({
+      tenantId: "'; DROP TABLE identity.tenants; --",
+      organizationId: 'org-1',
+      branchId: null,
+      userId: 'user-1',
+      activeRole: 'mechanic',
+      correlationId: 'c',
+    });
+    expect(evil.every((s) => !s.text.includes('DROP TABLE'))).toBe(true);
+    expect(evil[0]?.values[1]).toBe("'; DROP TABLE identity.tenants; --");
+
     // `current_role` is reserved in PostgreSQL — the SET LOCAL form is a
     // syntax error, so it must never come back.
-    expect(stmts.some((s) => s.startsWith('SET LOCAL'))).toBe(false);
+    expect(stmts.some((s) => s.text.startsWith('SET LOCAL'))).toBe(false);
   });
 });

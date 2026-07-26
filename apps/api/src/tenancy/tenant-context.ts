@@ -82,6 +82,13 @@ export function resolveTenantContext(params: {
     );
   }
 
+  // Narrowed explicitly rather than with a non-null assertion: `!` would
+  // silence the compiler without proving anything, and this is the function
+  // that decides which tenant's data a request may touch.
+  if (!selected) {
+    throw new TenantResolutionError('no membership selected');
+  }
+
   return {
     tenantId: selected.tenantId,
     organizationId: selected.organizationId,
@@ -92,28 +99,44 @@ export function resolveTenantContext(params: {
   };
 }
 
+/** A parameterised statement: SQL text plus bound values. */
+export interface BoundStatement {
+  readonly text: string;
+  /** Mutable by design — `pg` accepts `any[]`, not a readonly array. */
+  readonly values: string[];
+}
+
 /**
- * The `SET LOCAL` statements that bind the resolved context to the database
- * transaction, so PostgreSQL RLS becomes the final backstop.
+ * The statements that bind the resolved context to the database transaction,
+ * so PostgreSQL RLS becomes the final backstop.
  *
- * `SET LOCAL` (not `SET`) is deliberate: the settings die with the transaction,
- * so a pooled connection can never leak one tenant's context into the next
- * request that borrows it.
+ * Two deliberate choices:
+ *
+ * 1. `set_config(..., true)` rather than `SET LOCAL app.current_role = '...'`.
+ *    `current_role` is a RESERVED KEYWORD in PostgreSQL and the SET LOCAL form
+ *    is a syntax error — verified against a live database, which rejected it
+ *    with: syntax error at or near "current_role".
+ *
+ * 2. Values are BOUND, never interpolated. Even though these values originate
+ *    from validated membership rows rather than user input, building SQL by
+ *    string concatenation is how injection defects are introduced later, when
+ *    someone adds a field whose provenance is less certain. Binding removes the
+ *    question entirely.
+ *
+ * The `true` third argument makes each setting transaction-local, so a pooled
+ * connection cannot carry one tenant's context into the next request.
  */
-export function tenantSessionStatements(ctx: TenantContext): string[] {
-  // `set_config(..., true)` is transaction-local — the exact equivalent of
-  // SET LOCAL, so the setting dies with the transaction and a pooled connection
-  // cannot leak one tenant's context into the next request that borrows it.
-  //
-  // set_config is used rather than `SET LOCAL app.current_role = '...'` because
-  // `current_role` is a RESERVED KEYWORD in PostgreSQL and the SET LOCAL form
-  // is a syntax error. Verified against a live database — the SET LOCAL version
-  // failed with: syntax error at or near "current_role".
+export function tenantSessionStatements(ctx: TenantContext): BoundStatement[] {
+  const set = (key: string, value: string): BoundStatement => ({
+    text: 'SELECT set_config($1, $2, true)',
+    values: [key, value],
+  });
+
   return [
-    `SELECT set_config('app.tenant_id', '${ctx.tenantId}', true)`,
-    `SELECT set_config('app.user_id', '${ctx.userId}', true)`,
-    `SELECT set_config('app.current_role', '${ctx.activeRole}', true)`,
-    `SELECT set_config('app.organization_ids', '${ctx.organizationId}', true)`,
-    `SELECT set_config('app.branch_ids', '${ctx.branchId ?? ''}', true)`,
+    set('app.tenant_id', ctx.tenantId),
+    set('app.user_id', ctx.userId),
+    set('app.current_role', ctx.activeRole),
+    set('app.organization_ids', ctx.organizationId),
+    set('app.branch_ids', ctx.branchId ?? ''),
   ];
 }
