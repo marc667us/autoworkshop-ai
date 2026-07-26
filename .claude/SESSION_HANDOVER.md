@@ -114,6 +114,11 @@ glance at the first real Sunday 03:15 run.
 (daily 07-27 02:15 · weekly 08-02 03:15 · drill 08-01 04:15 · health 6-hourly). Health check live:
 **HEALTHY 7/7**, WAL `archived=50, failed=0`, newest backup 1 h old, 4 base backups off-host.
 
+**Cosmetic, not urgent:** the *registered* task descriptions in Task Scheduler are still the old
+text and show mojibake (`Monthly restore drill â€” …`) because the installer used non-ASCII dashes.
+The source is fixed; the live descriptions refresh on the next `install-windows.ps1` run. Triggers
+and behaviour are correct now — the tasks were left running rather than re-registered for a string.
+
 **T-0019 is partial, not done.** `check-backup-health.sh` *detects* (age, job freshness,
 `failed_count`, drill age) and exits non-zero, but delivery is cron-mail only — **on Windows
 nothing notifies anyone**; it writes `status/health.json` and waits to be read. Closing that is

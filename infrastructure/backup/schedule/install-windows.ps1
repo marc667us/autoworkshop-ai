@@ -53,7 +53,7 @@ $PosixDir = ConvertTo-PosixPath $BackupDir
 $Tasks = @(
     @{ Name = 'AutoWorkshop-Backup-Health'
        Job  = 'health'
-       Desc = 'Backup health check — notices a schedule that has silently stopped firing.'
+       Desc = 'Backup health check - notices a schedule that has silently stopped firing.'
        Trigger = { $t = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(5) `
                         -RepetitionInterval (New-TimeSpan -Hours 6); $t } }
 
@@ -69,11 +69,15 @@ $Tasks = @(
 
     @{ Name = 'AutoWorkshop-Restore-Drill'
        Job  = 'drill'
-       Desc = 'Monthly restore drill — proves the backups are actually restorable.'
-       # Task Scheduler has no native "1st of the month" via New-ScheduledTaskTrigger,
-       # so this runs weekly and run-scheduled.sh is cheap to no-op; the drill
-       # itself is ~2 minutes, so running it weekly is strictly better than
-       # monthly anyway. §37 asks for monthly as a MINIMUM.
+       # ASCII only: the registered description is mangled to mojibake otherwise
+       # (the live task currently reads "Monthly restore drill a<80><94> proves ...").
+       Desc = 'Weekly restore drill (spec 37 requires monthly as a MINIMUM) - proves the backups are actually restorable.'
+       # Task Scheduler has no native "1st of the month" trigger via
+       # New-ScheduledTaskTrigger, so this runs WEEKLY rather than monthly. The
+       # drill takes ~2 minutes and never touches the live cluster, so running it
+       # more often than §37 requires costs nothing and catches regressions on the
+       # cluster where they appear first. Production cron runs it monthly (1st,
+       # 04:15) per §37 — the two cadences differ deliberately.
        Trigger = { New-ScheduledTaskTrigger -Weekly -DaysOfWeek Saturday -At '04:15' } }
 )
 
