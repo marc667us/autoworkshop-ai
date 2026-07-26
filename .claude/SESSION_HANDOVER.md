@@ -60,7 +60,8 @@ and the Phase 2 identity chain.
 
 Sleep would suspend the build, so AC timeouts were disabled for the overnight run.
 
-**Previous values (restore these when the run is done):**
+**RESTORED 2026-07-26** — all three verified back at their original values.
+Previous values (kept for reference):
 ```powershell
 powercfg /change standby-timeout-ac 30     # was 30 min  (0x708)
 powercfg /change hibernate-timeout-ac 180  # was 3 hours (0x2a30)
@@ -108,7 +109,7 @@ domain-service layer · then WAL archiving + off-host backup (Supervisor conditi
 **Owner decision still open (nothing to buy):** where the self-hosted Docker stack runs — always-free
 cloud VM, an existing machine, or local-only for now. It runs locally today.
 
-**Remember to restore power settings when the overnight run ends** — previous values are recorded above.
+**Power settings RESTORED 2026-07-26** — sleep 30 min, hibernate 3 h, monitor 10 min, all verified.
 
 ### Correction — v0.1.0 was tagged before CI confirmed
 
