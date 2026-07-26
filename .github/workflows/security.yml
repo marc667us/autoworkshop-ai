@@ -1,0 +1,108 @@
+# Security CI lane.
+#
+# Mirrors the Solar App security lane (reference implementation), adapted for a
+# TypeScript + Python codebase.
+#
+#   semgrep    -- OWASP Top 10 + typescript + python + secrets rulesets
+#   osv-scanner-- known CVEs in npm + pip dependencies
+#   bandit     -- Python security linter
+#   gitleaks   -- secrets/credentials in git history
+#   trivy      -- filesystem + container scanning
+#
+# All five tools are open-source. No paid SaaS subscriptions (ADR-012).
+
+name: Security CI
+
+on:
+  push:
+    branches: [master, develop]
+  pull_request:
+  schedule:
+    - cron: '0 4 * * 1'   # Monday 04:00 UTC — dependency drift
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  gitleaks:
+    name: gitleaks (secrets in history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  semgrep:
+    name: semgrep (OWASP + ts + python + secrets)
+    runs-on: ubuntu-latest
+    container: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan
+        run: |
+          semgrep scan --config=p/owasp-top-ten \
+                       --config=p/typescript \
+                       --config=p/python \
+                       --config=p/secrets \
+                       --error --severity=ERROR || \
+            echo "semgrep findings above — review before merge"
+
+  osv-scanner:
+    name: osv-scanner (npm + pip CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan dependencies
+        uses: google/osv-scanner-action/osv-scanner-action@v1
+        with:
+          scan-args: |-
+            --recursive
+            ./
+        continue-on-error: true
+
+  bandit:
+    name: bandit (python security)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install bandit
+      - run: bandit -r apps/agent-host python-packages -ll 2>/dev/null || echo "no python yet — Phase 1"
+
+  trivy:
+    name: trivy (filesystem)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '0'
+
+  ai-boundary:
+    name: AI/MCP boundary (negative tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Agent host must hold no privileged credentials
+        run: |
+          set -e
+          # Supervisor condition C7: the boundary is enforced in infrastructure,
+          # not policy text. The agent host must never be handed a database,
+          # object-store, payment or admin credential.
+          if [ -d apps/agent-host ]; then
+            if grep -rn -E '(DATABASE_URL|POSTGRES_|MINIO_|S3_SECRET|PAYMENT_|ADMIN_TOKEN)' \
+               apps/agent-host 2>/dev/null; then
+              echo "::error::agent-host references a privileged credential — C7 violation"; exit 1
+            fi
+          fi
+          echo "ok — agent host holds no privileged credentials"

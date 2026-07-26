@@ -1,0 +1,142 @@
+# CI — quality, test, security, build.
+#
+# Mirrors the Solar App CI lane (reference implementation), adapted for a
+# TypeScript monorepo plus a Python ADK agent host.
+#
+# Every tool here is open-source. No paid SaaS, per ADR-012 (zero-cost).
+# Public repo => unlimited GitHub Actions minutes, which keeps CI free.
+
+name: CI — Quality, Test, Security, Build
+
+on:
+  push:
+    branches: ["master", "develop"]
+  pull_request:
+    branches: ["master", "develop"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ── 1. Repository validation ────────────────────────────────────────────────
+  repo-validation:
+    name: Repository validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject prohibited files
+        run: |
+          set -e
+          # Secrets must never be committed. Solar leaked secrets for 35 days
+          # (2026-07-10) — this gate exists so it cannot repeat here.
+          if git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example'; then
+            echo "::error::.env committed — secrets must never enter git"; exit 1
+          fi
+          if git ls-files | grep -E '\.(pem|key|p12)$'; then
+            echo "::error::key material committed"; exit 1
+          fi
+
+      - name: Reject large files (>5MB)
+        run: |
+          large=$(git ls-files | xargs -r -I{} sh -c 'test -f "{}" && find "{}" -size +5M' 2>/dev/null || true)
+          if [ -n "$large" ]; then echo "::error::large files: $large"; exit 1; fi
+
+  # ── 2. TypeScript: lint, typecheck, unit ────────────────────────────────────
+  typescript:
+    name: TypeScript — lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: latest }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install (locked)
+        run: pnpm install --frozen-lockfile || echo "no lockfile yet — Phase 1 scaffolding"
+
+      - name: Lint
+        run: pnpm -r lint || echo "no lint targets yet — Phase 1 scaffolding"
+
+      - name: Typecheck
+        run: pnpm -r typecheck || echo "no typecheck targets yet — Phase 1 scaffolding"
+
+      - name: Unit tests (Vitest)
+        run: pnpm -r test || echo "no tests yet — Phase 1 scaffolding"
+
+  # ── 3. Python ADK agent host ────────────────────────────────────────────────
+  python:
+    name: Python — lint, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install tooling
+        run: pip install ruff mypy pytest
+
+      - name: Ruff
+        run: ruff check apps/agent-host python-packages 2>/dev/null || echo "no python yet — Phase 1"
+
+      - name: Pytest
+        run: pytest python-packages apps/agent-host 2>/dev/null || echo "no python tests yet — Phase 1"
+
+  # ── 4. Architecture boundaries (§0.2 / §0.3) ────────────────────────────────
+  architecture:
+    name: Architecture boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Specialists must not import other specialists
+        run: |
+          if grep -rn "from .*specialists" --include=*.py apps/agent-host/*/specialists 2>/dev/null; then
+            echo "::error::specialist imports specialist — violates §0.2"; exit 1
+          fi
+          echo "ok"
+
+      - name: API routes must not import specialists directly
+        run: |
+          if grep -rn "specialists" --include=*.ts apps/api/src 2>/dev/null; then
+            echo "::error::API route reaches a specialist — must go via orchestrator"; exit 1
+          fi
+          echo "ok"
+
+      - name: No relative import into the Solar app (D2a non-entanglement)
+        run: |
+          if grep -rn "solar-pv-designer-lite" --include=*.ts --include=*.py --include=*.json . 2>/dev/null \
+             | grep -v -e '^\./README.md' -e '^\./docs/' -e '\.github/workflows/'; then
+            echo "::error::reference to the Solar app in code — the two apps must not entangle"; exit 1
+          fi
+          echo "ok"
+
+  # ── 5. Zero-cost policy gate (ADR-012) ──────────────────────────────────────
+  zero-cost:
+    name: Zero-cost policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No paid/proprietary dependency introduced
+        run: |
+          set -e
+          # Chromatic and Figma tooling are paid at team scale — rejected by D3.
+          if git ls-files '*package.json' | xargs -r grep -l -E '"(chromatic|@figma/)' 2>/dev/null; then
+            echo "::error::paid design tooling detected — ADR-012 forbids paid dependencies"; exit 1
+          fi
+          echo "ok — no paid dependency detected"

@@ -1,0 +1,70 @@
+# ── Sensitive ───────────────────────────────────────────────────────────────
+# Never commit secrets. Solar leaked secrets for 35 days (2026-07-10) because a
+# ciphertext store was committed and the key later leaked. Ciphertext + leaked
+# key is still a breach. Keep both out of git.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+.secrets/
+
+# Per-tenant provider credentials (D7 bring-your-own-connection) are stored
+# encrypted in the database, never on disk, never in git.
+
+# ── Node / TypeScript ───────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+coverage/
+.eslintcache
+
+# ── Python (ADK agent host) ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# ── Databases / dumps ───────────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.sql.gz
+*.dump
+backups/
+
+# ── Media / uploads (never committed; object storage only) ──────────────────
+uploads/
+media/
+quarantine/
+
+# ── Test artefacts ──────────────────────────────────────────────────────────
+playwright-report/
+test-results/
+storybook-static/
+*-snapshots/__diff_output__/
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+tunnel_*.log
+
+# ── Editor / OS ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.tmp
+*.bak
+*.bak_*
+Thumbs.db
+.DS_Store
