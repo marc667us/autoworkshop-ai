@@ -178,7 +178,14 @@ export function SideNav({
                 type="button"
                 onClick={() => onToggleGroup(g.id)}
                 aria-expanded={open}
-                aria-controls={`navgroup-${g.id}`}
+                // `aria-controls` may only name an element that is actually in
+                // the DOM. The panel below renders on `open && !collapsed`, so
+                // pointing at it unconditionally left a dangling reference on
+                // every collapsed group — axe rates that CRITICAL, and a screen
+                // reader following the reference finds nothing. `aria-expanded`
+                // still reports the state, which is the part that must always
+                // be present.
+                aria-controls={open && !collapsed ? `navgroup-${g.id}` : undefined}
                 title={collapsed ? g.label : undefined}
                 style={{
                   display: 'flex',

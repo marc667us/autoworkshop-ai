@@ -215,8 +215,16 @@ test.describe('responsive — defect 7: the top bar overflowed at 360px', () => 
   for (const width of [360, 480, 768, 1024]) {
     test(`no horizontal overflow at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
-      await gotoShell(page, WORKSHOP.port);
-      await page.waitForTimeout(150); // let layout settle
+      await page.goto(base(WORKSHOP.port), { waitUntil: 'networkidle' });
+      // The responsive layout is decided by `useIsMobile()`, which resolves
+      // AFTER hydration — the server render is the desktop layout. Measuring
+      // before hydration therefore measures the wrong tree and reports an
+      // overflow that a user would only ever see as a brief flash. Wait for
+      // hydration to have actually run, then measure.
+      await page.waitForFunction(() => document.readyState === 'complete', undefined, {
+        timeout: 15_000,
+      });
+      await page.waitForTimeout(400);
 
       const overflow = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,

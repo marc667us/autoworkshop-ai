@@ -52,14 +52,40 @@ test.describe('defect 5 — the assistant drawer fell BELOW the page instead of 
   test('the modal drawer DOES cover, which is the point of modal', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(story('shell-drawer--modal'), { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(200);
+    await page.waitForSelector('[role="dialog"]', { timeout: 15_000 });
+
     // A modal drawer traps focus; a non-modal one must not. Asserting the
     // difference stops the two collapsing into one implementation.
-    const trapped = await page.evaluate(() => {
+    //
+    // Waited for, not slept on. The focus trap runs in an effect after mount,
+    // so a fixed 200ms sleep races it — and a racing test fails in a way that
+    // looks exactly like a broken focus trap, which would have sent someone
+    // hunting a defect in correct code.
+    await page
+      .waitForFunction(
+        () => {
+          const dialog = document.querySelector('[role="dialog"]');
+          return !!dialog && !!document.activeElement && dialog.contains(document.activeElement);
+        },
+        undefined,
+        { timeout: 5_000 },
+      )
+      .catch(() => {
+        /* fall through to the assertion below for a readable failure */
+      });
+
+    const where = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="dialog"]');
       const active = document.activeElement;
-      return !!active && active !== document.body;
+      return {
+        inside: !!dialog && !!active && dialog.contains(active),
+        activeTag: active?.tagName ?? 'none',
+      };
     });
-    expect(trapped, 'an open modal drawer should have moved focus into itself').toBe(true);
+    expect(
+      where.inside,
+      `an open modal drawer should hold focus; focus was on <${where.activeTag}>`,
+    ).toBe(true);
   });
 });
 
@@ -121,10 +147,27 @@ test.describe('tabs keyboard contract', () => {
 
     const selectedIndex = async () =>
       tabs.evaluateAll((els) => els.findIndex((e) => e.getAttribute('aria-selected') === 'true'));
+    const focusedIndex = async () =>
+      tabs.evaluateAll((els) => els.findIndex((e) => e === document.activeElement));
 
     const before = await selectedIndex();
     await tabs.nth(before).focus();
     await page.keyboard.press('ArrowRight');
-    expect(await selectedIndex(), 'ArrowRight must move tab selection').not.toBe(before);
+
+    // ACTIVATION IS MANUAL, BY DESIGN. Arrow keys move focus; Enter/Space
+    // selects. An earlier version of this test asserted that ArrowRight changed
+    // the SELECTION, which is automatic activation — a different, also-valid
+    // ARIA pattern that this component deliberately does not use, because each
+    // panel here costs a fetch and arrowing across five tabs would fire five
+    // requests for data the user never asked for. The test was wrong, not the
+    // component; asserting the wrong pattern would have pushed a real
+    // regression into the code.
+    expect(await focusedIndex(), 'ArrowRight must move FOCUS to the next tab').not.toBe(before);
+    expect(await selectedIndex(), 'ArrowRight must NOT change selection (manual activation)').toBe(
+      before,
+    );
+
+    await page.keyboard.press('Enter');
+    expect(await selectedIndex(), 'Enter must activate the focused tab').not.toBe(before);
   });
 });

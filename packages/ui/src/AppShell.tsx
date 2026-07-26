@@ -190,6 +190,11 @@ export function AppShell({
         // On mobile the same button opens the overlay drawer instead of
         // collapsing an inline column that is not on screen.
         sideNavCollapsed={isMobile ? !mobileNavOpen : collapsed}
+        // On desktop the side nav is always mounted. On mobile it lives inside
+        // a Drawer that unmounts when closed, so the id genuinely is not in the
+        // document and must not be referenced — this was a real dangling
+        // `aria-controls` in the shipped app, not merely a Storybook artefact.
+        sideNavId={!isMobile || mobileNavOpen ? 'app-side-nav' : undefined}
         onToggleSideNav={() =>
           isMobile ? setMobileNavOpen((o) => !o) : setCollapsed((c) => !c)
         }

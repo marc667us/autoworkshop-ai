@@ -68,6 +68,12 @@ export interface TopNavProps {
   branchLabel?: string;
   /** Collapse toggle (§4). Controlled by AppShell so both navs stay in step. */
   sideNavCollapsed: boolean;
+  /**
+   * DOM id of the side nav, when one is actually rendered. Omitted when there
+   * is no side nav in the document (standalone use, or the mobile overlay
+   * while it is closed) so that `aria-controls` never dangles.
+   */
+  sideNavId?: string;
   onToggleSideNav: () => void;
   searchValue: string;
   onSearchChange: (value: string) => void;
@@ -214,6 +220,7 @@ export function TopNav({
   organizationLabel,
   branchLabel,
   sideNavCollapsed,
+  sideNavId,
   onToggleSideNav,
   searchValue,
   onSearchChange,
@@ -244,7 +251,13 @@ export function TopNav({
         // must describe the ACTION, and aria-expanded must report the state.
         aria-label={sideNavCollapsed ? 'Expand navigation' : 'Collapse navigation'}
         aria-expanded={!sideNavCollapsed}
-        aria-controls="app-side-nav"
+        // Only reference the side nav when it is genuinely mounted. TopNav is
+        // used standalone (Storybook, and any surface without a side nav), and
+        // below 768px the nav is an overlay that is absent while closed — in
+        // both cases a hardcoded `aria-controls` named an element that did not
+        // exist, which axe rates CRITICAL. The caller knows; this component
+        // cannot.
+        aria-controls={sideNavId}
         style={{
           display: 'inline-flex',
           alignItems: 'center',

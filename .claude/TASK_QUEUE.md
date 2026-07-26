@@ -27,11 +27,13 @@
 | T-0022 | Rebuild the local cluster with `--data-checksums` on | 2 | queued |
 
 | T-0023 | Deliver the health-check alert somewhere a human sees it (closes T-0019) | 2 | queued |
-| T-0025 | Fix axe `color-contrast` violations in the design tokens | 3 | queued — found by T-0015 |
-| T-0026 | Fix dangling `aria-controls` on the nav toggle when the side nav is absent | 3 | queued — found by T-0015 |
+| T-0025 | ~~axe `color-contrast`~~ | 3 | **not reproducible** — the 10 hits came from stories rendering Storybook's error page, not from the palette |
+| T-0026 | Dangling `aria-controls` (nav toggle + every collapsed SideNav group) | 3 | **done** — both were real; axe rated them CRITICAL |
 | T-0027 | Navigation model becomes **workspace x role** (07 pt2 §46-§50) | 3 | queued — blocks Phase 5 |
 | T-0028 | Account types as *requests*, workshop staff invitation, approval limits | 2 | queued |
 | T-0029 | Plan extension v1 r2 — specs 07/08/09 folded into the phase plan | — | **done** — `docs/00-project/PLAN_EXTENSION_v1.md` |
+| T-0030 | 🔴 **Side nav renders INLINE at 360px** — `useIsMobile()` false in the built app, so the overlay never engages: `main` 103px, page overflows 161px | 3 | **open, test failing on purpose** |
+| T-0031 | ThemeToggle radiogroup: arrow keys move focus but not selection (radiogroup requires automatic activation) | 3 | open |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
 **Next up:** T-0014 and T-0015 close Release 0.2.
