@@ -55,13 +55,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm 9 — pnpm 10+/11+ require Node >=22.13, but Node 20 is pinned to
+      # match the development machine (Node 20.19.2). Local and CI must agree.
       - uses: pnpm/action-setup@v4
-        with: { version: latest }
+        with: { version: 9 }
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: pnpm
 
       - name: Install (locked)
         run: pnpm install --frozen-lockfile || echo "no lockfile yet — Phase 1 scaffolding"
