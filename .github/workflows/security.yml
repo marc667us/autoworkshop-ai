@@ -57,13 +57,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Install the scanner directly rather than pinning an action tag —
+      # google/osv-scanner-action@v1 does not resolve.
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - name: Install osv-scanner
+        run: go install github.com/google/osv-scanner/cmd/osv-scanner@latest
       - name: Scan dependencies
-        uses: google/osv-scanner-action/osv-scanner-action@v1
-        with:
-          scan-args: |-
-            --recursive
-            ./
-        continue-on-error: true
+        run: |
+          "$(go env GOPATH)/bin/osv-scanner" scan --recursive ./             || echo "osv-scanner findings above — review before merge"
 
   bandit:
     name: bandit (python security)

@@ -83,10 +83,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No 'cache: pip' — it hard-fails until a requirements.txt/pyproject.toml
+      # exists, which lands with the Phase 1 python-packages scaffolding.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
       - name: Install tooling
         run: pip install ruff mypy pytest
@@ -137,7 +138,17 @@ jobs:
         run: |
           set -e
           # Chromatic and Figma tooling are paid at team scale — rejected by D3.
-          if git ls-files '*package.json' | xargs -r grep -l -E '"(chromatic|@figma/)' 2>/dev/null; then
-            echo "::error::paid design tooling detected — ADR-012 forbids paid dependencies"; exit 1
+          #
+          # NB: test the CAPTURED OUTPUT, not the pipeline exit status. `xargs -r`
+          # exits 0 on empty input, and `if <exit 0>` is true — which made this
+          # gate fire on an empty repository. Caught on the first CI run.
+          files=$(git ls-files '*package.json' || true)
+          hits=""
+          if [ -n "$files" ]; then
+            hits=$(echo "$files" | xargs grep -l -E '"(chromatic|@figma/)' 2>/dev/null || true)
+          fi
+          if [ -n "$hits" ]; then
+            echo "::error::paid design tooling detected in: $hits — ADR-012 forbids paid dependencies"
+            exit 1
           fi
           echo "ok — no paid dependency detected"
