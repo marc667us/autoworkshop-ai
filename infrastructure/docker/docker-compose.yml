@@ -20,11 +20,35 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-autoworkshop}
       POSTGRES_USER: ${POSTGRES_USER:-autoworkshop}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
-      # WAL archiving is configured in Phase 1 completion (Supervisor C3):
-      # continuous archiving -> PITR, RPO <= 5 min per `1.txt` §29.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    # Continuous WAL archiving -> point-in-time recovery (Supervisor C3).
+    # `1.txt` §29 requires RPO <= 5 minutes for critical databases; a nightly
+    # dump cannot meet that, so archiving is continuous and archive_timeout
+    # forces a segment switch even on a quiet database.
+    #
+    # --data-checksums is set at initdb: it cannot be enabled later without a
+    # rebuild, and silent page corruption in a backup is worse than no backup.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /wal_archive/%f && cp %p /wal_archive/%f
+      - -c
+      - archive_timeout=300
+      - -c
+      - max_wal_senders=3
+      - -c
+      - wal_keep_size=256MB
+      - -c
+      - log_min_duration_statement=1000
     ports: ["5432:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - pgwal:/wal_archive
+      - pgbackup:/backups
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autoworkshop}"]
       interval: 10s
@@ -112,6 +136,8 @@ services:
 
 volumes:
   pgdata:
+  pgwal:
+  pgbackup:
   redisdata:
   natsdata:
   miniodata:

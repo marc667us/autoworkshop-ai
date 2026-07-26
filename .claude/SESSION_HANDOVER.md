@@ -1,126 +1,121 @@
 # Session handover
 
-## 2026-07-25 — Release 0.1 foundation
+> Read this first, then `.claude/CURRENT_PHASE.md` and `.claude/TASK_QUEUE.md`.
 
-**Completed:** repo created and pushed; CI + security lanes green; pnpm/Turborepo workspace; 7 Next.js apps;
-NestJS API with health endpoint + test; docker compose (Postgres+pgvector, Redis, NATS, MinIO, Keycloak,
-coturn); design tokens; ADR-001…016; `.claude` control files.
+## Where the project stands — 2026-07-26
 
-**CI defects found and fixed on the first runs:**
-1. Zero-cost gate false-positived — `xargs -r` exits 0 on empty input and `if <exit 0>` is true.
-2. `pnpm@latest` (v11) requires Node >=22.13 but Node 20 is pinned to match the dev machine — pinned pnpm 9.
-3. `google/osv-scanner-action@v1` does not resolve — replaced with `go install`.
+**Release 0.1 shipped and tagged `v0.1.0`** (CI green on that exact commit).
+**Phase 2 (identity) well underway.** Everything below is committed and pushed to `master` + `develop`.
 
-**Outstanding:** Storybook, remaining seed docs, tag `v0.1.0`.
+Repo: https://github.com/marc667us/autoworkshop-ai — public, `master` + `develop`.
+Approved plan: `C:\Users\USER\Documents\autoworkshop app\_plan\COMBINED_PLAN_v2.md`
+(Codex `PASS WITH CORRECTIONS` 14/14 applied → Supervisor `PASS WITH CONDITIONS` 8/8 applied).
 
-**Owner decisions still open:** where the self-hosted Docker stack runs (always-free VM / existing machine /
-local only).
+## Completed
 
-**Recommended next task:** T-0002 — Keycloak realm, then the Phase 2 identity chain.
+**Release 0.1 — foundation**
+- pnpm 9.15.4 + Turborepo monorepo; 7 Next.js apps; NestJS API; Storybook; design tokens
+- Docker stack, all self-hosted FOSS: Postgres+pgvector, Redis, NATS, MinIO, Keycloak, coturn
+- CI + Security lanes; ADR-001…016; governance docs (CLAUDE.md, context.MD, MEMORY.md, MCP.md, …)
 
----
+**Phase 2 — identity (in progress)**
+- Migration 001 — tenancy foundation (tenants, organizations, branches, users, memberships)
+  + append-only `audit.events`
+- Migration 002 — `autoworkshop_app` role: `NOSUPERUSER`, `NOBYPASSRLS`, DML-only grants
+- Tracked migration runner with checksum drift detection
+- `DatabaseService.withTenant()` — the only sanctioned route to tenant data
+- `AuditService` — writes in the same transaction as the work it records
+- `OrganizationService` + controller — first real domain slice
+- `KeycloakJwtService` + `TenantGuard` — full auth chain
+- Keycloak realm as configuration-as-code: 30 roles, 7 PKCE clients, bearer-only API client
 
-## 2026-07-25 (late) — Release 0.1 scaffolding complete
+**Tests: 20/20 passing.** Typecheck clean across 11 packages. CI green on both lanes.
 
-**Completed this session (all committed):**
-- pnpm 9.15.4 via corepack (Node 20 — matches CI; pnpm 10+/11 need Node >=22.13, do NOT upgrade)
-- Workspace: pnpm-workspace.yaml, turbo.json, tsconfig.base.json, .npmrc, .nvmrc, .editorconfig,
-  .prettierrc.json, .env.example
-- `packages/config` (shared eslint + tsconfig), `packages/design-tokens`, `packages/ui`
-- 7 Next.js apps: customer(3000) workshop(3001) supplier(3002) fleet(3003) insurance(3004)
-  towing(3005) admin(3006) — all typecheck clean
-- `apps/api` NestJS + health endpoint + passing vitest
-- `infrastructure/docker/docker-compose.yml` — Postgres+pgvector, Redis, NATS, MinIO, Keycloak
-  (heap capped 512MB), coturn. All self-hosted FOSS.
-- ADR-001 … ADR-016
-- Root governance: CLAUDE.md, context.MD, MEMORY.md, MCP.md, ARCHITECTURE.md, ROADMAP.md,
-  CHANGELOG.md, CONTRIBUTING.md, README.md, SECURITY.md
-  (Project OS directive + Agentic ADK Extension seeded, each marker present exactly once)
-- `.claude/` control files
+## Defects found by verifying against real systems — do NOT reintroduce
 
-**Verified:** `pnpm -r typecheck` = 10/10 Done · `pnpm -r test` passes · CI + Security lanes green.
+All of these read back as "working" in configuration and were invisible to unit tests:
 
-**Bug found and fixed:** `packages/ui` declared React as a peer dependency but had no build-time
-types, so `tsc` failed on JSX. Added react + @types/react as devDependencies.
+1. **RLS was completely inert.** A superuser bypasses RLS *even with FORCE*. The bootstrap
+   `POSTGRES_USER` is a superuser, so the app would have had every policy present and none applied.
+   → migration 002, plus a boot-time guard in `DatabaseService` that refuses to start on a superuser URL.
+2. **`current_role` is a PostgreSQL reserved keyword** — `SET LOCAL app.current_role` is a syntax error.
+   → `set_config()`, parameterised. A test asserts the broken form never returns.
+3. **`set_config(..., true)` is transaction-local**, and psql runs each statement in its own implicit
+   transaction, so seed context evaporated. Seeding is session-scoped; the app stays transaction-local
+   deliberately so pooled connections cannot leak tenant context.
+4. **A `clientScopes` array in Keycloak realm JSON REPLACES the built-in scopes.** The realm ended up
+   with 2 scopes and no `roles` scope — tokens carried no `realm_access.roles` claim, so the API could
+   not have authorized anything. → audience scope created post-import from its own file.
+5. **`defaultDefaultClientScopes` has the same replacement problem.** Removed.
+6. **Keycloak rejects unknown JSON keys** — `_comment` fields broke the import outright.
+7. **pnpm version declared twice** (workflow + `packageManager`) fails the action.
+   `packageManager` is the single source of truth.
+8. **vitest worker-RPC timeouts on Windows** → `pool: 'forks'` (246s → 14s).
+9. **`packages/ui`** declared React as a peer dependency with no build-time types.
 
-**NOT yet done in Release 0.1:**
-- Storybook is scaffolded as a directory but not configured/running
-- Seed docs under `docs/00-project`, `01-product`, `04-security`, `05-database`, `10-testing`
-  are still empty (ADRs are done)
-- **Tag `v0.1.0` deliberately NOT applied** — the two items above are part of the 0.1 acceptance
-  criteria, so tagging now would overstate completion.
+## IN FLIGHT — pick up here
 
-**Owner decision still open:** where the self-hosted Docker stack runs — always-free cloud VM,
-an existing machine, or local-only for now. Nothing to purchase either way.
+**Supervisor condition C3 — WAL archiving + tested restore.** The outstanding must-fix from the plan
+review. It addresses the risk that actually destroyed Solar on 2026-07-09 (expiring free-tier database,
+no backups).
 
-**Recommended next task:** finish Storybook + seed docs -> tag v0.1.0 -> then T-0002 (Keycloak realm)
-and the Phase 2 identity chain.
+**Done and VERIFIED live:**
+`infrastructure/docker/docker-compose.yml` — Postgres recreated with `wal_level=replica`,
+`archive_mode=on`, `archive_command` copying to `/wal_archive`, `archive_timeout=300`, plus new
+`pgwal` and `pgbackup` volumes. Confirmed on the running server:
+`archive_mode=on  archive_timeout=5min  wal_level=replica`
 
-### Overnight run — machine power settings changed 2026-07-25
+**Known limitation, stated honestly:** `--data-checksums` is in `POSTGRES_INITDB_ARGS` but the running
+cluster reports `checksums=off`, because the `pgdata` volume already existed and `initdb` did not re-run.
+Data checksums **cannot be enabled on an existing cluster** without a dump/restore rebuild. Either accept
+it for local dev and ensure the production cluster is initialised fresh with checksums on, or rebuild
+locally: `docker compose down -v` then `up` (destroys local data), then re-run migrations.
 
-Sleep would suspend the build, so AC timeouts were disabled for the overnight run.
+**Still to do for C3:**
+- `infrastructure/backup/` scripts — `pg_basebackup` daily, encrypted off-host copy to MinIO,
+  retention (WAL 7d / daily 35d / weekly 12w / monthly 12m, `1.txt` §33)
+- **A restore drill that actually restores** and records achieved RPO/RTO. A backup that has not been
+  restored is not a backup (`1.txt` §36–37)
+- Keycloak realm export on a schedule (`1.txt` §32)
+- Update `docs/05-database/BACKUP_AND_RESTORE.md` from plan to as-built
 
-**RESTORED 2026-07-26** — all three verified back at their original values.
-Previous values (kept for reference):
-```powershell
-powercfg /change standby-timeout-ac 30     # was 30 min  (0x708)
-powercfg /change hibernate-timeout-ac 180  # was 3 hours (0x2a30)
-powercfg /change monitor-timeout-ac 10     # was 10 min  (0x258)
-```
+## Next tasks after C3
 
-Locking the workstation with **Win+L is safe** — Windows keeps background processes running while
-locked. Only sleep/hibernate would have stopped work, and both are now disabled.
+- T-0003 remainder: users, branches, memberships services + controllers, on the `OrganizationService` pattern
+- T-0004: permission matrix enforcement
+- Phase 3: application shell — top nav, grouped side nav, breadcrumbs (Release 0.2)
 
----
+## Environment
 
-## 2026-07-25 (overnight) — Release 0.1 COMPLETE + Phase 2 started
+Node 20.19.2 · pnpm 9.15.4 (**do not upgrade — pnpm 10+/11 require Node ≥22.13**) · Python 3.14.4 ·
+google-adk 2.2.0 · Docker 29.4.3 · Ollama 0.24.0 · gh CLI at `%USERPROFILE%\bin\gh.exe`.
 
-**Release 0.1 shipped and tagged.** All acceptance criteria met and VERIFIED, not assumed.
+Local infra: `pnpm infra:up`.
+API: `cd apps/api && npx nest build && node dist/main.js` with
+`DATABASE_URL=postgresql://autoworkshop_app:change_me_locally@localhost:5432/autoworkshop`.
+**Never point the app at the `autoworkshop` superuser** — the boot guard refuses it, by design.
 
-Verified live:
-- All 6 docker services running: postgres+pgvector, redis, nats, minio, keycloak, coturn
-- Migrations 001 + 002 applied via the tracked runner
-- Tenant isolation PROVEN against a live database as a non-superuser
-- 7/7 unit tests pass; typecheck clean across all 11 packages; Storybook builds
+Windows: `kcadm` runs in-container, so `MSYS_NO_PATHCONV=1 docker exec …` is required or Git Bash
+rewrites `/opt/keycloak/...` into `C:/Program Files/Git/opt/...`. The local side of `docker cp` needs
+the opposite treatment — `cygpath -w`.
 
-**Three real defects found by verifying against a real database — all fixed:**
+## Owner directions — binding
 
-1. **RLS was inert.** A superuser bypasses RLS entirely, EVEN WITH FORCE. The bootstrap POSTGRES_USER
-   is a superuser, so the app would have had every policy present and none applied. Migration 002 adds
-   `autoworkshop_app` (NOSUPERUSER, NOBYPASSRLS, DML-only). **The app must never connect as the
-   bootstrap role.**
-2. **`current_role` is a PostgreSQL reserved keyword**, so `SET LOCAL app.current_role = '...'` is a
-   syntax error. tenant-context.ts emitted exactly that and would have failed at runtime. Now uses
-   set_config(); a test asserts the broken form never returns.
-3. **set_config(..., true) is transaction-local**, and psql runs each statement in its own implicit
-   transaction, so seed context evaporated before the next INSERT. Seeding is session-scoped; the app
-   deliberately stays transaction-local so pooled connections cannot leak tenant context.
+1. Name fixed: **AutoWorkshop AI** at `autoworkshop.aiappinvent.com` (Namecheap DNS)
+2. **Stop cutting scope** — build everything structurally; only licensed content and labelled ML corpora stage
+3. **Reuse Solar patterns, never entangle** — separate repo, DB, Keycloak realm, deploy, secrets, CI
+4. **Zero cost including production** — never propose spending; that decision is the owner's alone
+5. **Bring-your-own-connection** — tenants connect their own device/provider/credentials
+6. Zero cost now; commercial infrastructure later, only if going commercial
+7. **Solar is the reference — always refer to it**
 
-Plus earlier: vitest worker-RPC timeouts on Windows (fixed with the forks pool, 246s -> 14s), and
-packages/ui missing build-time React types.
+## Open owner decision (nothing to buy)
 
-**Phase 2 progress:** migration 001 (tenancy foundation + append-only audit), migration 002 (app role),
-tracked migration runner with checksum drift detection, tenant context resolution with confused-deputy
-defence, and the tenant isolation proof.
+Where the self-hosted Docker stack should run: an always-free cloud VM, a machine already owned, or
+local-only. It runs locally today, so nothing is blocked.
 
-**Next tasks:** T-0002 Keycloak realm + client wiring · then users/orgs/branches CRUD through the
-domain-service layer · then WAL archiving + off-host backup (Supervisor condition C3).
+## Machine state
 
-**Owner decision still open (nothing to buy):** where the self-hosted Docker stack runs — always-free
-cloud VM, an existing machine, or local-only for now. It runs locally today.
-
-**Power settings RESTORED 2026-07-26** — sleep 30 min, hibernate 3 h, monitor 10 min, all verified.
-
-### Correction — v0.1.0 was tagged before CI confirmed
-
-I tagged and reported Release 0.1 complete while CI was still running; it then failed.
-
-Cause: `pnpm/action-setup` rejects the pnpm version being declared twice — `version: 9` in the workflow
-AND `packageManager: pnpm@9.15.4` in package.json. Introduced by my own earlier pnpm/Node fix.
-
-Fix: removed the action's pin. `packageManager` is now the single source of truth, so corepack locally
-and the action in CI read the same value and cannot drift.
-
-The tag was deleted and re-created on the green commit (aaa89e8), so v0.1.0 points at a verified build.
-
-**Lesson for future releases: do not tag until CI reports green on that exact commit.**
+Sleep, hibernate and monitor timeouts are currently **disabled** (owner asked for uninterrupted running).
+To restore: `powercfg /change standby-timeout-ac 30`, `hibernate-timeout-ac 180`,
+`monitor-timeout-ac 10`.
