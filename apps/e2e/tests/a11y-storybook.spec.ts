@@ -53,7 +53,15 @@ test.describe('accessibility', () => {
       await page.goto(`/iframe.html?id=${story.id}&viewMode=story`, {
         waitUntil: 'domcontentloaded',
       });
-      await page.waitForSelector('#storybook-root > *', { timeout: 15_000 });
+      // NOT `#storybook-root > *`. ThemeProvider injects its CSS custom
+      // properties as a <style> element, which becomes the first child and is
+      // never "visible" — so waiting on the first child timed out on 74 of 77
+      // stories that were rendering perfectly well. Wait for the first child
+      // that can actually be seen.
+      await page.waitForSelector('#storybook-root > *:not(style):not(script)', {
+        state: 'visible',
+        timeout: 15_000,
+      });
 
       // A story that throws while rendering would otherwise be scanned as a
       // blank page and pass axe cleanly.

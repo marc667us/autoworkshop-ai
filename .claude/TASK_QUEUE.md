@@ -27,6 +27,11 @@
 | T-0022 | Rebuild the local cluster with `--data-checksums` on | 2 | queued |
 
 | T-0023 | Deliver the health-check alert somewhere a human sees it (closes T-0019) | 2 | queued |
+| T-0025 | Fix axe `color-contrast` violations in the design tokens | 3 | queued — found by T-0015 |
+| T-0026 | Fix dangling `aria-controls` on the nav toggle when the side nav is absent | 3 | queued — found by T-0015 |
+| T-0027 | Navigation model becomes **workspace x role** (07 pt2 §46-§50) | 3 | queued — blocks Phase 5 |
+| T-0028 | Account types as *requests*, workshop staff invitation, approval limits | 2 | queued |
+| T-0029 | Plan extension v1 r2 — specs 07/08/09 folded into the phase plan | — | **done** — `docs/00-project/PLAN_EXTENSION_v1.md` |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
 **Next up:** T-0014 and T-0015 close Release 0.2.
