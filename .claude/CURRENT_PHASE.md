@@ -1,6 +1,8 @@
 # Current phase
 
-**Phase 1 — Project foundation** · Release **0.1**
+**Phase 1 — Project foundation** · Release **0.1** · ✅ COMPLETE
+
+Next: Phase 2 — Keycloak realm, users, orgs, roles, permissions.
 
 ## Objective
 
@@ -18,7 +20,10 @@ A working development environment: monorepo, frontend, backend, database, Storyb
 - [x] ADR-001 … ADR-016
 - [x] Storybook running (react-vite, a11y addon, telemetry off)
 - [x] Seed docs complete (06.txt 'minimum files to create first')
-- [ ] Tag v0.1.0 — pending live verification of the docker stack + migration
+- [x] Docker stack verified live — all 6 services running
+- [x] Migrations 001 + 002 applied to a live database
+- [x] Tenant isolation PROVEN as a non-superuser (6 assertions + append-only audit)
+- [x] Tag v0.1.0
 
 ## Acceptance criteria
 

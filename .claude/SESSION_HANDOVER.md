@@ -69,3 +69,43 @@ powercfg /change monitor-timeout-ac 10     # was 10 min  (0x258)
 
 Locking the workstation with **Win+L is safe** — Windows keeps background processes running while
 locked. Only sleep/hibernate would have stopped work, and both are now disabled.
+
+---
+
+## 2026-07-25 (overnight) — Release 0.1 COMPLETE + Phase 2 started
+
+**Release 0.1 shipped and tagged.** All acceptance criteria met and VERIFIED, not assumed.
+
+Verified live:
+- All 6 docker services running: postgres+pgvector, redis, nats, minio, keycloak, coturn
+- Migrations 001 + 002 applied via the tracked runner
+- Tenant isolation PROVEN against a live database as a non-superuser
+- 7/7 unit tests pass; typecheck clean across all 11 packages; Storybook builds
+
+**Three real defects found by verifying against a real database — all fixed:**
+
+1. **RLS was inert.** A superuser bypasses RLS entirely, EVEN WITH FORCE. The bootstrap POSTGRES_USER
+   is a superuser, so the app would have had every policy present and none applied. Migration 002 adds
+   `autoworkshop_app` (NOSUPERUSER, NOBYPASSRLS, DML-only). **The app must never connect as the
+   bootstrap role.**
+2. **`current_role` is a PostgreSQL reserved keyword**, so `SET LOCAL app.current_role = '...'` is a
+   syntax error. tenant-context.ts emitted exactly that and would have failed at runtime. Now uses
+   set_config(); a test asserts the broken form never returns.
+3. **set_config(..., true) is transaction-local**, and psql runs each statement in its own implicit
+   transaction, so seed context evaporated before the next INSERT. Seeding is session-scoped; the app
+   deliberately stays transaction-local so pooled connections cannot leak tenant context.
+
+Plus earlier: vitest worker-RPC timeouts on Windows (fixed with the forks pool, 246s -> 14s), and
+packages/ui missing build-time React types.
+
+**Phase 2 progress:** migration 001 (tenancy foundation + append-only audit), migration 002 (app role),
+tracked migration runner with checksum drift detection, tenant context resolution with confused-deputy
+defence, and the tenant isolation proof.
+
+**Next tasks:** T-0002 Keycloak realm + client wiring · then users/orgs/branches CRUD through the
+domain-service layer · then WAL archiving + off-host backup (Supervisor condition C3).
+
+**Owner decision still open (nothing to buy):** where the self-hosted Docker stack runs — always-free
+cloud VM, an existing machine, or local-only for now. It runs locally today.
+
+**Remember to restore power settings when the overnight run ends** — previous values are recorded above.
