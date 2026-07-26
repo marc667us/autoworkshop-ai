@@ -55,3 +55,17 @@ an existing machine, or local-only for now. Nothing to purchase either way.
 
 **Recommended next task:** finish Storybook + seed docs -> tag v0.1.0 -> then T-0002 (Keycloak realm)
 and the Phase 2 identity chain.
+
+### Overnight run — machine power settings changed 2026-07-25
+
+Sleep would suspend the build, so AC timeouts were disabled for the overnight run.
+
+**Previous values (restore these when the run is done):**
+```powershell
+powercfg /change standby-timeout-ac 30     # was 30 min  (0x708)
+powercfg /change hibernate-timeout-ac 180  # was 3 hours (0x2a30)
+powercfg /change monitor-timeout-ac 10     # was 10 min  (0x258)
+```
+
+Locking the workstation with **Win+L is safe** — Windows keeps background processes running while
+locked. Only sleep/hibernate would have stopped work, and both are now disabled.
