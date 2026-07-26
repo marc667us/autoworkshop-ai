@@ -92,6 +92,32 @@ retention) and `restore-drill.sh` (restores into a throwaway cluster and measure
 
 Run it: `cd infrastructure/backup && ./restore-drill.sh` (~2 min, never touches the live cluster).
 
+
+## Scheduling is LIVE (T-0018 / T-0019) — 2026-07-26
+
+Four Windows Task Scheduler tasks under `\AutoWorkshop\`, all proven by triggering them:
+health (every 6h) · daily 02:15 · weekly Sun 03:15 · **restore drill Sat 04:15**.
+Production equivalent: `infrastructure/backup/schedule/autoworkshop-backup.cron`.
+`./check-backup-health.sh` reports HEALTHY (7/7). Re-install: `schedule/install-windows.ps1`.
+
+Two defects the scheduler found that manual runs never would:
+1. `pg_switch_wal()` is a NO-OP with no WAL activity, so the pre-backup archiving gate blocked
+   backups entirely on an **idle** database. Fixed with a heartbeat write before the switch.
+2. The health check ran `grep` inside the minio container (minimal image, no grep) -> false
+   CRITICAL "no off-host backup" while four sat in the bucket.
+
+Caveat: Windows tasks run as the interactive user, so they need you logged in. The first scheduled
+weekly returned 0xC000013A (terminated) mid-run; clean on every retry, root cause unconfirmed —
+glance at the first real Sunday 03:15 run.
+
+## Viewing the app locally
+
+`pnpm build` then, per app, `cd apps/<name>-web && npx next start -p <port>`:
+customer 3000 · workshop 3001 · supplier 3002 · fleet 3003 · insurance 3004 · towing 3005 · admin 3006.
+**`npx next start` without `-p` ignores the package.json port and every app fights over 3000.**
+Stop them before rebuilding — a running server locks `.next` on Windows.
+Nothing is deployed to autoworkshop.aiappinvent.com yet.
+
 ## IN FLIGHT — pick up here
 
 1. **T-0018 — schedule the backup and the drill.** Everything still runs by hand. This is now the
