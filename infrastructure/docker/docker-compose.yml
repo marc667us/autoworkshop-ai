@@ -1,0 +1,117 @@
+# AutoWorkshop AI — local + self-hosted production stack.
+#
+# Every service here is open-source and self-hosted (D6 zero-cost). There is no
+# managed or paid dependency. The same compose file scales to the always-free
+# host; moving to commercial infrastructure later (D8) is a hosting change, not
+# a rewrite.
+#
+# Self-hosting PostgreSQL deliberately removes the expiry/suspension vector that
+# destroyed the Solar app on 2026-07-09.
+
+name: autoworkshop
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-autoworkshop}
+      POSTGRES_USER: ${POSTGRES_USER:-autoworkshop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
+      # WAL archiving is configured in Phase 1 completion (Supervisor C3):
+      # continuous archiving -> PITR, RPO <= 5 min per `1.txt` §29.
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autoworkshop}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: aw-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    # Domain events (ADR-014). `1.txt` §6 names "RabbitMQ or NATS"; NATS is far
+    # lighter and fits the capacity envelope in D6.
+    image: nats:2.10-alpine
+    container_name: aw-nats
+    restart: unless-stopped
+    command: ["-js", "-m", "8222"]
+    ports: ["4222:4222", "8222:8222"]
+    volumes:
+      - natsdata:/data
+
+  minio:
+    # S3-compatible object storage (`1.txt` §7). Media never touches Postgres.
+    image: minio/minio:latest
+    container_name: aw-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-change_me_locally}
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    # Identity (D5 — mandatory, no JWT fallback). OWN REALM, never Solar's (D2a).
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: aw-keycloak
+    restart: unless-stopped
+    command: ["start-dev", "--http-port=8080"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-change_me_locally}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-autoworkshop}
+      KC_DB_USERNAME: ${POSTGRES_USER:-autoworkshop}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
+      KC_HEALTH_ENABLED: "true"
+      # Solar's Keycloak OOM'd on a constrained free host. Cap the heap here so
+      # the same failure cannot repeat silently.
+      JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["8080:8080"]
+
+  coturn:
+    # Self-hosted TURN (D6). Removes the WebRTC relay COST — capacity limits and
+    # abuse controls still apply, per the Supervisor's C2 correction.
+    image: coturn/coturn:latest
+    container_name: aw-coturn
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - "-n"
+      - "--realm=autoworkshop.aiappinvent.com"
+      - "--fingerprint"
+      - "--no-cli"
+      - "--min-port=49160"
+      - "--max-port=49200"
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:
+  miniodata:

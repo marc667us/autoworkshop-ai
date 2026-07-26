@@ -1,0 +1,7 @@
+# Workspace layout per COMBINED_PLAN_v2 §3.
+# python-packages/ is deliberately NOT here — it is a pip workspace (§0.3),
+# and MCP is the only boundary between the TypeScript and Python halves.
+packages:
+  - "apps/*"
+  - "apps/mcp-servers/*"
+  - "packages/*"
