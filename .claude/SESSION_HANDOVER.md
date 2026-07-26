@@ -143,9 +143,45 @@ customer 3000 · workshop 3001 · supplier 3002 · fleet 3003 · insurance 3004 
 Stop them before rebuilding — a running server locks `.next` on Windows.
 Nothing is deployed to autoworkshop.aiappinvent.com yet.
 
+## SESSION 2026-07-26 pt3 — close. Tip `bdfe65c`, pushed, tree clean.
+
+Seven commits. Release 0.2 is **one defect away** from closing.
+
+**T-0014 done** — 77 stories, every component in `packages/ui`.
+**T-0015 done and PROVEN** — Storybook axe **84/84 green**; journey **37 passed / 4 failed**, and the four
+are left failing on purpose because they are real.
+
+🔴 **START HERE NEXT SESSION — T-0030.** At 360px the side nav renders **inline instead of as an overlay**:
+`main` is squeezed to **103px** and the page scrolls horizontally by **161px**. `useIsMobile()` is returning
+false in the built app while TopNav's CSS-driven mobile filtering still works, which is what hides it.
+Confirmed *after* waiting for hydration, so it is not a test race. **This is Phase-3 defect 7, still live**,
+underneath a green typecheck, green lint, 37 unit tests and a 9-target build.
+Start at `packages/ui/src/AppShell.tsx:89` (`const isMobile = useIsMobile()`) and
+`packages/ui/src/useMediaQuery.ts:26`. Reproduce with:
+`cd apps/e2e && npx playwright test --project=shell-journey -g "overflow at 360px"`
+
+Also fixed today: dangling `aria-controls` (axe CRITICAL) in **two** places — every *collapsed* SideNav group,
+and TopNav's hardcoded `app-side-nav` while the mobile Drawer is unmounted. TopNav now takes `sideNavId`.
+
+**Two of the four failures were the TESTS being wrong, not the code** — worth knowing before "fixing" them:
+Tabs implements **manual activation deliberately** (arrows move focus, Enter selects; each panel costs a
+fetch), and the modal-drawer focus test slept 200ms and raced the focus-trap effect.
+
+**Guardrails shipped** (`scripts/guardrails/`, Stage 0 of `quality-gate.sh`): BM25 RAG grounding,
+claim verification, scoped review with drift audit, shell-idiom lint. See `scripts/guardrails/README.md`.
+
+**Plan extended** for specs 07/08/09 → `docs/00-project/PLAN_EXTENSION_v1.md`. New Phases 12 (simulation
+intelligence), 13 (knowledge ops), 14 (community). ⚠️ `autoworkshop 07.txt` is **two documents** — lines
+1798–5069 are a separate workshop-side spec (§1–52) that the first draft missed entirely.
+
+**Beware the pipe trap.** `cmd | tail` reports *tail's* exit status. It made `playwright | tail` look like
+exit 0 over 9 failures, and let a commit through while both guardrails were failing. Capture `$?` before any
+pipe.
+
 ## IN FLIGHT — pick up here
 
-**No feature work is in flight**, and all gates were green at the last feature commit (`3877835`).
+**No feature work is in flight.** Working tree clean at `bdfe65c`, all gates green except the four
+deliberately-failing journey tests (T-0030, T-0031).
 See `.claude/CURRENT_TASK.md` for the detail on the next two.
 
 1. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
