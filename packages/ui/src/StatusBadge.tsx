@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { statusColor, type StatusKind } from '@autoworkshop/design-tokens';
+import { statusVar, type StatusKind } from '@autoworkshop/design-tokens';
 
 export interface StatusBadgeProps {
   kind: StatusKind;
@@ -24,7 +24,7 @@ export function StatusBadge({ kind, label, icon }: StatusBadgeProps) {
         display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
         padding: '0.125rem 0.5rem', borderRadius: '9999px',
         fontSize: '0.875rem', lineHeight: 1.5,
-        color: statusColor[kind], border: `1px solid ${statusColor[kind]}`,
+        color: statusVar[kind], border: `1px solid ${statusVar[kind]}`,
       }}
     >
       {icon}

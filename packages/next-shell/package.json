@@ -1,0 +1,28 @@
+{
+  "name": "@autoworkshop/next-shell",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@autoworkshop/design-tokens": "workspace:*",
+    "@autoworkshop/navigation": "workspace:*",
+    "@autoworkshop/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "next": "^15.1.3",
+    "react": "^18.3.1"
+  },
+  "scripts": {
+    "lint": "echo ok",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "next": "15.1.3",
+    "react": "18.3.1",
+    "@types/react": "^18.3.17",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

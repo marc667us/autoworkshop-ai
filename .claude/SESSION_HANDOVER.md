@@ -2,88 +2,93 @@
 
 > Read this first, then `.claude/CURRENT_PHASE.md` and `.claude/TASK_QUEUE.md`.
 
-## Where the project stands — 2026-07-26
+## Where the project stands — 2026-07-26 (session 2, afternoon)
 
-**Release 0.1 shipped and tagged `v0.1.0`** (CI green on that exact commit).
-**Phase 2 (identity) well underway.** Everything below is committed and pushed to `master` + `develop`.
+**Release 0.1 shipped and tagged `v0.1.0`.** **Phase 2 (identity) partially complete.**
+**Phase 3 (application shell, Release 0.2) is the current work and is now gated green.**
 
 Repo: https://github.com/marc667us/autoworkshop-ai — public, `master` + `develop`.
 Approved plan: `C:\Users\USER\Documents\autoworkshop app\_plan\COMBINED_PLAN_v2.md`
 (Codex `PASS WITH CORRECTIONS` 14/14 applied → Supervisor `PASS WITH CONDITIONS` 8/8 applied).
 
-## Completed
+## This session — resumed a frozen session and finished its work
 
-**Release 0.1 — foundation**
-- pnpm 9.15.4 + Turborepo monorepo; 7 Next.js apps; NestJS API; Storybook; design tokens
-- Docker stack, all self-hosted FOSS: Postgres+pgvector, Redis, NATS, MinIO, Keycloak, coturn
-- CI + Security lanes; ADR-001…016; governance docs (CLAUDE.md, context.MD, MEMORY.md, MCP.md, …)
+The previous session (transcript `f2cda62b-ed38-42fd-87de-540a2665efb4`) froze mid-command at
+14:27 UTC, part-way through `pnpm typecheck && pnpm build` after fixing a circular-import crash.
+Its process did not survive. This session read that transcript, resumed at exactly that point, and
+completed the work.
 
-**Phase 2 — identity (in progress)**
-- Migration 001 — tenancy foundation (tenants, organizations, branches, users, memberships)
-  + append-only `audit.events`
-- Migration 002 — `autoworkshop_app` role: `NOSUPERUSER`, `NOBYPASSRLS`, DML-only grants
-- Tracked migration runner with checksum drift detection
-- `DatabaseService.withTenant()` — the only sanctioned route to tenant data
-- `AuditService` — writes in the same transaction as the work it records
-- `OrganizationService` + controller — first real domain slice
-- `KeycloakJwtService` + `TenantGuard` — full auth chain
-- Keycloak realm as configuration-as-code: 30 roles, 7 PKCE clients, bearer-only API client
+**Gates, all green:** typecheck 13/13 · lint 13/13 · **tests 64** · build 9/9 (7 apps + API +
+Storybook). Runtime verified by serving the production build, not just by building it.
 
-**Tests: 20/20 passing.** Typecheck clean across 11 packages. CI green on both lanes.
+### Shipped
 
-## Defects found by verifying against real systems — do NOT reintroduce
+- `packages/navigation` — navigation model for all 7 workspaces from `01 (1).txt` §34-§39 and
+  `02.txt` §52/§58. 27 tests, including that all 25 platform-admin entries are present.
+- `packages/next-shell` — ONE Next adapter (`WorkspaceShell`, `renderModulePage`, `viewerGrants`)
+  for all 7 apps. The per-app shell copy that existed briefly was deleted.
+- `packages/ui` — AppShell, TopNav, SideNav, Breadcrumbs, PageHeader, StatusBadge, ThemeProvider,
+  **Tabs, Dialog, Drawer, AiAssistantPanel**, `useFocusTrap`, `useMediaQuery`.
+- Runtime theming (light / dark / **system**) via CSS custom properties + no-flash boot script.
+- Responsive shell: below 768px the side nav becomes a modal overlay drawer with a focus trap.
+  `prefers-reduced-motion` is honoured by every animation.
+- AI assistant panel per `02.txt` §8 — discloses the proposed action, the data it will use,
+  read-only vs changes-data, the approval requirement and sources. Not wired to an agent (Phase 8),
+  and it says so plainly rather than presenting an input box that swallows questions.
+- `ai-coworkers/` + `reviews/` + `scripts/` pair-coding skeleton installed (was missing entirely,
+  contrary to root CLAUDE.md). `./scripts/quality-gate.sh` now exists in this repo.
 
-All of these read back as "working" in configuration and were invisible to unit tests:
+## Defects found by review — do NOT reintroduce
 
-1. **RLS was completely inert.** A superuser bypasses RLS *even with FORCE*. The bootstrap
-   `POSTGRES_USER` is a superuser, so the app would have had every policy present and none applied.
-   → migration 002, plus a boot-time guard in `DatabaseService` that refuses to start on a superuser URL.
-2. **`current_role` is a PostgreSQL reserved keyword** — `SET LOCAL app.current_role` is a syntax error.
-   → `set_config()`, parameterised. A test asserts the broken form never returns.
-3. **`set_config(..., true)` is transaction-local**, and psql runs each statement in its own implicit
-   transaction, so seed context evaporated. Seeding is session-scoped; the app stays transaction-local
-   deliberately so pooled connections cannot leak tenant context.
-4. **A `clientScopes` array in Keycloak realm JSON REPLACES the built-in scopes.** The realm ended up
-   with 2 scopes and no `roles` scope — tokens carried no `realm_access.roles` claim, so the API could
-   not have authorized anything. → audience scope created post-import from its own file.
-5. **`defaultDefaultClientScopes` has the same replacement problem.** Removed.
-6. **Keycloak rejects unknown JSON keys** — `_comment` fields broke the import outright.
-7. **pnpm version declared twice** (workflow + `packageManager`) fails the action.
-   `packageManager` is the single source of truth.
-8. **vitest worker-RPC timeouts on Windows** → `pool: 'forks'` (246s → 14s).
-9. **`packages/ui`** declared React as a peer dependency with no build-time types.
+Codex reviewed the diff; each finding was verified against source before being accepted, and each
+fix was verified at runtime afterwards. Reviews are saved under `reviews/`.
+
+1. **The catch-all route ignored permissions entirely.** `renderModulePage` resolved against
+   `workspace.groups`, not the grant-filtered tree, so any permission-gated module rendered by URL —
+   and the placeholder page *printed the required permission name*, handing out a map of the
+   authorization model. It also claimed "permissions for this screen are working" while checking
+   none. Now resolves via `visibleGroups(workspace, grants)`, defaults to `[]` (fail closed), prints
+   no permission names, and the copy is honest. **Verified live: gated URL 404s, ungated 200s.**
+2. **Every right-hand top-nav button was focusable and inert.** Create / Tasks / Messages /
+   Notifications / Help rendered as live buttons with count badges and no handler; the TopNav
+   docstring simultaneously claimed "none of them silently no-op". An action with no `onSelect` now
+   renders `disabled` with ", not available yet" in its accessible name. The workspace/org/branch/
+   user indicators render as **plain text**, not buttons, until their switchers exist.
+3. **Self-found, after Codex's pass: the nav and the router disagreed about who the viewer is.**
+   The 7 `layout.tsx` files passed a hardcoded grants array while the catch-all passed none, so the
+   workshop nav advertised `/finance-and-warranty/invoices` and that URL 404'd. Both now read
+   `viewerGrants()` in `packages/next-shell/src/viewer.ts` — one function, one truth. Locked by
+   `viewer.test.ts`, which asserts the *property* (everything advertised must resolve), not the
+   symptom. **This is the bug class to watch for: two literals in two files cannot be type-checked
+   into agreement.**
+4. **`ThemeToggle` declared `role="radiogroup"` without the keyboard behaviour that promises.**
+   Three tab stops, no arrow keys. Now a roving tabindex with arrow/Home/End, per the ARIA pattern.
+5. **A circular import between `design-tokens/themes.ts` and `index.ts`** put `primitive` in the
+   temporal dead zone and crashed the production build while typecheck stayed green. Fixed by the
+   previous session by extracting `primitive.ts`. **Watch for this class — a green typecheck does
+   not prove a module graph initialises.**
+
+## The rule this session kept learning
+
+Everything in items 1, 2 and 3 passed typecheck, lint, 47-then-59 unit tests and a 7-app production
+build while broken. **Build the thing, then run it and look.** Every real defect here was found by
+either reading the code adversarially or by `curl`-ing the running app — none by a green gate.
 
 ## IN FLIGHT — pick up here
 
-**Supervisor condition C3 — WAL archiving + tested restore.** The outstanding must-fix from the plan
-review. It addresses the risk that actually destroyed Solar on 2026-07-09 (expiring free-tier database,
-no backups).
+**Nothing is half-done.** The next tasks, in order:
 
-**Done and VERIFIED live:**
-`infrastructure/docker/docker-compose.yml` — Postgres recreated with `wal_level=replica`,
-`archive_mode=on`, `archive_command` copying to `/wal_archive`, `archive_timeout=300`, plus new
-`pgwal` and `pgbackup` volumes. Confirmed on the running server:
-`archive_mode=on  archive_timeout=5min  wal_level=replica`
-
-**Known limitation, stated honestly:** `--data-checksums` is in `POSTGRES_INITDB_ARGS` but the running
-cluster reports `checksums=off`, because the `pgdata` volume already existed and `initdb` did not re-run.
-Data checksums **cannot be enabled on an existing cluster** without a dump/restore rebuild. Either accept
-it for local dev and ensure the production cluster is initialised fresh with checksums on, or rebuild
-locally: `docker compose down -v` then `up` (destroys local data), then re-run migrations.
-
-**Still to do for C3:**
-- `infrastructure/backup/` scripts — `pg_basebackup` daily, encrypted off-host copy to MinIO,
-  retention (WAL 7d / daily 35d / weekly 12w / monthly 12m, `1.txt` §33)
-- **A restore drill that actually restores** and records achieved RPO/RTO. A backup that has not been
-  restored is not a backup (`1.txt` §36–37)
-- Keycloak realm export on a schedule (`1.txt` §32)
-- Update `docs/05-database/BACKUP_AND_RESTORE.md` from plan to as-built
-
-## Next tasks after C3
-
-- T-0003 remainder: users, branches, memberships services + controllers, on the `OrganizationService` pattern
-- T-0004: permission matrix enforcement
-- Phase 3: application shell — top nav, grouped side nav, breadcrumbs (Release 0.2)
+1. **T-0008 — the restore drill.** The oldest outstanding Supervisor condition (C3). WAL archiving
+   is live and verified (`archive_mode=on`, `archive_timeout=5min`, `wal_level=replica`), but the
+   backup scripts and a drill that *actually restores* and records achieved RPO/RTO do not exist.
+   A backup that has never been restored is not a backup. This addresses precisely what destroyed
+   the Solar database on 2026-07-09.
+   Known limitation to resolve or accept: the local cluster reports `checksums=off` because the
+   `pgdata` volume predated `--data-checksums`; enabling it needs a dump/restore rebuild.
+2. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
+   journey + axe-core gate. These close Release 0.2.
+3. **T-0003 remainder** — users, branches, memberships services on the `OrganizationService`
+   pattern. This unblocks T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
 
 ## Environment
 
@@ -95,19 +100,35 @@ API: `cd apps/api && npx nest build && node dist/main.js` with
 `DATABASE_URL=postgresql://autoworkshop_app:change_me_locally@localhost:5432/autoworkshop`.
 **Never point the app at the `autoworkshop` superuser** — the boot guard refuses it, by design.
 
+Serve a built app to check it: `cd apps/workshop-web && npx next start -p 3001`.
+**Stop it before rebuilding** — a running Next server holds a lock on `.next` and the build fails on
+Windows with a file-lock error that looks like a code error and is not.
+
 Windows: `kcadm` runs in-container, so `MSYS_NO_PATHCONV=1 docker exec …` is required or Git Bash
-rewrites `/opt/keycloak/...` into `C:/Program Files/Git/opt/...`. The local side of `docker cp` needs
-the opposite treatment — `cygpath -w`.
+rewrites `/opt/keycloak/...` into `C:/Program Files/Git/opt/...`. The local side of `docker cp`
+needs the opposite treatment — `cygpath -w`.
+
+Codex CLI: `codex exec` **blocks waiting on stdin** unless you redirect `< /dev/null`, and it will
+answer a briefing-shaped prompt by acknowledging the role instead of doing the work. Give it an
+imperative first line, a diff already written to disk, and closed stdin. Its sandbox rejects
+`pnpm`/PowerShell, so it cannot run the tests — it reads only.
 
 ## Owner directions — binding
 
 1. Name fixed: **AutoWorkshop AI** at `autoworkshop.aiappinvent.com` (Namecheap DNS)
-2. **Stop cutting scope** — build everything structurally; only licensed content and labelled ML corpora stage
-3. **Reuse Solar patterns, never entangle** — separate repo, DB, Keycloak realm, deploy, secrets, CI
+2. **Stop cutting scope** — build everything structurally; only licensed content and labelled ML
+   corpora stage
+3. **Reuse Solar patterns, never entangle** — separate repo, DB, Keycloak realm, deploy, secrets, CI.
+   **Do not open or run the Solar app.** Patterns are reused from memory and documentation, not by
+   launching it.
 4. **Zero cost including production** — never propose spending; that decision is the owner's alone
 5. **Bring-your-own-connection** — tenants connect their own device/provider/credentials
 6. Zero cost now; commercial infrastructure later, only if going commercial
 7. **Solar is the reference — always refer to it**
+8. **Codex is the reviewer; the Supervisor is the adjudicator.** Codex's findings are verified
+   against source before being accepted — it is not infallible, and this session's third defect was
+   one it missed.
+9. **Do not run Google ADK or Stitch without the owner's approval.**
 
 ## Open owner decision (nothing to buy)
 
@@ -116,6 +137,9 @@ local-only. It runs locally today, so nothing is blocked.
 
 ## Machine state
 
-Sleep, hibernate and monitor timeouts are currently **disabled** (owner asked for uninterrupted running).
-To restore: `powercfg /change standby-timeout-ac 30`, `hibernate-timeout-ac 180`,
+Sleep, hibernate and monitor timeouts are currently **disabled** (owner asked for uninterrupted
+running). To restore: `powercfg /change standby-timeout-ac 30`, `hibernate-timeout-ac 180`,
 `monitor-timeout-ac 10`.
+
+A NestJS API process from the frozen session (`node dist/main.js`, started 05:09) was left running
+deliberately — it is a working service and nothing required restarting it.

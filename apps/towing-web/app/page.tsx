@@ -1,13 +1,11 @@
-import { StatusBadge } from '@autoworkshop/ui';
+import { redirect } from 'next/navigation';
 
-export default function Home() {
-  return (
-    <main style={{ fontFamily: 'system-ui, sans-serif', padding: '2rem', maxWidth: 720 }}>
-      <h1 style={{ fontSize: '1.875rem', marginBottom: '0.5rem' }}>
-        AutoWorkshop AI — Towing
-      </h1>
-      <p style={{ color: '#4b5563', marginBottom: '1rem' }}>Towing operators — requests, dispatch, proof of delivery</p>
-      <StatusBadge kind="draft" label="Release 0.1 — foundation" />
-    </main>
-  );
+/**
+ * §18: "The Dashboard shall be the default landing page for each workspace."
+ * A redirect, so the dashboard keeps exactly ONE canonical URL — two routes
+ * rendering the same page is how breadcrumbs and active-nav highlighting start
+ * disagreeing.
+ */
+export default function Index() {
+  redirect('/operations/dashboard');
 }
