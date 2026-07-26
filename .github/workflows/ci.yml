@@ -55,10 +55,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # pnpm 9 — pnpm 10+/11+ require Node >=22.13, but Node 20 is pinned to
-      # match the development machine (Node 20.19.2). Local and CI must agree.
+      # No `version:` here on purpose. package.json declares
+      # "packageManager": "pnpm@9.15.4", and the action reads it — specifying
+      # both is an error ("Multiple versions of pnpm specified").
+      # packageManager is the single source of truth, so corepack locally and
+      # the action in CI cannot drift apart.
+      #
+      # pnpm is held at 9 because pnpm 10+/11+ require Node >=22.13, and Node 20
+      # is pinned to match the development machine (20.19.2).
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
 
       - uses: actions/setup-node@v4
         with:
