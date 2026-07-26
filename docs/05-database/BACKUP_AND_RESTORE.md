@@ -168,12 +168,26 @@ Monthly restore drill recording achieved RPO/RTO · quarterly PITR to a chosen t
 Keycloak restore · six-monthly full environment recovery · annual DR exercise. Retested after every
 major architecture change.
 
-**Currently run manually.** Scheduling is the open piece — see the caveats below.
+**Scheduled since 2026-07-26 (T-0018).** The two environments share health / daily / weekly but
+**differ on the drill** — do not quote one cadence for both:
+
+| | Health | Daily | Weekly | Restore drill |
+|---|---|---|---|---|
+| Production — `schedule/autoworkshop-backup.cron` → `/etc/cron.d` | every 6 h | 02:15 | Sun 03:15 | **monthly, 1st at 04:15** (`15 4 1 * *`, matches §37) |
+| Local Windows — 4 `\AutoWorkshop\` tasks, `schedule/install-windows.ps1` | every 6 h | 02:15 | Sun 03:15 | **weekly, Sat 04:15** |
+
+The local drill runs weekly because it is free and this cluster is where regressions appear first;
+§37 only requires monthly, which is what production does.
+Every scheduled run goes through `run-scheduled.sh`, which writes `status/<job>.json` so a job that
+stops firing is detectable rather than merely absent.
 
 ## Known gaps — not hidden
 
-1. **Nothing is scheduled yet.** Every script is run by hand. A backup regime nobody runs is a
-   document, not a backup.
+1. **Alert *delivery* is not wired, though detection is.** `check-backup-health.sh` checks backup
+   age, scheduled-job freshness, `pg_stat_archiver.failed_count` and drill age, and exits non-zero
+   on failure. On the cron host a non-zero exit makes cron mail the output; **on Windows nothing
+   delivers it anywhere** — it writes `status/health.json` and a log, and a human has to look.
+   Detection is done (T-0019); routing it to a person who is not already looking is not.
 2. **Data checksums are off** on the local cluster: `--data-checksums` is in `POSTGRES_INITDB_ARGS`
    but the `pgdata` volume predated it and `initdb` never re-ran. It cannot be enabled on an existing
    cluster without a dump/restore rebuild. **The production cluster must be initialised fresh with
@@ -183,9 +197,16 @@ major architecture change.
    validated) but a full restore *from off-host alone* has not been drilled.
 4. **Object-lock / immutability and deletion protection are not configured.** MinIO object-lock must
    be enabled at bucket creation, so this needs a bucket rebuild.
-5. **No alert on backup age or on `failed_count` rising.** The archiving defect ran for five hours
-   unnoticed; monitoring is what would have caught it.
-6. **Keycloak realm restore has never been drilled** — only its export is verified.
+5. **Keycloak realm restore has never been drilled** — only its export is verified.
+6. **The stale-lock threshold doubles as a concurrency timeout.** `STALE_LOCK_MINUTES=180` in
+   `run-scheduled.sh` is measured from the lock directory's mtime and there is no heartbeat, so a
+   legitimate run exceeding three hours has its lock broken and a second run starts alongside it.
+   Today's backup and drill take minutes — a ~100× margin — but the fix (touch the lock from the
+   running job) belongs in place before this database is large enough to approach it.
+7. **The Windows tasks run as the interactive user**, so they need the owner logged in. This is a
+   local-development limitation, not a production one: the cron host runs them as the
+   `autoworkshop` service user. The first scheduled weekly run exited `0xC000013A` (terminated)
+   mid-run; every run since has exited `0x0` and the root cause is unconfirmed.
 
 ## Running it
 

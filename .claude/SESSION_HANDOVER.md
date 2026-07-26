@@ -110,6 +110,26 @@ Caveat: Windows tasks run as the interactive user, so they need you logged in. T
 weekly returned 0xC000013A (terminated) mid-run; clean on every retry, root cause unconfirmed —
 glance at the first real Sunday 03:15 run.
 
+**Re-verified 2026-07-26T19:47Z:** all four tasks `Ready`, `LastResult 0x0`, next runs scheduled
+(daily 07-27 02:15 · weekly 08-02 03:15 · drill 08-01 04:15 · health 6-hourly). Health check live:
+**HEALTHY 7/7**, WAL `archived=50, failed=0`, newest backup 1 h old, 4 base backups off-host.
+
+**T-0019 is partial, not done.** `check-backup-health.sh` *detects* (age, job freshness,
+`failed_count`, drill age) and exits non-zero, but delivery is cron-mail only — **on Windows
+nothing notifies anyone**; it writes `status/health.json` and waits to be read. Closing that is
+T-0023.
+
+⚠️ **`71a17fd` shipped without either review gate** — no `reviews/` record, and it updated no
+control file, which is why this handover and `TASK_QUEUE.md` both went stale. Retro-reviewed
+2026-07-26 (Codex + Supervisor); records in `reviews/`.
+
+**That retro-review found a CRITICAL and a HIGH, both now fixed.** The off-host-copy check reported
+`OK` when there were **zero** off-host backups — right on the healthy path, wrong on the only day it
+matters — and the per-job lock allowed two concurrent `pg_basebackup`s the file's own header said
+were impossible. **Codex found neither**; it drifted onto the Markdown files on both attempts
+despite an explicit four-file allow-list. Every code defect here came from the Supervisor pass.
+Treat a green Codex verdict on infrastructure shell as unproven until someone reads the code.
+
 ## Viewing the app locally
 
 `pnpm build` then, per app, `cd apps/<name>-web && npx next start -p <port>`:
@@ -120,16 +140,22 @@ Nothing is deployed to autoworkshop.aiappinvent.com yet.
 
 ## IN FLIGHT — pick up here
 
-1. **T-0018 — schedule the backup and the drill.** Everything still runs by hand. This is now the
-   most important open item: a backup regime nobody runs is a document, not a backup.
-2. **T-0019 — alert on backup age and on `failed_count` rising.** The archiving defect ran for five
-   hours unnoticed. Monitoring is what would have caught it, and nothing is watching yet.
-3. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
-   journey + axe-core gate. These close Release 0.2.
-4. **T-0003 remainder** — users, branches, memberships services on the `OrganizationService`
+**No feature work is in flight**, and all gates were green at the last feature commit (`3877835`).
+See `.claude/CURRENT_TASK.md` for the detail on the next two.
+
+1. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
+   journey + axe-core gate. **These close Release 0.2.** T-0015 is the one that matters: all 7
+   defects last session survived a green typecheck, lint, unit suite and 7-app build.
+2. **T-0003 remainder** — users, branches, memberships services on the `OrganizationService`
    pattern. Unblocks T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
-5. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, and a cluster rebuild with
+3. **T-0023** — deliver the backup health alert somewhere a human sees it. Detection is done
+   (T-0019); on Windows nothing routes it to a person.
+4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, and a cluster rebuild with
    `--data-checksums` on (it is currently **off** locally and cannot be enabled in place).
+
+**T-0018 is closed and T-0019 is partial** — both were delivered by `71a17fd` while this list still
+called them untouched, until 2026-07-26. T-0019's remaining half (delivering the alert to a human)
+is tracked as T-0023 above, not as T-0019. See the scheduling section.
 
 ## Environment
 

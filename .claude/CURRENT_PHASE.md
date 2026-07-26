@@ -46,6 +46,9 @@ agreement verified live and locked by a regression test in `packages/next-shell/
 Phase 4 — Customer and Vehicle (Release 0.3): registration, profile, vehicle garage, documents,
 service history, complaint submission, appointment request, workshop search, dashboard.
 
-**Do not start Phase 4 before** T-0008's restore drill: the backup work is the oldest outstanding
-Supervisor condition, and it addresses the exact failure that destroyed the Solar database on
-2026-07-09.
+**The gate that used to block Phase 4 is now clear.** T-0008's restore drill was the oldest
+outstanding Supervisor condition; it is done, drilled 4/4 (RTO 16–106 s, RPO 0) and scheduled
+(T-0018). Phase 4 is blocked only by the remaining Release 0.2 items below.
+
+**Remaining to close Release 0.2:** T-0014 (Storybook stories) and T-0015 (Playwright journey +
+axe-core). T-0016 stays blocked on T-0003 membership data; T-0017 is queued.

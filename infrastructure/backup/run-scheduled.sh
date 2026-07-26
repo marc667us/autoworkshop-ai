@@ -10,6 +10,13 @@
 #   1. A LOCK, so a slow run and the next scheduled run cannot overlap. Two
 #      concurrent pg_basebackups against one cluster is how a backup window
 #      turns into an outage.
+#
+#      The lock is shared by every job that touches the cluster or the artifact
+#      directory (daily, weekly, drill) — NOT one lock per job. A per-job lock
+#      would have let daily 02:15 overrun into weekly 03:15 and produce exactly
+#      the two concurrent pg_basebackups this is here to prevent, and would let
+#      backup.sh's pruning delete an artifact mid-restore-drill. `health` is
+#      read-only and cheap, so it takes its own lock and never blocks a backup.
 #   2. A LOG, so there is something to read afterwards.
 #   3. A STATUS FILE, so a monitor can tell "ran and succeeded" from "never ran
 #      at all". A scheduler that silently stops firing looks exactly like a
@@ -28,7 +35,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JOB="${1:-daily}"
 LOG_DIR="${HERE}/logs"
 STATUS_DIR="${HERE}/status"
-LOCK_DIR="${HERE}/.lock-${JOB}"
+# Jobs that touch the cluster or the artifact directory share one lock; the
+# read-only health check gets its own so it can always run and report.
+case "$JOB" in
+  health) LOCK_SCOPE="health"  ;;
+  *)      LOCK_SCOPE="cluster" ;;
+esac
+LOCK_DIR="${HERE}/.lock-${LOCK_SCOPE}"
 LOG_FILE="${LOG_DIR}/${JOB}.log"
 STATUS_FILE="${STATUS_DIR}/${JOB}.json"
 STALE_LOCK_MINUTES=180
@@ -50,10 +63,26 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     rm -rf "$LOCK_DIR"
     mkdir "$LOCK_DIR" 2>/dev/null || { echo "[$(stamp)] FATAL: cannot acquire lock" >> "$LOG_FILE"; exit 1; }
   else
-    echo "[$(stamp)] SKIPPED: '${JOB}' is already running (lock held)" >> "$LOG_FILE"
+    HOLDER="$(cat "${LOCK_DIR}/holder" 2>/dev/null || echo "unknown job")"
+    echo "[$(stamp)] SKIPPED: '${JOB}' not started — ${HOLDER} holds the ${LOCK_SCOPE} lock" >> "$LOG_FILE"
+    # Record the skip. Without this, a job skipped every time it fires looks
+    # identical to a job that is running fine: the status file just keeps its
+    # old success and nothing says the run never happened.
+    cat > "$STATUS_FILE" <<JSON
+{
+  "job": "${JOB}",
+  "last_run_utc": "$(stamp)",
+  "exit_code": 0,
+  "outcome": "skipped",
+  "skipped_because": "${HOLDER} holds the ${LOCK_SCOPE} lock",
+  "duration_seconds": 0,
+  "log": "${LOG_FILE}"
+}
+JSON
     exit 0   # not an error: the previous run is still working
   fi
 fi
+echo "${JOB} (pid $$, started $(stamp))" > "${LOCK_DIR}/holder" 2>/dev/null || true
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
 # ---------------------------------------------------------------------------

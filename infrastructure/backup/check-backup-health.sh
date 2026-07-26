@@ -54,15 +54,19 @@ for job in daily weekly drill; do
   if [ -f "$SF" ]; then
     RC="$(grep -o '"exit_code": *[0-9]*' "$SF" | grep -o '[0-9]*$')"
     WHEN="$(grep -o '"last_run_utc": *"[^"]*"' "$SF" | sed 's/.*"\([^"]*\)"$/\1/')"
+    OUTCOME="$(grep -o '"outcome": *"[^"]*"' "$SF" | sed 's/.*"\([^"]*\)"$/\1/')"
     if [ "${RC:-1}" -ne 0 ]; then
       crit_up "scheduled job '${job}' last FAILED (rc=${RC}) at ${WHEN}"
+    elif [ "${OUTCOME:-}" = "skipped" ]; then
+      # exit_code 0 but the work never happened. Without this branch a job that
+      # is skipped every single time it fires reports as a healthy success.
+      warn_up "scheduled job '${job}' was SKIPPED at ${WHEN} (lock held) — it did not run"
     else
       ok "scheduled job '${job}' last succeeded at ${WHEN}"
     fi
   else
     # Absence is the signal. A job that has never run leaves no failure behind.
-    [ "$job" = "weekly" ] && warn_up "scheduled job '${job}' has never run" \
-                          || warn_up "scheduled job '${job}' has never run"
+    warn_up "scheduled job '${job}' has never run"
   fi
 done
 
@@ -114,10 +118,29 @@ if docker ps --format '{{.Names}}' | grep -qx "$MINIO_CONTAINER"; then
   # found", the count comes back empty, and this reported CRITICAL "no off-host
   # backup" while four of them sat in the bucket. A false CRITICAL is not a safe
   # default — it is the thing that teaches an operator to ignore the check.
-  N="$(docker exec "$MINIO_CONTAINER" sh -c "
+  #
+  # Count WITHOUT `... | grep -c ... || echo 0`. That idiom is broken in exactly
+  # the case this check exists for: with zero matches `grep -c` prints "0" AND
+  # exits 1, so `|| echo 0` appends a second "0", N becomes "0\n0", the integer
+  # test below errors, and the `if` takes the ELSE branch — reporting OK when
+  # there are no off-host backups at all. It is only correct on the healthy
+  # path, which is why it survived live runs. Capture first, then count.
+  #
+  if LISTING="$(docker exec "$MINIO_CONTAINER" sh -c "
         mc alias set root http://localhost:9000 '${S3_ACCESS_KEY:-minioadmin}' '${S3_SECRET_KEY:-change_me_locally}' >/dev/null 2>&1
-        mc ls root/${BACKUP_BUCKET} 2>/dev/null" 2>/dev/null | grep -c 'base-.*\.tar\.gz\.enc$' || echo 0)"
-  if [ "${N:-0}" -eq 0 ]; then
+        mc ls root/${BACKUP_BUCKET} 2>/dev/null" 2>/dev/null)"; then
+    N="$(printf '%s\n' "$LISTING" | grep -c 'base-.*\.tar\.gz\.enc$' || true)"
+    N="$(printf '%s' "$N" | tr -dc '0-9')"   # one integer, whatever grep did
+    [ -z "$N" ] && N=0
+  else
+    # Could not list the bucket. That is not "zero backups" and must not be
+    # reported as either OK or a confirmed absence.
+    N=""
+  fi
+
+  if [ -z "$N" ]; then
+    crit_up "cannot list off-host bucket '${BACKUP_BUCKET}' — off-host copies UNCONFIRMED"
+  elif [ "$N" -eq 0 ]; then
     crit_up "no base backup found off-host — every copy is on the host being protected"
   else
     ok "${N} base backup(s) present off-host"

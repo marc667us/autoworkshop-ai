@@ -19,7 +19,9 @@
         AutoWorkshop-Backup-Health   every 6 hours
         AutoWorkshop-Backup-Daily    02:15 daily
         AutoWorkshop-Backup-Weekly   03:15 Sundays
-        AutoWorkshop-Restore-Drill   04:15 on the 1st of the month
+        AutoWorkshop-Restore-Drill   04:15 Saturdays (weekly — deliberately more
+                                     often than production's monthly cron, because
+                                     this cluster is where regressions appear first)
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
