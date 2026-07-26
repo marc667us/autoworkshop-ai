@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // The specs import `viewerGrants` from next-shell, whose barrel also
+    // re-exports .tsx components. Type-checking that barrel requires jsx to be
+    // set even though nothing here renders JSX.
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
+  "include": ["tests/**/*.ts", "playwright.config.ts"]
+}

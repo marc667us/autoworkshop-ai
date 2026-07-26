@@ -1,0 +1,29 @@
+{
+  "name": "@autoworkshop/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "echo 'e2e has no build artefact'",
+    "lint": "echo ok",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'e2e runs via pnpm e2e — it needs built apps and a browser'",
+    "e2e": "playwright test",
+    "e2e:a11y": "playwright test --project=storybook-a11y",
+    "e2e:journey": "playwright test --project=shell-journey",
+    "e2e:install": "playwright install --with-deps chromium",
+    "e2e:report": "playwright show-report"
+  },
+  "dependencies": {
+    "@autoworkshop/navigation": "workspace:*",
+    "@autoworkshop/next-shell": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@axe-core/playwright": "^4.10.1",
+    "axe-core": "^4.10.2",
+    "http-server": "^14.1.1",
+    "next": "14.2.21",
+    "@types/node": "^20.17.10",
+    "typescript": "^5.7.2"
+  }
+}
