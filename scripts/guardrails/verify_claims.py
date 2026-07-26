@@ -61,7 +61,8 @@ DEFAULT_TARGETS = [
 
 TASK_QUEUE = Path(".claude/TASK_QUEUE.md")
 
-STATUS_WORDS = ["done", "queued", "partial", "blocked", "in progress", "complete"]
+STATUS_WORDS = ["done", "queued", "partial", "blocked", "in progress", "complete", "open",
+                "withdrawn"]
 HISTORICAL_MARKERS = [
     "was ", "were ", "until", "previously", "no longer", "used to", "had ",
     "shipped without", "said otherwise", "went stale", "before", "history",

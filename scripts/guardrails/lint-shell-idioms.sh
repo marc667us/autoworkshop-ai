@@ -43,7 +43,12 @@ echo "=== shell idiom lint ==="
 # false-healthy in check-backup-health.sh (the off-host backup count reported
 # OK when there were zero backups) and was then reproduced in scoped-review.sh
 # within the same session.
-HITS="$(scan 'grep +-c[^|]*\|\| *echo')"
+# Require the match to sit inside a command substitution `$( ... )`. The bare
+# pattern also matched this file's own report strings, which quote the banned
+# idiom in order to explain it — the rule failing on its own documentation.
+# Skipping comments was not enough: the text also appears inside message
+# literals, and only the assignment context is the actual defect.
+HITS="$(scan '\$\([^)]*grep +-c[^|]*\|\| *echo')"
 if [ -n "$HITS" ]; then
   report FAIL "\`grep -c ... || echo N\` produces \"N\\nN\" on zero matches:"
   printf '%s\n' "$HITS" | show

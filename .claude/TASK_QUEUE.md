@@ -27,7 +27,7 @@
 | T-0022 | Rebuild the local cluster with `--data-checksums` on | 2 | queued |
 
 | T-0023 | Deliver the health-check alert somewhere a human sees it (closes T-0019) | 2 | queued |
-| T-0025 | ~~axe `color-contrast`~~ | 3 | **not reproducible** — the 10 hits came from stories rendering Storybook's error page, not from the palette |
+| T-0025 | ~~axe `color-contrast`~~ | 3 | **withdrawn** — the 10 hits came from stories rendering Storybook's error page, not from the palette |
 | T-0026 | Dangling `aria-controls` (nav toggle + every collapsed SideNav group) | 3 | **done** — both were real; axe rated them CRITICAL |
 | T-0027 | Navigation model becomes **workspace x role** (07 pt2 §46-§50) | 3 | queued — blocks Phase 5 |
 | T-0028 | Account types as *requests*, workshop staff invitation, approval limits | 2 | queued |
