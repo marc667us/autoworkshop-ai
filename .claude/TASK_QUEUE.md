@@ -9,7 +9,7 @@
 | T-0005 | Tenant context resolution from validated claims | 2 | **partial** — `KeycloakJwtService` + `TenantGuard` done; web apps not yet session-wired (see `viewerGrants`) |
 | T-0006 | RLS FORCE + tenant-isolation test suite | 2 | **partial** — RLS proven as non-superuser; full suite outstanding |
 | T-0007 | Audit framework (append-only) | 2 | **done** — `AuditService`, same transaction as the work it records |
-| T-0008 | WAL archiving + PITR + off-host backup (Supervisor C3) | 2 | **partial** — WAL archiving live and verified; backup scripts + restore drill outstanding |
+| T-0008 | WAL archiving + PITR + off-host backup + restore drill (Supervisor C3) | 2 | **done** — archiving fixed (had NEVER worked), drill passes 4/4, RTO 16-106s, RPO 0 |
 | T-0009 | Top navigation bar | 3 | **done** |
 | T-0010 | Collapsible grouped side navigation | 3 | **done** |
 | T-0011 | Shell surfaces: tabs, dialogs, drawers, AI assistant panel | 3 | **done** |
@@ -20,6 +20,15 @@
 | T-0016 | Workspace / organisation / branch switchers | 3 | **blocked** on T-0003 membership data |
 | T-0017 | Quick-create, tasks, messages, notifications, help panels (§9-§14) | 3 | queued |
 
-**Next up:** T-0014 and T-0015 close Release 0.2. T-0008's restore drill is the oldest outstanding
-Supervisor condition and should not slip further — a backup that has never been restored is not a
-backup.
+| T-0018 | Schedule the backup + drill (nothing runs automatically yet) | 2 | queued |
+| T-0019 | Alert on backup age and on `pg_stat_archiver.failed_count` rising | 2 | queued |
+| T-0020 | Drill a restore from the OFF-HOST copy alone | 2 | queued |
+| T-0021 | MinIO object-lock / immutability (needs a bucket rebuild) | 2 | queued |
+| T-0022 | Rebuild the local cluster with `--data-checksums` on | 2 | queued |
+
+**Next up:** T-0014 and T-0015 close Release 0.2.
+
+**T-0008 is done and drilled** — the backup restores, proven four times, RTO 16–106 s, RPO 0. But the
+work it uncovered is now T-0018…T-0022, and **T-0018 is the important one**: every script still runs
+by hand. A backup regime nobody runs is a document, not a backup. T-0019 matters for the same reason
+the original defect went unnoticed for five hours — nothing was watching.

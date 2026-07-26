@@ -74,21 +74,36 @@ Everything in items 1, 2 and 3 passed typecheck, lint, 47-then-59 unit tests and
 build while broken. **Build the thing, then run it and look.** Every real defect here was found by
 either reading the code adversarially or by `curl`-ing the running app — none by a green gate.
 
+## T-0008 (Supervisor C3) — DONE AND DRILLED
+
+**WAL archiving had never once worked.** It was recorded last session as "done and VERIFIED live";
+that verification had read the settings back. `pg_stat_archiver` said `archived_count=0`,
+`failed_count=864`. `/wal_archive` was a root-owned Docker volume and `archive_command` runs as
+uid 999 — every attempt denied, retried forever, nothing surfaced. **There was no point-in-time
+recovery at all.** Fixed by the `postgres-init` service in the compose file.
+
+Now in `infrastructure/backup/`: `verify-archiving.sh` (proves archiving by forcing a switch),
+`backup.sh` (encrypted physical + logical + Keycloak realm, checksums, manifest, off-host copy,
+retention) and `restore-drill.sh` (restores into a throwaway cluster and measures RTO/RPO).
+
+**Drill passes 4/4 runs, 8/8 checks: RTO 16–106 s, RPO 0** — including all 10 transactions committed
+*after* the backup, which is the actual proof of WAL replay. Reports in
+`infrastructure/backup/drills/`. Full record in `reviews/supervisor-adjudication-c3-backup.md`.
+
+Run it: `cd infrastructure/backup && ./restore-drill.sh` (~2 min, never touches the live cluster).
+
 ## IN FLIGHT — pick up here
 
-**Nothing is half-done.** The next tasks, in order:
-
-1. **T-0008 — the restore drill.** The oldest outstanding Supervisor condition (C3). WAL archiving
-   is live and verified (`archive_mode=on`, `archive_timeout=5min`, `wal_level=replica`), but the
-   backup scripts and a drill that *actually restores* and records achieved RPO/RTO do not exist.
-   A backup that has never been restored is not a backup. This addresses precisely what destroyed
-   the Solar database on 2026-07-09.
-   Known limitation to resolve or accept: the local cluster reports `checksums=off` because the
-   `pgdata` volume predated `--data-checksums`; enabling it needs a dump/restore rebuild.
-2. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
+1. **T-0018 — schedule the backup and the drill.** Everything still runs by hand. This is now the
+   most important open item: a backup regime nobody runs is a document, not a backup.
+2. **T-0019 — alert on backup age and on `failed_count` rising.** The archiving defect ran for five
+   hours unnoticed. Monitoring is what would have caught it, and nothing is watching yet.
+3. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
    journey + axe-core gate. These close Release 0.2.
-3. **T-0003 remainder** — users, branches, memberships services on the `OrganizationService`
-   pattern. This unblocks T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
+4. **T-0003 remainder** — users, branches, memberships services on the `OrganizationService`
+   pattern. Unblocks T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
+5. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, and a cluster rebuild with
+   `--data-checksums` on (it is currently **off** locally and cannot be enabled in place).
 
 ## Environment
 

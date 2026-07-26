@@ -12,10 +12,44 @@ name: autoworkshop
 
 services:
 
+  # One-shot: give the WAL-archive and backup volumes to the postgres uid.
+  #
+  # WHY THIS EXISTS — it is not boilerplate. Docker creates a named volume
+  # owned by root:root, and the postgres image's entrypoint only chowns its own
+  # PGDATA. `archive_command` runs as uid 999 (postgres), so every archive
+  # attempt failed with "Permission denied" — silently, because Postgres logs
+  # the failure and simply retries the same segment forever. The database
+  # reported `archive_mode=on`, `wal_level=replica` and `archive_timeout=5min`
+  # exactly as configured while `pg_stat_archiver` showed archived_count=0 and
+  # failed_count=864 against a single segment. Configuration that reads back
+  # correct is not a working backup.
+  #
+  # Same root cause would have broken `pg_basebackup` writing to /backups.
+  postgres-init:
+    image: pgvector/pgvector:pg16
+    container_name: aw-postgres-init
+    user: root
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        mkdir -p /wal_archive /backups
+        chown -R 999:999 /wal_archive /backups
+        chmod 700 /wal_archive /backups
+        echo "wal_archive and backups are owned by the postgres uid"
+    volumes:
+      - pgwal:/wal_archive
+      - pgbackup:/backups
+    restart: "no"
+
   postgres:
     image: pgvector/pgvector:pg16
     container_name: aw-postgres
     restart: unless-stopped
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-autoworkshop}
       POSTGRES_USER: ${POSTGRES_USER:-autoworkshop}

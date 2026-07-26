@@ -68,3 +68,11 @@ tunnel_*.log
 *.bak_*
 Thumbs.db
 .DS_Store
+
+# ── Backup artefacts and the backup encryption key ──────────────────────────
+# `.backup-key` does NOT match the `*.key` rule above (it ends in "-key", not
+# ".key"). Solar leaked secrets for 35 days in 2026-07; this is the same class
+# of mistake, one commit away.
+infrastructure/backup/.backup-key
+infrastructure/backup/.backup-s3-secret
+infrastructure/backup/artifacts/
