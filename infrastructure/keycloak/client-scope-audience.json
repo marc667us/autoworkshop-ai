@@ -1,0 +1,21 @@
+{
+  "name": "autoworkshop-audience",
+  "description": "Adds the API as an audience so tokens are audience-restricted (0.txt S16)",
+  "protocol": "openid-connect",
+  "attributes": {
+    "include.in.token.scope": "true",
+    "display.on.consent.screen": "false"
+  },
+  "protocolMappers": [
+    {
+      "name": "autoworkshop-api-audience",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "config": {
+        "included.client.audience": "autoworkshop-api",
+        "id.token.claim": "false",
+        "access.token.claim": "true"
+      }
+    }
+  ]
+}
