@@ -1,0 +1,35 @@
+# AutoWorkshop AI — backup schedule for the production Docker host (T-0018).
+#
+# Install:
+#   sudo cp autoworkshop-backup.cron /etc/cron.d/autoworkshop-backup
+#   sudo chown root:root /etc/cron.d/autoworkshop-backup
+#   sudo chmod 644 /etc/cron.d/autoworkshop-backup
+#
+# `/etc/cron.d` rather than a user crontab because it is a file in the repo:
+# reviewable, diffable, and reinstalled by the same IaC that rebuilds the host.
+# A schedule that exists only in one machine's crontab is lost with that machine
+# — which is precisely the disaster this whole subsystem is defending against.
+#
+# The user must be able to run `docker` (in the `docker` group). Set
+# AW_HOME to wherever the repository is checked out on the host.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+AW_HOME=/opt/autoworkshop-ai
+
+# Health check every 6 hours. Cheap, and it is the thing that notices a schedule
+# has silently stopped firing — the failure mode that hid the WAL archiving
+# defect for five hours. Non-zero exit makes cron mail the output.
+0 */6 * * *   autoworkshop  $AW_HOME/infrastructure/backup/run-scheduled.sh health
+
+# Daily backup at 02:15. Off-peak, and offset from the hour so it does not
+# collide with everything else on the host that runs at :00.
+15 2 * * *    autoworkshop  $AW_HOME/infrastructure/backup/run-scheduled.sh daily
+
+# Weekly full backup, Sunday 03:15. Same artefacts, different retention label.
+15 3 * * 0    autoworkshop  $AW_HOME/infrastructure/backup/run-scheduled.sh weekly
+
+# Monthly restore drill, 1st of the month at 04:15 (`1.txt` §37).
+# This is the one that matters. Everything above produces files; only this
+# proves they are worth having.
+15 4 1 * *    autoworkshop  $AW_HOME/infrastructure/backup/run-scheduled.sh drill

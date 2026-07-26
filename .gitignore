@@ -76,3 +76,5 @@ Thumbs.db
 infrastructure/backup/.backup-key
 infrastructure/backup/.backup-s3-secret
 infrastructure/backup/artifacts/
+infrastructure/backup/logs/
+infrastructure/backup/status/

@@ -20,7 +20,7 @@ LOCAL_DIR="${BACKUP_HOME}/artifacts"
 KEY_FILE="${BACKUP_KEY_FILE:-${BACKUP_HOME}/.backup-key}"
 DRILL_DIR="${BACKUP_HOME}/drills"
 
-mkdir -p "$LOCAL_DIR" "$DRILL_DIR"
+mkdir -p "$LOCAL_DIR" "$DRILL_DIR" "${BACKUP_HOME}/status" "${BACKUP_HOME}/logs"
 
 log()  { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 warn() { printf '[%s] WARNING: %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
@@ -40,6 +40,13 @@ pg_query() {
 pg_query_on() {
   # pg_query_on <container> <port-inside> <sql>
   docker exec "$1" psql -U "$PG_USER" -d "$PG_DB" -tAc "$3" 2>/dev/null
+}
+
+# Execute statements for effect. `-i` because the SQL arrives on stdin; without
+# it psql exits 0 having read nothing at all.
+pg_exec() {
+  printf '%s' "$1" | docker exec -i "$PG_CONTAINER" \
+    psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 -q >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------------------
@@ -115,6 +122,29 @@ archiver_healthy() {
     warn "the postgres user cannot write to /wal_archive — archive_command cannot possibly succeed"
     return 1
   fi
+
+  # GENERATE WAL BEFORE SWITCHING. `pg_switch_wal()` is documented to do nothing
+  # if there has been no WAL activity since the last switch — so on an IDLE
+  # database the "forced" switch is a no-op, archived_count never moves, and
+  # this check concludes archiving is broken when it is perfectly healthy.
+  #
+  # That false negative is not cosmetic: this function gates every backup, so an
+  # idle production database at 02:15 would refuse to back itself up, for ever,
+  # citing a failure that is not happening. Caught by running the scheduled job
+  # against a quiet database — it passed every manual test because those always
+  # followed a write.
+  #
+  # The heartbeat row is the write. It is trimmed to the last 10 rows so the
+  # table cannot grow, and it lives in its own schema so it can never be
+  # confused with business data.
+  pg_exec "
+    CREATE SCHEMA IF NOT EXISTS _backup;
+    CREATE TABLE IF NOT EXISTS _backup.archive_heartbeat(
+      id bigserial PRIMARY KEY, at timestamptz NOT NULL DEFAULT now());
+    INSERT INTO _backup.archive_heartbeat DEFAULT VALUES;
+    DELETE FROM _backup.archive_heartbeat
+      WHERE id <= (SELECT max(id) - 10 FROM _backup.archive_heartbeat);
+  " || { warn "could not write the archive heartbeat"; return 1; }
 
   pg_query "SELECT pg_switch_wal()" >/dev/null 2>&1 || { warn "could not force a WAL switch"; return 1; }
 

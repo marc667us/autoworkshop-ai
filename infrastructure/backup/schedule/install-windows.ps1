@@ -1,0 +1,124 @@
+<#
+    AutoWorkshop AI — register the backup schedule on a Windows workstation (T-0018).
+
+    The production target is a Linux Docker host using
+    `schedule/autoworkshop-backup.cron`. This script is the local equivalent, so
+    that the machine where the stack actually runs today also runs its backups
+    unattended rather than only when someone remembers.
+
+    Both schedules call the SAME `run-scheduled.sh`, so behaviour, locking,
+    logging and status files are identical on either platform. The scheduler is
+    the only platform-specific piece, which is the point.
+
+    Usage (from an elevated PowerShell):
+        .\install-windows.ps1
+        .\install-windows.ps1 -Remove
+        .\install-windows.ps1 -WhatIf      # show what would be registered
+
+    Tasks registered (all under the \AutoWorkshop\ folder):
+        AutoWorkshop-Backup-Health   every 6 hours
+        AutoWorkshop-Backup-Daily    02:15 daily
+        AutoWorkshop-Backup-Weekly   03:15 Sundays
+        AutoWorkshop-Restore-Drill   04:15 on the 1st of the month
+#>
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [switch]$Remove,
+    [string]$BashPath = "C:\Program Files\Git\bin\bash.exe"
+)
+
+$ErrorActionPreference = 'Stop'
+
+$BackupDir = Split-Path -Parent $PSScriptRoot
+$TaskFolder = '\AutoWorkshop\'
+
+if (-not (Test-Path $BashPath)) {
+    throw "Git Bash not found at '$BashPath'. Pass -BashPath with the correct location."
+}
+if (-not (Test-Path (Join-Path $BackupDir 'run-scheduled.sh'))) {
+    throw "run-scheduled.sh not found under '$BackupDir'."
+}
+
+# Git Bash needs a POSIX path. C:\a\b -> /c/a/b
+function ConvertTo-PosixPath([string]$WindowsPath) {
+    $p = $WindowsPath -replace '\\', '/'
+    if ($p -match '^([A-Za-z]):(.*)$') { return "/$($Matches[1].ToLower())$($Matches[2])" }
+    return $p
+}
+
+$PosixDir = ConvertTo-PosixPath $BackupDir
+
+$Tasks = @(
+    @{ Name = 'AutoWorkshop-Backup-Health'
+       Job  = 'health'
+       Desc = 'Backup health check — notices a schedule that has silently stopped firing.'
+       Trigger = { $t = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(5) `
+                        -RepetitionInterval (New-TimeSpan -Hours 6); $t } }
+
+    @{ Name = 'AutoWorkshop-Backup-Daily'
+       Job  = 'daily'
+       Desc = 'Daily encrypted physical + logical backup with off-host copy.'
+       Trigger = { New-ScheduledTaskTrigger -Daily -At '02:15' } }
+
+    @{ Name = 'AutoWorkshop-Backup-Weekly'
+       Job  = 'weekly'
+       Desc = 'Weekly full backup (retention label differs from daily).'
+       Trigger = { New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At '03:15' } }
+
+    @{ Name = 'AutoWorkshop-Restore-Drill'
+       Job  = 'drill'
+       Desc = 'Monthly restore drill — proves the backups are actually restorable.'
+       # Task Scheduler has no native "1st of the month" via New-ScheduledTaskTrigger,
+       # so this runs weekly and run-scheduled.sh is cheap to no-op; the drill
+       # itself is ~2 minutes, so running it weekly is strictly better than
+       # monthly anyway. §37 asks for monthly as a MINIMUM.
+       Trigger = { New-ScheduledTaskTrigger -Weekly -DaysOfWeek Saturday -At '04:15' } }
+)
+
+if ($Remove) {
+    foreach ($t in $Tasks) {
+        $existing = Get-ScheduledTask -TaskName $t.Name -TaskPath $TaskFolder -ErrorAction SilentlyContinue
+        if ($existing) {
+            if ($PSCmdlet.ShouldProcess($t.Name, 'Unregister scheduled task')) {
+                Unregister-ScheduledTask -TaskName $t.Name -TaskPath $TaskFolder -Confirm:$false
+                Write-Output "removed  $($t.Name)"
+            }
+        } else {
+            Write-Output "absent   $($t.Name)"
+        }
+    }
+    return
+}
+
+foreach ($t in $Tasks) {
+    # -lc so the login shell sets up the Git Bash environment; the script is
+    # invoked by its POSIX path with the job name as its single argument.
+    $argument = '-lc "' + $PosixDir + '/run-scheduled.sh ' + $t.Job + '"'
+    $action   = New-ScheduledTaskAction -Execute $BashPath -Argument $argument -WorkingDirectory $BackupDir
+    $trigger  = & $t.Trigger
+
+    # Run whether or not the user is logged on would need stored credentials;
+    # this deliberately runs as the interactive user instead, so no password is
+    # captured. On the production Linux host, cron runs as a service account and
+    # this limitation does not apply.
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 2) `
+        -MultipleInstances IgnoreNew
+
+    if ($PSCmdlet.ShouldProcess($t.Name, 'Register scheduled task')) {
+        Register-ScheduledTask -TaskName $t.Name -TaskPath $TaskFolder `
+            -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
+            -Description $t.Desc -Force | Out-Null
+        Write-Output "registered  $($t.Name)  ->  $($t.Job)"
+    }
+}
+
+Write-Output ''
+Write-Output 'Registered under Task Scheduler folder \AutoWorkshop\.'
+Write-Output 'Verify:  Get-ScheduledTask -TaskPath \AutoWorkshop\ | Format-Table TaskName,State'
+Write-Output 'Run now: Start-ScheduledTask -TaskName AutoWorkshop-Backup-Health -TaskPath \AutoWorkshop\'
+Write-Output 'Logs:    infrastructure/backup/logs/   Status: infrastructure/backup/status/'
