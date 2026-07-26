@@ -23,6 +23,26 @@ Domain event messages carry tenant metadata.
 tenant identifier supplied only by the client"). Every request resolves **exactly one** active tenant
 context, server-side, from validated identity.
 
+## The application must NEVER connect as a superuser
+
+**`ENABLE` + `FORCE ROW LEVEL SECURITY` is necessary but not sufficient. A superuser bypasses RLS
+entirely, even with `FORCE`.** An application connecting as the bootstrap `POSTGRES_USER` role would have
+every policy present and none of them applied — isolation silently switched off.
+
+This was found by running the proof against a live database: tenant A could see 2 organizations when it
+should have seen 1. The policies were correct; the connecting role was wrong.
+
+| Role | Superuser | BYPASSRLS | Use |
+|---|---|---|---|
+| `autoworkshop` | yes | yes | **Migrations only.** Never the application. |
+| `autoworkshop_app` | **no** | **no** | The application connects as this, always. |
+
+`autoworkshop_app` is created by migration 002 with `NOSUPERUSER NOBYPASSRLS` and DML-only grants — no
+DDL, because schema change belongs to migrations, not to a running application.
+
+**The isolation proof runs as `autoworkshop_app` for the same reason: a proof run as a superuser proves
+nothing at all.**
+
 ## Transaction-local settings
 
 ```sql

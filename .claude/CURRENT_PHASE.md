@@ -16,9 +16,9 @@ A working development environment: monorepo, frontend, backend, database, Storyb
 - [x] Docker compose: Postgres, Redis, NATS, MinIO, Keycloak, coturn
 - [x] Design tokens package
 - [x] ADR-001 … ADR-016
-- [ ] Storybook running
-- [ ] Seed docs complete
-- [ ] Tag v0.1.0
+- [x] Storybook running (react-vite, a11y addon, telemetry off)
+- [x] Seed docs complete (06.txt 'minimum files to create first')
+- [ ] Tag v0.1.0 — pending live verification of the docker stack + migration
 
 ## Acceptance criteria
 

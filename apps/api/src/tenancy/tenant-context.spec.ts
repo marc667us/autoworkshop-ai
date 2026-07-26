@@ -73,7 +73,7 @@ describe('resolveTenantContext', () => {
     expect(ctx.activeRole).toBe('workshop_owner');
   });
 
-  it('binds context with SET LOCAL so pooled connections cannot leak it', () => {
+  it('binds context transaction-locally so pooled connections cannot leak it', () => {
     const stmts = tenantSessionStatements(
       resolveTenantContext({
         userId: 'user-1',
@@ -81,7 +81,13 @@ describe('resolveTenantContext', () => {
         correlationId: 'c',
       }),
     );
-    expect(stmts.every((s) => s.startsWith('SET LOCAL '))).toBe(true);
+    // Every statement must be transaction-local (the `true` third argument),
+    // or a pooled connection would carry one tenant's context into the next.
+    expect(stmts.every((s) => s.startsWith('SELECT set_config('))).toBe(true);
+    expect(stmts.every((s) => s.endsWith(', true)'))).toBe(true);
     expect(stmts.some((s) => s.includes('app.current_role'))).toBe(true);
+    // `current_role` is reserved in PostgreSQL — the SET LOCAL form is a
+    // syntax error, so it must never come back.
+    expect(stmts.some((s) => s.startsWith('SET LOCAL'))).toBe(false);
   });
 });

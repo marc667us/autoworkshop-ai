@@ -15,7 +15,18 @@
 \set ON_ERROR_STOP on
 
 -- ── arrange: two tenants, each with an organization and a branch ────────────
-SET LOCAL app.current_role = 'admin';   -- platform admin, for seeding only
+-- NOTE: `current_role` is a RESERVED KEYWORD in PostgreSQL, so
+--   SET LOCAL app.current_role = '...'
+-- is a syntax error. set_config() is the only working form. This is the
+-- same reason Solar's RLS seeding needed set_config().
+-- `true` = transaction-local. psql runs each statement in its OWN implicit
+-- transaction, so a transaction-local setting would evaporate before the very
+-- next INSERT. Seeding therefore uses `false` (session-scoped).
+--
+-- The application does the opposite on purpose: it sets context with `true`
+-- INSIDE the same transaction as the query, so a pooled connection cannot carry
+-- one tenant's context into the next request. See tenantSessionStatements().
+SELECT set_config('app.current_role', 'admin', false);  -- session-scoped, seeding only
 
 INSERT INTO identity.tenants (id, name, slug)
 VALUES ('11111111-1111-1111-1111-111111111111', 'Tenant A', 'tenant-a'),
