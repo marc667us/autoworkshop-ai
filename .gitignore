@@ -78,3 +78,7 @@ infrastructure/backup/.backup-s3-secret
 infrastructure/backup/artifacts/
 infrastructure/backup/logs/
 infrastructure/backup/status/
+
+# Guardrail runtime state: retrieval index, context packs, raw reviewer output.
+# Generated evidence, not source - and the raw transcripts are large.
+.guardrails/

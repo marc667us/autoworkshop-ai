@@ -4,6 +4,23 @@ set -e
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source ./scripts/_codex-runner.sh
 
+# Stage 0 runs FIRST and is deterministic: no model, no network, no judgement.
+# It is cheap and it fails fast, so a broken claim or a banned idiom is caught
+# before spending five Codex passes on the same diff. Everything downstream of
+# here is probabilistic; this part is not.
+echo "=== Stage 0: Guardrails (deterministic — drift and hallucination) ==="
+GUARDRAIL_RC=0
+./scripts/guardrails/lint-shell-idioms.sh || GUARDRAIL_RC=1
+echo ""
+PYTHONIOENCODING=utf-8 python scripts/guardrails/verify_claims.py || GUARDRAIL_RC=1
+if [ "$GUARDRAIL_RC" -ne 0 ]; then
+  echo ""
+  echo "GUARDRAILS FAILED — stopping before the Codex pipeline."
+  echo "Fix the findings above: they are objective, and no reviewer opinion overrides them."
+  exit 1
+fi
+echo ""
+
 echo "=== Stage 1: Codex review pipeline ==="
 ./scripts/codex-review.sh
 ./scripts/codex-security-review.sh

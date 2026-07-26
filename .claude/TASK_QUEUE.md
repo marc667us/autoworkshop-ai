@@ -27,6 +27,7 @@
 | T-0022 | Rebuild the local cluster with `--data-checksums` on | 2 | queued |
 
 | T-0023 | Deliver the health-check alert somewhere a human sees it (closes T-0019) | 2 | queued |
+| T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
 **Next up:** T-0014 and T-0015 close Release 0.2.
 

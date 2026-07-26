@@ -63,7 +63,7 @@ fix was verified at runtime afterwards. Reviews are saved under `reviews/`.
    into agreement.**
 4. **`ThemeToggle` declared `role="radiogroup"` without the keyboard behaviour that promises.**
    Three tab stops, no arrow keys. Now a roving tabindex with arrow/Home/End, per the ARIA pattern.
-5. **A circular import between `design-tokens/themes.ts` and `index.ts`** put `primitive` in the
+5. **A circular import between `packages/design-tokens/src/themes.ts` and `index.ts`** put `primitive` in the
    temporal dead zone and crashed the production build while typecheck stayed green. Fixed by the
    previous session by extracting `primitive.ts`. **Watch for this class — a green typecheck does
    not prove a module graph initialises.**

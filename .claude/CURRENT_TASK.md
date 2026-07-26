@@ -2,7 +2,7 @@
 
 **No feature work is in flight**, and all gates were green at the last feature commit (`3877835`).
 The previous task (T-0009…T-0013, the application shell) is complete; the backup thread (T-0008,
-T-0018) is complete and scheduled, with alert delivery outstanding as T-0023.
+T-0018) is complete and scheduled. Alert delivery remains outstanding. See T-0023.
 
 **Next up: T-0014 and T-0015 — they close Release 0.2.**
 
