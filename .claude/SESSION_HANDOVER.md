@@ -109,3 +109,17 @@ domain-service layer · then WAL archiving + off-host backup (Supervisor conditi
 cloud VM, an existing machine, or local-only for now. It runs locally today.
 
 **Remember to restore power settings when the overnight run ends** — previous values are recorded above.
+
+### Correction — v0.1.0 was tagged before CI confirmed
+
+I tagged and reported Release 0.1 complete while CI was still running; it then failed.
+
+Cause: `pnpm/action-setup` rejects the pnpm version being declared twice — `version: 9` in the workflow
+AND `packageManager: pnpm@9.15.4` in package.json. Introduced by my own earlier pnpm/Node fix.
+
+Fix: removed the action's pin. `packageManager` is now the single source of truth, so corepack locally
+and the action in CI read the same value and cannot drift.
+
+The tag was deleted and re-created on the green commit (aaa89e8), so v0.1.0 points at a verified build.
+
+**Lesson for future releases: do not tag until CI reports green on that exact commit.**
