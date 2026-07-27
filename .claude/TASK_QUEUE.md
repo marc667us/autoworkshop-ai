@@ -6,7 +6,7 @@
 | T-0002 | Keycloak realm + client + docker wiring | 2 | **done** — realm as configuration-as-code |
 | T-0003 | Users, organizations, branches, memberships | 2 | **done 2026-07-27** — `BranchService`, `UserService`, `MembershipService` + controllers on the `OrganizationService` pattern. 8 routes live under `/api/v1`, all 401 unauthenticated. Role gates, role allow-list, audit, one-way withdrawal. **`viewerGrants()`/`viewerRole()` still demo — replacing them is T-0005 (session wiring), not more services** |
 | T-0004 | Roles, permissions, permission matrix | 2 | **partial 2026-07-27** — `apps/api/src/authz/permission-matrix.ts` maps all 13 grantable roles to the 3 permission keys the nav gates on, from 07 pt2 §50 + 01 §29/§32. Fails closed on an unknown role. Deliberately small: new keys arrive with the modules that gate on them |
-| T-0005 | Tenant context resolution from validated claims | 2 | **partial** — API side DONE: `KeycloakJwtService`, `TenantGuard`, and now **`GET /api/v1/me`** returning userId/tenant/org/branch/activeRole/permissions/memberships, all derived server-side. **REMAINING: the Next apps have no session at all** — no Auth.js, so `viewerGrants()`/`viewerRole()` are still demo data |
+| T-0005 | Tenant context resolution from validated claims | 2 | **code complete 2026-07-27, GATES PENDING** (`0b678b5`) — `packages/auth` (Auth.js v5 + Keycloak, one factory x7), session-backed `viewerGrants()`/`viewerRole()` via `GET /api/v1/me`, all 7 apps wired with async layouts + middleware + route handler. Codex and Supervisor have NOT reviewed. Playwright NOT re-run. Earlier API side: `KeycloakJwtService`, `TenantGuard`, and now **`GET /api/v1/me`** returning userId/tenant/org/branch/activeRole/permissions/memberships, all derived server-side. **REMAINING: the Next apps have no session at all** — no Auth.js, so `viewerGrants()`/`viewerRole()` are still demo data |
 | T-0006 | RLS FORCE + tenant-isolation test suite | 2 | **partial** — RLS proven as non-superuser; full suite outstanding |
 | T-0007 | Audit framework (append-only) | 2 | **done** — `AuditService`, same transaction as the work it records |
 | T-0008 | WAL archiving + PITR + off-host backup + restore drill (Supervisor C3) | 2 | **done** — archiving fixed (had NEVER worked), drill passes 4/4, RTO 16-106s, RPO 0 |
@@ -36,7 +36,11 @@
 | T-0031 | ~~ThemeToggle radiogroup: arrows move focus but not selection~~ | 3 | **closed 2026-07-27 — NOT A DEFECT.** Same stale-server cause as T-0030: with no hydration `setPreference` never ran, so `aria-checked` never changed. The roving tabindex and arrow handling were already correct (shipped in the defect-4 fix). Both tests pass on a fresh build |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
-**Next up:** **T-0005** — tenant context from the Keycloak session inside the Next apps. It is now the single blocker for T-0016 (switchers) and is what actually replaces the demo bodies of `viewerGrants()` and `viewerRole()`. Then T-0023, then T-0017.
+**Next up:** see `.claude/NEXT_SESSION_SCHEDULE.md`. Two threads: (1) the Render build fails
+silently — run the same build in GitHub Actions to get an error message; (2) run Codex +
+Supervisor + Playwright on T-0005, which is committed unreviewed.
+
+**Superseded:** T-0005 — tenant context from the Keycloak session inside the Next apps. It is now the single blocker for T-0016 (switchers) and is what actually replaces the demo bodies of `viewerGrants()` and `viewerRole()`. Then T-0023, then T-0017.
 
 **Phase 5 is unblocked.** T-0027 landed the workspace × role navigation it was waiting on.
 

@@ -1,65 +1,117 @@
 # Current task
 
-**No feature work is in flight.** Working tree committed; all gates green.
+Two threads are open. **Read both before starting** — the second one is the reason the
+first is unreviewed.
 
-Release 0.2 (Phase 3, the application shell) is **closed**. T-0014 and T-0015 shipped on 2026-07-26;
-T-0030, the last thing holding the release open, was closed on 2026-07-27 — see below, because *how*
-it closed matters more than that it did.
+---
 
-## T-0030 — closed, and it was never a product defect
+## 1. T-0005 — Keycloak session in the 7 Next apps · CODE DONE, GATES PENDING
 
-Recorded as a live 🔴 defect: at 360px the side nav rendered inline, `main` was squeezed to 103px and
-the page overflowed by 161px. **The shell was correct the entire time.**
+Committed as `0b678b5`. **The four-gate bar is UNMET**: Codex and the Supervisor have not
+run on this diff. Green so far: typecheck 15/15 · lint 15/15 · unit **122** · build 10/10.
+Playwright has **not** been re-run since the change.
 
-Seven `next start` servers were running from an earlier build when the apps were rebuilt underneath
-them. `next start` resolves its chunk manifest once at boot, so those servers kept emitting HTML
-referencing chunk hashes the rebuild had deleted. Every chunk 404'd, React never hydrated, and
-`useIsMobile()` never advanced past the `false` it deliberately starts with for SSR safety.
-Playwright's `reuseExistingServer: !CI` handed those stale servers straight to the suite.
+**Do this before building anything on top of it.**
 
-Reproduced under control — the stale server gives `main` 103px and 161px of overflow with no React
-fibers on `<body>`; a fresh server on the same build gives 360px and none. Both numbers match the
-original report exactly.
+### What landed
 
-**Now gated:** `apps/e2e/tests/build-freshness.setup.ts` runs before every other project and fails the
-run if any server references a `/_next/static` asset absent from that app's `.next`. Proven in both
-directions — it names the exact missing chunk on a stale server and passes 7/7 on fresh ones.
+`packages/auth` (was an empty directory) — one Auth.js v5 factory consumed by all seven
+apps. Keycloak provider, public client + PKCE, JWT session, refresh owned by the `jwt`
+callback alone, `getAccessToken()` server-side only.
 
-Full record: `reviews/supervisor-adjudication-t0030-harness.md`.
+`viewerGrants()` / `viewerRole()` no longer return hardcoded arrays. They resolve from
+`GET /api/v1/me` using the session's access token, memoised per request with React
+`cache()` so the shell and the catch-all router cannot land on different identities.
 
-## T-0031 — closed the same day, same cause, also not a defect
+The viewer is split in two on purpose:
+- `packages/next-shell/src/viewer-contract.ts` — PURE. Role and permission mapping.
+  Importable by Playwright, Storybook and unit tests.
+- `packages/next-shell/src/viewer.ts` — SERVER. Needs `next/headers`.
 
-Recorded as "ThemeToggle arrows move focus but not selection". With no hydration `setPreference`
-never ran, so `aria-checked` never changed — which is indistinguishable from a missing activation
-handler. The roving tabindex and arrow/Home/End handling were already correct, having shipped with
-the defect-4 fix. Both radiogroup tests pass on a fresh build with the freshness guard green.
+Merging them breaks the e2e suite at module load, and the usual repair is to hardcode
+the expected values, at which point the test stops testing the model.
 
-**All four tests left deliberately red at the previous session's close were one environmental
-fault** — three T-0030, one T-0031. No shell code was wrong.
+### Three environment faults fixed on the way, each load-bearing for T-0005
 
-## Next up, in priority order
+1. **Keycloak had been dead for ~30 hours.** Postgres restarted underneath it at
+   12:25:24 on 07-26; the Agroal pool's first failure was 12:25:54, thirty seconds
+   later, and it never recovered. `docker ps` said "Up 41 hours" the whole time.
+   Compose now probes the realm discovery document. **Not** `/health/ready` — Keycloak
+   ships with the datasource health check disabled, so that endpoint answers
+   `{"status":"UP","checks":[]}` with a dead database and would have reported healthy
+   throughout. `restart: unless-stopped` did not help either: the process never exited,
+   it hung. The healthcheck makes the failure VISIBLE; it does not self-heal.
+2. **Nobody could sign in.** The realm had zero users and `identity.users` zero rows.
+   `scripts/seed-dev-identity.sh` creates both halves, which must agree on the Keycloak
+   subject — hence one script rather than a realm fixture plus a SQL seed.
+3. **`.env.example` was wrong twice.** `DATABASE_URL` named the bootstrap superuser,
+   which `DatabaseService` refuses to boot with by design; `KEYCLOAK_CLIENT_ID` named a
+   client that does not exist in the realm.
 
-1. **T-0027** — navigation model becomes **workspace × role** (`07.txt` part 2 §46–§50). **Blocks
-   Phase 5.** Four distinct trees inside the single `workshop` workspace, resolved through the same
-   grant filter the shell already uses — not a second mechanism.
-2. **T-0003 remainder** — users, branches, memberships on the `OrganizationService` pattern. Unblocks
-   T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
-3. **T-0023** — deliver the backup health alert somewhere a human sees it. Detection is done; on
-   Windows nothing routes it to a person.
-4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, cluster rebuild with
-   `--data-checksums`.
+### The lesson worth carrying
 
-## Carry forward — two things that are easy to get wrong here
+**Two real defects survived every gate and were found by starting the app:**
+`UntrustedHost` (Auth.js v5 rejects an unrecognised Host, auto-detecting Vercel only) and
+a Keycloak provider with **no `issuer`**, so it had no endpoints at all. Both made every
+`/api/auth/*` route return 500 **while ordinary pages returned 200**. A check that only
+loads a page cannot see either. Verify auth by calling `/api/auth/session` and
+`/api/auth/providers`, not by building.
 
-- **`viewerGrants()` must never grant every gated permission.** The nav model gates on only
-  `finance.read` and `organization.admin`; when the demo viewer held both, the fail-closed
-  permission test skipped in all seven workspaces and had never once run. `at least one workspace
-  must exercise permission gating` now fails if that recurs.
-- **Never assert responsive behaviour without `waitForHydration()`.** The mobile/desktop switch is a
-  hook, so the server always renders the desktop tree. A fixed sleep races the machine, not the app.
+Also: the audience mapper I was about to add **already existed** as the
+`autoworkshop-audience` client scope, attached to all seven web clients. Verified against
+a real token (`aud: ["autoworkshop-api","account"]`) rather than assumed. Search before
+adding — the reverted commit is not in history because the check happened first.
+
+### What T-0005 deliberately did NOT do
+
+- **No redirect-to-sign-in.** Unauthenticated visitors get the signed-out shell: no
+  grants, no role, the workspace default tree. Forcing auth would couple all 137
+  Playwright tests to a running Keycloak, API and seeded database — a separate,
+  reviewable change.
+- **No signed-in browser journey.** `SUITE_VIEWER` in `shell-journey.spec.ts` is `null`,
+  which is what the suite's browser actually has. The §46–§49 role trees are covered by
+  unit tests against fixture viewers, but no browser test drives a real session yet.
+
+### A consequence you will see immediately
+
+**The admin app renders a blank sidebar when signed out.** Every group in that tree is
+gated behind `platform.admin`, so an unauthenticated viewer correctly sees nothing. This
+was invisible before, because the demo viewer held that grant. It is correct — nothing
+leaks — but it looks broken, and it is the strongest argument for redirect-to-sign-in on
+that app specifically. Pinned by `a signed-out viewer is shown NOTHING in the
+platform-admin workspace`.
+
+---
+
+## 2. Render deploy — BLOCKED on a silent `next build` failure
+
+`autoworkshop.aiappinvent.com` is **not live**. See `.claude/SESSION_HANDOVER.md` for the
+full diagnostic trail and the ranked plan. Short version:
+
+Everything except the build works. DNS is correct, the service exists with the right
+config, the custom domain is attached. **Six deploys failed identically**: `next build`
+exits **1** immediately after "Skipping linting", with **completely empty stderr**.
+
+Ruled out by measurement, not by guesswork:
+- **Not memory** — the builder reports 48 CPUs, 95 GB RAM, an 8 GB cgroup limit, and the
+  exit code is 1, not 137.
+- **Not the worker pool** — `experimental.cpus: 1` changed nothing.
+- **Not lint or type-checking** — skipping both moved the failure without fixing it.
+- **Not sharp** — `require('sharp')` was tested directly on the builder.
+- **Not the code** — a fresh clone of `master` built cleanly with Render's exact install
+  and build commands.
+
+Two of those six attempts were fixes for wrong diagnoses. The heap cap was removed;
+`experimental.cpus: 1` is **still in all seven `next.config.mjs` and should come out**
+once the real cause is known.
+
+**Next move: run the identical build in GitHub Actions on Ubuntu.** Free for public
+repos, Linux like Render, and Actions does not swallow stderr. It either succeeds —
+proving the fault is Render-specific — or finally prints the error.
 
 ## Definition of complete (`05.txt` §6)
 
-Migration runs · backend rule exists · API works · page renders with loading/empty/error/permission
-states · permissions enforced · tests pass · lint + typecheck pass · Playwright journey passes ·
-responsive checked · docs updated · **no paid dependency introduced** · committed.
+Migration runs · backend rule exists · API works · page renders with loading/empty/error/
+permission states · permissions enforced · tests pass · lint + typecheck pass · Playwright
+journey passes · responsive checked · docs updated · **no paid dependency introduced** ·
+committed.

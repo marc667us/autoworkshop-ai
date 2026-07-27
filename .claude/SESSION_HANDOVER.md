@@ -1,5 +1,88 @@
 # Session handover
 
+## 2026-07-27 (pt2) — T-0005 sessions + Render deploy blocked
+
+**Tip `0b678b5` on `master`, pushed, tree clean.** Read `.claude/NEXT_SESSION_SCHEDULE.md`
+for the ranked plan, then `.claude/CURRENT_TASK.md`.
+
+### Commits
+
+| Commit | What |
+|---|---|
+| `dc0ab95` | Render blueprint + provisioning workflow |
+| `71d7d8a` | deploy build skips the checks CI already runs |
+| `379bc41` | single in-process build worker on the deploy builder |
+| `0b678b5` | **T-0005 — Keycloak session in all 7 Next apps. GATES PENDING.** |
+
+### Headline 1 — Keycloak had been dead for ~30 hours and nothing noticed
+
+Postgres restarted underneath it at `12:25:24` on 07-26. Keycloak's first Agroal failure
+was `12:25:54` — thirty seconds later — and the pool never recovered. `docker ps` reported
+**"Up 41 hours"** throughout. It spanned three prior sessions. Nothing noticed because
+nothing exercised Keycloak: the shell had no session, which is precisely what T-0005 was
+about.
+
+`restart: unless-stopped` did not help — the process never exited, it hung. And
+`KC_HEALTH_ENABLED: "true"` was set with **no healthcheck reading it**. Compose now probes
+the **realm discovery document**, deliberately not `/health/ready`: Keycloak ships with the
+Quarkus datasource health check disabled, so that endpoint answers
+`{"status":"UP","checks":[]}` without touching the database and would have said UP for all
+thirty hours. Proven to discriminate in both directions before shipping.
+
+### Headline 2 — two auth defects survived every gate
+
+Found by **starting the app**, after typecheck 15/15, lint 15/15, 122 unit tests and a
+10-target build were all green:
+
+1. `UntrustedHost` — Auth.js v5 rejects an unrecognised Host and only auto-detects Vercel.
+2. The Keycloak provider had **no `issuer`**, so it had no endpoints at all.
+
+Both made every `/api/auth/*` route return **500 while ordinary pages returned 200**. That
+asymmetry is the reason a build-green check cannot see them. Verify auth by calling
+`/api/auth/session` and `/api/auth/providers`.
+
+### Headline 3 — the Render build fails silently, and six attempts did not find it
+
+`autoworkshop.aiappinvent.com` is **not live**. DNS is correct, the service exists with the
+right config, the custom domain is attached. `next build` exits **1** immediately after
+"Skipping linting" with **completely empty stderr**.
+
+Ruled out by measurement: memory (builder has 48 CPUs / 95 GB / 8 GB cgroup, exit 1 not
+137), worker pool (`cpus: 1` changed nothing), lint and type-checking (skipping moved the
+failure), `sharp` (tested directly), and the code itself (a fresh clone of `master` built
+cleanly with Render's exact commands).
+
+**Two of the six attempts were fixes for wrong diagnoses.** The heap cap was removed;
+`experimental.cpus: 1` is still in all seven `next.config.mjs` and **should come out**.
+
+**Next move: run the same build in GitHub Actions on Ubuntu** — Linux like Render, and it
+does not swallow stderr.
+
+### Traps worth carrying forward
+
+1. **Search before adding.** The audience mapper I was about to add already existed as the
+   `autoworkshop-audience` client scope. Verified against a real token
+   (`aud: ["autoworkshop-api","account"]`) instead of assumed.
+2. **A stale server lies.** The build-freshness gate caught seven `next start` servers from
+   before the rebuild, and caught my own on port 3100 mid-verification.
+3. **Idempotence is not obvious.** `seed-dev-identity.sh` failed on its second run — the
+   realm's `passwordHistory(3)` rejects re-setting the same password, so it now sets one
+   only when no credential exists. A script that ran once looked idempotent and was not.
+4. **`getAccessToken()` must not demand the secret before checking for a session.** It
+   runs on every render; requiring `AUTH_SECRET` up front would 500 every page for
+   visitors who have no session and need none.
+
+### Owner direction
+
+- **`RENDER_API_KEY` was pasted into the chat transcript.** Owner: "soon we rotate".
+  Treat as compromised until rotated, then update the GitHub secret on this repo.
+- Service naming settled: **one service, `autoworkshop`**, matching the Solar pattern
+  (`solarpro-global` serves `solarpro.aiappinvent.com` — name and subdomain need not match).
+
+---
+
+# Session handover
+
 > Read this first, then `.claude/CURRENT_PHASE.md` and `.claude/TASK_QUEUE.md`.
 
 ## Where the project stands — 2026-07-26 (session 2, afternoon)
