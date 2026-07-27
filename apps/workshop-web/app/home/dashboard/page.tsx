@@ -1,6 +1,6 @@
 import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
-import { viewerGrants, viewerRole } from '@autoworkshop/next-shell';
+import { currentViewer, grantsFor, navRoleFor } from '@autoworkshop/next-shell';
 import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
 
 /**
@@ -10,28 +10,50 @@ import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/nav
  * counts when T-0027 introduced per-role trees, and the granted-permission list
  * when the demo grants were narrowed. A page whose job is to explain the system
  * has to read the system.
- */
-const WORKSHOP_ROLE = viewerRole('workshop');
-const RESOLVED_WORKSPACE = workspaceForRole(getWorkspace('workshop')!, WORKSHOP_ROLE);
-const VISIBLE = visibleGroups(RESOLVED_WORKSPACE, viewerGrants('workshop'));
-const NAV_GROUP_COUNT = VISIBLE.length;
-const NAV_ITEM_COUNT = VISIBLE.reduce((n, g) => n + g.items.length, 0);
-const ROLE_LABEL = WORKSHOP_ROLE ? `${WORKSHOP_ROLE} role` : 'workspace default';
-
-/**
- * This page's own title, taken from the navigation entry that points at it.
  *
- * A concrete `page.tsx` takes precedence over the catch-all, so this route is
- * the one place where the header text is written by hand instead of being
- * derived from the nav item — and it promptly disagreed with it: the technician
- * tree calls `/home/dashboard` "Technician Dashboard" while the header said
- * "Workshop Dashboard", so the menu, the breadcrumb and the heading named the
- * same screen three ways. Reading the label from the model removes the second
- * source rather than syncing it.
+ * ⚠️ THIS RUNS PER REQUEST AND MUST NOT MOVE BACK TO MODULE SCOPE.
+ *
+ * Every value below used to be a module-level `const`. That worked only while
+ * the viewer was a hardcoded demo: module scope is evaluated ONCE, when Next
+ * first loads the route, so with a real session the first visitor's role and
+ * grants would have been baked in and served to every subsequent visitor —
+ * including a signed-out one, and including across users. A dashboard that
+ * describes somebody else's permissions is worse than one that describes none.
+ *
+ * The `!` on `getWorkspace('workshop')` is safe for the same reason it always
+ * was: this file only exists inside the workshop app.
  */
 const THIS_ROUTE = '/home/dashboard';
-const PAGE_TITLE =
-  VISIBLE.flatMap((g) => g.items).find((i) => i.href === THIS_ROUTE)?.label ?? 'Workshop Dashboard';
+
+async function describeNavigation() {
+  const viewer = await currentViewer('workshop');
+  const role = navRoleFor(viewer?.activeRole);
+  const visible = visibleGroups(
+    workspaceForRole(getWorkspace('workshop')!, role),
+    grantsFor(viewer),
+  );
+
+  return {
+    grants: grantsFor(viewer),
+    groupCount: visible.length,
+    itemCount: visible.reduce((n, g) => n + g.items.length, 0),
+    roleLabel: role ? `${role} role` : 'workspace default',
+    /**
+     * This page's own title, taken from the navigation entry that points at it.
+     *
+     * A concrete `page.tsx` takes precedence over the catch-all, so this route
+     * is the one place where the header text is written by hand instead of
+     * being derived from the nav item — and it promptly disagreed with it: the
+     * technician tree calls `/home/dashboard` "Technician Dashboard" while the
+     * header said "Workshop Dashboard", so the menu, the breadcrumb and the
+     * heading named the same screen three ways. Reading the label from the
+     * model removes the second source rather than syncing it.
+     */
+    pageTitle:
+      visible.flatMap((g) => g.items).find((i) => i.href === THIS_ROUTE)?.label ??
+      'Workshop Dashboard',
+  };
+}
 
 /**
  * Workshop dashboard — §18, the default landing page for the workspace.
@@ -72,11 +94,13 @@ function Tile({ label, value, kind, hint }: (typeof tiles)[number]) {
   );
 }
 
-export default function Dashboard() {
+export default async function Dashboard() {
+  const nav = await describeNavigation();
+
   return (
     <>
       <PageHeader
-        title={PAGE_TITLE}
+        title={nav.pageTitle}
         description="Today at Demo Motors Ltd — Accra Main"
         actions={<StatusBadge kind="draft" label="Demo data — not yet wired to the API" />}
       />
@@ -114,7 +138,7 @@ export default function Dashboard() {
             <strong>Navigation is real and complete.</strong> Every group and item is transcribed from the
             approved specification — <code>autoworkshop 01 (1).txt</code> §34 for the workspace, and{' '}
             <code>autoworkshop 07.txt</code> part 2 §46–§49 for the four workshop roles. You are seeing the{' '}
-            <strong>{ROLE_LABEL}</strong> navigation: {NAV_GROUP_COUNT} groups, {NAV_ITEM_COUNT} items.
+            <strong>{nav.roleLabel}</strong> navigation: {nav.groupCount} groups, {nav.itemCount} items.
             Expand, collapse, search the menu, and collapse the whole sidebar from the ☰ button.
           </li>
           <li>
@@ -124,16 +148,32 @@ export default function Dashboard() {
                 by then correctly hidden. A page that explains the permission
                 model must read the permission model, or it becomes confident
                 misinformation. Same lesson as the nav/router grants split. */}
-            <strong>Permission-aware visibility is real.</strong> This viewer holds{' '}
-            {viewerGrants('workshop').map((grant, i, all) => (
-              <span key={grant}>
-                <code>{grant}</code>
-                {i < all.length - 1 ? ' and ' : ''}
-              </span>
-            ))}
-            , so only the groups those grants unlock are listed. Modules gated behind any other permission —
-            the finance items among them — are absent from the menu <em>and</em> answer 404 if their URL is
-            typed directly.
+            <strong>Permission-aware visibility is real.</strong>{' '}
+            {nav.grants.length === 0 ? (
+              <>
+                {/* The signed-out wording is not a nicety. The old sentence read
+                    "This viewer holds , so only the groups those grants unlock
+                    are listed" once the grants became genuinely empty — a
+                    dangling clause that describes nothing. An empty grant list
+                    is now the common case, not an edge one: it is what every
+                    visitor sees before signing in. */}
+                This viewer holds <strong>no permission grants</strong>, because nobody is signed in.
+                Only ungated modules are listed; everything gated is absent from the menu
+              </>
+            ) : (
+              <>
+                This viewer holds{' '}
+                {nav.grants.map((grant, i, all) => (
+                  <span key={grant}>
+                    <code>{grant}</code>
+                    {i < all.length - 1 ? ' and ' : ''}
+                  </span>
+                ))}
+                , so only the groups those grants unlock are listed. Modules gated behind any other
+                permission — the finance items among them — are absent from the menu
+              </>
+            )}{' '}
+            <em>and</em> answer 404 if their URL is typed directly.
           </li>
           <li>
             <strong>Counters and warning badges are real mechanics, fake numbers.</strong> They resolve through the

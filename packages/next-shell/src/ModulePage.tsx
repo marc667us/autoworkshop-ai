@@ -30,11 +30,15 @@ import { themeVar, primitive } from '@autoworkshop/design-tokens';
  * standing between a user and the knowledge that a module exists.
  *
  * It is NOT, and must never be mistaken for, an authorization control. Directive
- * §8: "Hidden ≠ secure". `grants` arrives from the caller, and until the Keycloak
- * session is wired into these apps (Phase 2, T-0005) that caller passes an empty
- * array — which is why the default is `[]` and not "everything". Real enforcement
- * is the API's tenant guard plus Postgres RLS; this filter only decides what the
- * UI admits exists. No screen may rely on it to protect data.
+ * §8: "Hidden ≠ secure". Since T-0005 `grants` originate in a validated Keycloak
+ * session rather than a demo array, which makes them ACCURATE — it does not make
+ * them enforcing. Real enforcement is the API's tenant guard plus Postgres RLS,
+ * which deny independently; this filter only decides what the UI admits exists.
+ * No screen may rely on it to protect data.
+ *
+ * The default remains `[]` and not "everything": a caller that forgets to pass
+ * grants must show the ungated modules only. Widening that default is a security
+ * change, not a convenience.
  *
  * As each screen is genuinely built it gets `app/<group>/<item>/page.tsx`,
  * which Next resolves ahead of the catch-all. No migration, no cleanup.
@@ -53,11 +57,16 @@ export async function renderModulePage(
   const base = getWorkspace(workspaceId);
   if (!base) notFound();
 
-  // Resolve the ROLE tree from the same function the shell uses (T-0027).
-  // Reading `base.groups` here while the shell rendered a role tree would put
-  // the menu and the router back on different maps — defect 3, one layer up:
-  // every route the technician's menu advertises would 404.
-  const workspace = workspaceForRole(base, viewerRole(workspaceId));
+  // Resolve the ROLE tree from the same function the shell's layout uses
+  // (T-0027). Reading `base.groups` here while the shell rendered a role tree
+  // would put the menu and the router back on different maps — defect 3, one
+  // layer up: every route the technician's menu advertises would 404.
+  //
+  // Since T-0005 this is a session read, so it is awaited. It resolves to the
+  // SAME viewer the layout saw: `viewerRole` is memoised per request with
+  // React's `cache()`, which is what keeps one render from resolving two
+  // identities.
+  const workspace = workspaceForRole(base, await viewerRole(workspaceId));
 
   const pathname = '/' + (slug ?? []).join('/');
   // Resolve against the filtered tree, not `workspace.groups` — otherwise a

@@ -152,6 +152,39 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     ports: ["8080:8080"]
+    healthcheck:
+      # Probes the REALM DISCOVERY DOCUMENT, deliberately NOT /health/ready.
+      #
+      # Keycloak ships with the Quarkus datasource health check disabled, so
+      # /health/ready answers {"status":"UP","checks":[]} without ever touching
+      # the database. On 2026-07-27 this container reported "Up 41 hours" while
+      # having served nothing for 30 of them: Postgres restarted underneath it,
+      # the Agroal pool never recovered ("Acquisition timeout while waiting for
+      # new connection", first logged 30 seconds after the Postgres restart),
+      # and port 8080 stopped answering entirely. /health/ready would have said
+      # UP the whole time. Checking the setting instead of the effect is how a
+      # dead dependency stays invisible.
+      #
+      # This URL is the one every app and the API's JWKS fetch actually depend
+      # on, and it is the one that hung — so a failure here is a failure that
+      # matters. /dev/tcp is a bash builtin; the image has no curl or wget.
+      #
+      # SCOPE: this makes the failure VISIBLE (`docker ps` shows "unhealthy").
+      # It does NOT self-heal — `restart: unless-stopped` acts on a process that
+      # exits, and this process does not exit, it hangs. Recovery is still
+      # `docker restart aw-keycloak`.
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /realms/${KEYCLOAK_REALM:-autoworkshop}/.well-known/openid-configuration HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200 OK'"
+      # Keycloak re-augments its Quarkus config on first boot after an image or
+      # config change, which took ~7 minutes on this host — a shorter
+      # start_period would flap the container to unhealthy during a normal boot.
+      start_period: 600s
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   coturn:
     # Self-hosted TURN (D6). Removes the WebRTC relay COST — capacity limits and

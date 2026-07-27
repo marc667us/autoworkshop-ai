@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
+    "@autoworkshop/auth": "workspace:*",
     "@autoworkshop/design-tokens": "workspace:*",
     "@autoworkshop/navigation": "workspace:*",
     "@autoworkshop/ui": "workspace:*"

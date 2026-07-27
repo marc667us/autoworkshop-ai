@@ -4,8 +4,12 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AppShell, ThemeProvider, type TopNavAction } from '@autoworkshop/ui';
-import { getWorkspace, workspaceForRole, type PermissionKey } from '@autoworkshop/navigation';
-import { viewerRole } from './viewer';
+import {
+  getWorkspace,
+  workspaceForRole,
+  type PermissionKey,
+  type RoleId,
+} from '@autoworkshop/navigation';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
 /**
@@ -40,6 +44,25 @@ export interface WorkspaceShellProps {
    */
   grants?: readonly PermissionKey[];
 
+  /**
+   * The viewer's role, which selects the navigation tree (`07.txt` pt2 §46-§49).
+   *
+   * PASSED IN, not resolved here, and that is forced rather than preferred:
+   * this is a CLIENT component, and since T-0005 the role comes from a Keycloak
+   * session read on the server. A client component cannot await it.
+   *
+   * The single-decision-point rule still holds — `viewerRole()` remains the only
+   * place the role is decided, it is simply called by the async layout that
+   * renders this component and by `renderModulePage` for the same request.
+   * React's `cache()` makes those the same resolution, so the menu and the
+   * router cannot end up on different trees. Threading the value is not a
+   * second source of truth; recomputing it here would be.
+   *
+   * Undefined means "no role" — an unauthenticated viewer, or a role with no
+   * tree of its own — and yields the workspace default tree.
+   */
+  role?: RoleId;
+
   organizationLabel?: string;
   branchLabel?: string;
   userLabel?: string;
@@ -53,6 +76,7 @@ export function WorkspaceShell({
   workspaceId,
   children,
   grants = [],
+  role,
   organizationLabel,
   branchLabel,
   userLabel,
@@ -63,10 +87,9 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
   const base = getWorkspace(workspaceId);
-  // T-0027: the role selects the tree (`07.txt` pt2 §46-§49) and `viewerRole()`
-  // is the ONLY place that decision is made — `renderModulePage` calls the same
-  // function, so the menu and the router cannot end up on different trees.
-  const workspace = base ? workspaceForRole(base, viewerRole(workspaceId)) : undefined;
+  // T-0027: the role selects the tree (`07.txt` pt2 §46-§49). The value comes
+  // from the caller because this is a client component — see the `role` prop.
+  const workspace = base ? workspaceForRole(base, role) : undefined;
 
   // A workspace with no navigation is a configuration error, and it must LOOK
   // like one. Rendering bare children would give a page with no nav that

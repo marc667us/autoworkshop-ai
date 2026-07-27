@@ -5,7 +5,7 @@ import {
   workspaceForRole,
   workspaces,
 } from '@autoworkshop/navigation';
-import { viewerGrants, viewerRole } from '@autoworkshop/next-shell';
+import { grantsFor, navRoleFor, type ViewerDescription } from '@autoworkshop/next-shell';
 import { workspaces as servers } from '../playwright.config';
 
 /**
@@ -27,22 +27,43 @@ const WORKSHOP = servers.find((w) => w.name === 'workshop')!;
 const base = (port: number) => `http://127.0.0.1:${port}`;
 
 /**
+ * THE IDENTITY THIS SUITE'S BROWSER ACTUALLY HAS: none.
+ *
+ * Since T-0005 the viewer comes from a Keycloak session, and Playwright starts
+ * with a clean context and never signs in — so the apps render their signed-out
+ * state: no grants, no role, the workspace's own default navigation.
+ *
+ * DECLARING IT AS A CONSTANT rather than calling `viewerGrants()` is what keeps
+ * the suite honest. `viewerGrants()` is now an async server function that reads
+ * `next/headers`; it cannot run in a Playwright process at all, and the tempting
+ * repair — hardcoding the expected hrefs — would stop the test checking the
+ * model and start it checking a copy of the model. `grantsFor`/`navRoleFor` are
+ * the same pure functions the apps use, applied to the same identity the browser
+ * has, so the expectations are still DERIVED.
+ *
+ * ⚠️ This means the suite currently exercises the SIGNED-OUT shell only. The
+ * §46-§49 role trees are covered by `packages/next-shell/src/viewer.test.ts`
+ * against fixture viewers, but no browser test drives a signed-in journey yet —
+ * that needs a running Keycloak and API, and is tracked as its own task.
+ */
+const SUITE_VIEWER: ViewerDescription | null = null;
+
+/**
  * The workspace as the running app resolves it — role tree included (T-0027).
  *
- * This MUST compose `workspaceForRole` + `viewerRole` exactly as
- * `WorkspaceShell` and `renderModulePage` do. Reading the raw workspace here
- * would test a tree the app never renders: every assertion would be about
- * `01 (1).txt` §34 while the browser showed `07.txt` pt2 §49.
+ * This MUST compose `workspaceForRole` + `navRoleFor` exactly as the app's
+ * layout and `renderModulePage` do. Reading the raw workspace here would test a
+ * tree the app never renders.
  */
 function resolvedWorkspace(workspaceId: string) {
   const workspace = getWorkspace(workspaceId);
   if (!workspace) throw new Error(`unknown workspace: ${workspaceId}`);
-  return workspaceForRole(workspace, viewerRole(workspaceId));
+  return workspaceForRole(workspace, navRoleFor(SUITE_VIEWER?.activeRole));
 }
 
 /** Every href the side nav advertises to this viewer, per workspace. */
 function advertisedHrefs(workspaceId: string): string[] {
-  return visibleGroups(resolvedWorkspace(workspaceId), viewerGrants(workspaceId)).flatMap((g) =>
+  return visibleGroups(resolvedWorkspace(workspaceId), grantsFor(SUITE_VIEWER)).flatMap((g) =>
     g.items.map((i) => i.href),
   );
 }
@@ -170,10 +191,11 @@ test.describe('permission gating — defect 1: the catch-all ignored permissions
     const exercised = servers.map((s) => s.name).filter((name) => gatedModule(name));
     expect(
       exercised,
-      'No workspace has a permission-gated module for the demo viewer, so every ' +
+      'No workspace has a permission-gated module for this suite’s viewer, so every ' +
         '"a gated URL 404s" test above skipped and the fail-closed behaviour of the ' +
-        'catch-all route is completely untested. Withhold a grant in ' +
-        'packages/next-shell/src/viewer.ts so gating is actually exercised.',
+        'catch-all route is completely untested. That is how this assertion silently ' +
+        'skipped in all 7 workspaces while the suite reported green. If SUITE_VIEWER ' +
+        'is ever given a signed-in identity, make sure it withholds at least one grant.',
     ).not.toEqual([]);
   });
 });

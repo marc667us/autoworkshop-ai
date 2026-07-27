@@ -1,5 +1,11 @@
 import type { Metadata } from 'next';
-import { WorkspaceShell, viewerGrants } from '@autoworkshop/next-shell';
+import {
+  WorkspaceShell,
+  currentViewer,
+  grantsFor,
+  navRoleFor,
+  viewerLabels,
+} from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 
 export const metadata: Metadata = {
@@ -12,12 +18,18 @@ export const metadata: Metadata = {
  * workspace id differs — the navigation itself comes from
  * `@autoworkshop/navigation`, transcribed from the approved spec.
  *
- * `grants` comes from `viewerGrants()` — the single source shared with this
- * workspace's catch-all route, so the navigation and the router always agree on
- * what the viewer may see. It is demo data until Phase 2 replaces that one
- * function with validated Keycloak claims; it is not a security control.
+ * `currentViewer()` resolves the signed-in user from the Keycloak session and
+ * `GET /api/v1/me` (T-0005). The grants and the role derived from it are the
+ * single source shared with this workspace's catch-all route — React's
+ * `cache()` makes both resolve the SAME viewer within one render, so the
+ * navigation and the router cannot disagree about what may be seen.
+ *
+ * Accurate is not the same as enforcing: hiding a nav entry protects nothing.
+ * The API's tenant guard and Postgres RLS deny independently (CLAUDE.md §8).
  */
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const viewer = await currentViewer('supplier');
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -28,10 +40,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body style={{ margin: 0, background: 'var(--aw-background-primary)', color: 'var(--aw-text-primary)' }}>
         <WorkspaceShell
           workspaceId="supplier"
-          grants={viewerGrants('supplier')}
-          organizationLabel="Demo Motors Ltd"
-          branchLabel="Accra Main"
-          userLabel="Demo User"
+          grants={grantsFor(viewer)}
+          role={navRoleFor(viewer?.activeRole)}
+          {...viewerLabels(viewer)}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
             { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },

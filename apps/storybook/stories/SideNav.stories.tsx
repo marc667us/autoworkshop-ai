@@ -13,7 +13,8 @@ import { getWorkspace } from '@autoworkshop/navigation';
  * The route and the API deny independently — see CLAUDE.md §8. The router was
  * once resolving against the unfiltered tree while the nav resolved against
  * the filtered one, so a gated module rendered by URL and the nav advertised
- * links that 404'd. Both now read the same `viewerGrants()`.
+ * links that 404'd. Both now resolve from the same viewer — since T-0005 that
+ * is the Keycloak session behind `currentViewer()`, not a demo array.
  */
 const meta = {
   title: 'Shell/SideNav',

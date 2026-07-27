@@ -1,0 +1,115 @@
+import { keycloakIssuer } from './config';
+
+/**
+ * The Keycloak tokens carried by a session.
+ *
+ * Kept separate from Auth.js's own types so the refresh logic below is a plain
+ * function over plain data and can be tested without standing up a provider,
+ * a request, or a cookie.
+ */
+export interface KeycloakTokenSet {
+  accessToken: string;
+  /**
+   * Absent when Keycloak declined to issue one. Treated as "cannot refresh"
+   * rather than "refresh with undefined", which would send the string
+   * "undefined" to the token endpoint and get a 400 that reads like a
+   * credential fault.
+   */
+  refreshToken?: string;
+  /** Absolute expiry in epoch SECONDS — the unit Keycloak's `exp` uses. */
+  expiresAt: number;
+  /** Needed at sign-out: Keycloak's end-session endpoint wants `id_token_hint`. */
+  idToken?: string;
+}
+
+/**
+ * Refresh a little BEFORE expiry, not at it.
+ *
+ * The realm issues 300-second access tokens. A token that is valid when the
+ * server component starts rendering can be expired by the time the `/me` call
+ * reaches the API, and the failure is a 401 on a page that had a perfectly good
+ * session a moment earlier. Thirty seconds covers request latency and modest
+ * clock skew between this host and Keycloak.
+ */
+export const REFRESH_SKEW_SECONDS = 30;
+
+export function isExpired(
+  tokenSet: Pick<KeycloakTokenSet, 'expiresAt'>,
+  nowSeconds: number = Math.floor(Date.now() / 1000),
+  skewSeconds: number = REFRESH_SKEW_SECONDS,
+): boolean {
+  return nowSeconds >= tokenSet.expiresAt - skewSeconds;
+}
+
+/** Raised when a refresh cannot succeed and the user must sign in again. */
+export class RefreshFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RefreshFailedError';
+  }
+}
+
+interface TokenEndpointResponse {
+  access_token?: string;
+  refresh_token?: string;
+  id_token?: string;
+  expires_in?: number;
+  error?: string;
+  error_description?: string;
+}
+
+/**
+ * Exchange a refresh token for a fresh access token.
+ *
+ * ⚠️ THE REALM ROTATES REFRESH TOKENS. `realm-autoworkshop.json` sets
+ * `revokeRefreshToken: true` with `refreshTokenMaxReuse: 0`, so the token
+ * presented here is revoked the instant this call succeeds and the response's
+ * NEW refresh token is the only usable one. Two consequences that are easy to
+ * get wrong:
+ *
+ *   · the caller must persist `refreshToken` from the result — keeping the old
+ *     one turns the next refresh into a hard sign-out, roughly five minutes
+ *     later, which is far enough from the cause to look unrelated;
+ *   · two concurrent refreshes with the same token cannot both win. The loser
+ *     gets `invalid_grant`. Auth.js serialises this per request, but a caller
+ *     that fans out must not.
+ *
+ * No client secret is sent: these are PUBLIC clients (PKCE S256), so the token
+ * endpoint authenticates the request by the refresh token alone.
+ */
+export async function refreshAccessToken(
+  clientId: string,
+  refreshToken: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<KeycloakTokenSet> {
+  const response = await fetchImpl(`${keycloakIssuer()}/protocol/openid-connect/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: refreshToken,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as TokenEndpointResponse;
+
+  if (!response.ok || !payload.access_token) {
+    // `error_description` is Keycloak's own text ("Token is not active", say).
+    // It describes the grant, not the user, so it is safe to surface into a
+    // server log — and without it every refresh failure looks identical.
+    throw new RefreshFailedError(
+      payload.error_description ?? payload.error ?? `token endpoint returned ${response.status}`,
+    );
+  }
+
+  return {
+    accessToken: payload.access_token,
+    // Fall back to the presented token only if Keycloak returned none. With
+    // rotation on it always does; without this the field would silently become
+    // undefined on a realm configured differently.
+    refreshToken: payload.refresh_token ?? refreshToken,
+    expiresAt: Math.floor(Date.now() / 1000) + (payload.expires_in ?? 300),
+    idToken: payload.id_token,
+  };
+}

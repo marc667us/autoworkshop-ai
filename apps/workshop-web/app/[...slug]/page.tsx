@@ -10,5 +10,5 @@ export default async function ModuleRoute({ params }: { params: Promise<{ slug: 
   const { slug } = await params;
   // Same grants the navigation is built from, so the nav can never
   // advertise a module whose route then 404s.
-  return renderModulePage('workshop', slug, viewerGrants('workshop'));
+  return renderModulePage('workshop', slug, await viewerGrants('workshop'));
 }

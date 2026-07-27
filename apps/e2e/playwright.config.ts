@@ -128,6 +128,22 @@ export default defineConfig({
       url: `http://127.0.0.1:${w.port}`,
       reuseExistingServer: !CI,
       timeout: 120_000,
+      env: {
+        // AUTH_SECRET IS MANDATORY TO SERVE A PAGE AT ALL, not merely to sign
+        // in. Since T-0005 every app runs `auth` as middleware on every matched
+        // request, and the Auth.js config resolves the secret when it is built —
+        // so without this the suite would get a 500 from every route and report
+        // a shell that is completely broken, when the only thing missing is an
+        // environment variable.
+        //
+        // A FIXED, PUBLIC VALUE ON PURPOSE. This suite never signs in
+        // (`SUITE_VIEWER` is null), so this secret encrypts nothing: no session
+        // cookie is ever issued. Generating a random one per run would be
+        // security theatre over an empty box, and would make a failure depend on
+        // which run you were looking at. Deployments supply a real secret from
+        // their own environment; this value must never be one of them.
+        AUTH_SECRET: 'e2e-suite-secret-never-used-for-a-real-session',
+      },
     })),
   ],
 });
