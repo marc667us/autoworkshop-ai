@@ -34,6 +34,15 @@ on:
         required: true
         default: true
         type: boolean
+      node_options:
+        # Render's builder reported `v8 heap limit: 448 MB`. Passing
+        # `--max-old-space-size=448` here reproduces that constraint on a runner
+        # that does NOT hide stderr, which turns an untestable remote failure
+        # into one that can be reproduced and then fixed on purpose.
+        description: NODE_OPTIONS for the build (e.g. --max-old-space-size=448)
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
@@ -74,6 +83,7 @@ jobs:
         run: |
           set +e
           cd apps/${{ inputs.app }}
+          node -e "console.log('v8 heap limit MB:', require('v8').getHeapStatistics().heap_size_limit/1048576)"
           ./node_modules/.bin/next build
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -91,6 +101,7 @@ jobs:
           KEYCLOAK_REALM: autoworkshop
           API_BASE_URL: http://localhost:4000
           NEXT_TELEMETRY_DISABLED: '1'
+          NODE_OPTIONS: ${{ inputs.node_options }}
 
       - name: Diagnostics
         if: always()
