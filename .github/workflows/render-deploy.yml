@@ -1,0 +1,128 @@
+# Trigger a Render deploy of the `autoworkshop` service and PRINT THE BUILD LOG.
+#
+# WHY NOT JUST CLICK DEPLOY
+#
+# The service's `autoDeploy` is `yes`, but no deploy has fired for the last two
+# pushes to `master` — every deploy on record was triggered by `api`. A service
+# created through the API does not necessarily have the GitHub App link that
+# delivers push webhooks, so "auto deploy is enabled" and "a push deploys" are
+# two different claims. This triggers explicitly rather than trusting the flag.
+#
+# The second half is the point: it polls to a terminal state and then pulls the
+# BUILD LOG out of the Render logs API. Six fixes were attempted last session
+# from a log read by hand in the console, and two of them were fixes for wrong
+# diagnoses. Machine-readable evidence, in the run output, is the whole idea.
+#
+# SCOPED TO ONE SERVICE ID. The same Render account hosts the Solar production
+# application, which is off-limits; this addresses srv-d9jsliu7r5hc73b1kncg and
+# never enumerates services.
+name: Render deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually deploy. Anything else only reports current state.'
+        required: false
+        default: 'DRYRUN'
+      clear_cache:
+        description: 'Build without Renders cached workspace'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  SERVICE_ID: srv-d9jsliu7r5hc73b1kncg
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Trigger the deploy
+        id: trigger
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          CONFIRM: ${{ inputs.confirm }}
+          CLEAR: ${{ inputs.clear_cache && 'clear' || 'do_not_clear' }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "APPLY" ]; then
+            echo "DRY RUN — no deploy triggered. Re-run with confirm=APPLY."
+            exit 0
+          fi
+          RESP="$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"clearCache\":\"${CLEAR}\"}" \
+            "https://api.render.com/v1/services/${SERVICE_ID}/deploys")"
+          DID="$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")"
+          echo "triggered deploy: $DID"
+          echo "id=$DID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for a terminal state
+        id: wait
+        if: ${{ inputs.confirm == 'APPLY' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DEPLOY_ID: ${{ steps.trigger.outputs.id }}
+        run: |
+          set -euo pipefail
+          # Terminal states per Render's API. `live` is the only success; the
+          # rest are all ways of not being deployed.
+          for i in $(seq 1 90); do
+            S="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/${SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])")"
+            echo "[$i] status=$S"
+            case "$S" in
+              live|build_failed|update_failed|canceled|pre_deploy_failed)
+                echo "status=$S" >> "$GITHUB_OUTPUT"; exit 0 ;;
+            esac
+            sleep 20
+          done
+          echo "status=timeout" >> "$GITHUB_OUTPUT"
+
+      - name: Build log
+        if: ${{ always() && inputs.confirm == 'APPLY' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          DEPLOY_ID: ${{ steps.trigger.outputs.id }}
+        run: |
+          set -euo pipefail
+          # The logs API is owner-scoped and filtered by resource, so the owner
+          # id has to be resolved even though the service is hardcoded.
+          OWNER="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/owners?limit=1" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['owner']['id'])")"
+
+          curl -fsS -G -H "Authorization: Bearer $RENDER_API_KEY" \
+            --data-urlencode "ownerId=${OWNER}" \
+            --data-urlencode "resource=${SERVICE_ID}" \
+            --data-urlencode "limit=200" \
+            "https://api.render.com/v1/logs" > logs.json || echo '{}' > logs.json
+
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open('logs.json'))
+          except Exception:
+              d = {}
+          rows = d.get('logs') or []
+          if not rows:
+              print("no log lines returned by the logs API")
+          # Oldest first reads like a build log rather than a stack of alerts.
+          for r in reversed(rows):
+              print(f"{r.get('timestamp','')}  {r.get('message','')}")
+          PY
+
+      - name: Verdict
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          S="${{ steps.wait.outputs.status }}"
+          if [ "$S" = "live" ]; then
+            echo "DEPLOY LIVE"
+          else
+            echo "::error::deploy ended in '$S' — build log is in the step above"
+            exit 1
+          fi
