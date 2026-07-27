@@ -126,6 +126,11 @@ jobs:
             "envVars": [
               {"key": "NODE_VERSION", "value": "20.19.2"},
               {"key": "NODE_ENV", "value": "production"},
+              # `next build` re-runs ESLint and tsc, and on this builder that
+              # step dies SILENTLY — the log ends at "Linting and checking
+              # validity of types ..." and exits 1 with no diagnostic. The
+              # checks still run as blocking CI gates on the same commit.
+              {"key": "SKIP_BUILD_CHECKS", "value": "1"},
               # Generated here, not committed. Absent, every route 500s: each app
               # runs `auth` as middleware and the config resolves this when built.
               {"key": "AUTH_SECRET", "value": secrets.token_urlsafe(32)},

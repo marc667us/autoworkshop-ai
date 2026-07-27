@@ -74,6 +74,18 @@ services:
       - key: NODE_ENV
         value: production
 
+      # `next build` re-runs ESLint and tsc, and on this builder that step dies
+      # SILENTLY — the log ends at "Linting and checking validity of types ..."
+      # and exits 1 with no diagnostic, because the checker is killed rather
+      # than reporting a fault. Observed on the first deploy of this service.
+      #
+      # Not a lowered bar: `pnpm typecheck` and `pnpm lint` are blocking gates on
+      # the same commit, so the check happens once, where its output is
+      # readable. Read by next.config.mjs in all seven apps; nothing but the
+      # deploy sets it, so a local build still checks everything.
+      - key: SKIP_BUILD_CHECKS
+        value: "1"
+
       # REQUIRED TO SERVE A PAGE AT ALL, not merely to sign in. Every app runs
       # `auth` as middleware on every request and the Auth.js config resolves
       # this when it is built, so an absent AUTH_SECRET is a 500 on every route.
