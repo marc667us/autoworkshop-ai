@@ -22,20 +22,6 @@ const constrainedBuild = process.env.SKIP_BUILD_CHECKS === '1';
 const nextConfig = {
   eslint: { ignoreDuringBuilds: constrainedBuild },
   typescript: { ignoreBuildErrors: constrainedBuild },
-  /**
-   * One worker, in-process, on the deploy builder.
-   *
-   * After the checks were skipped the build still died — instantly, in the same
-   * second, with no output, at "Collecting page data". That step forks a worker
-   * pool sized from the CPU count, and an immediate silent death there is the
-   * pool failing to start rather than a page failing to load: a page that
-   * throws prints its own stack. Next swallows a worker that never comes up.
-   *
-   * `cpus: 1` plus `workerThreads: false` keeps page collection in one process.
-   * It is slower, which is irrelevant for a deploy and would be annoying
-   * locally — hence the flag.
-   */
-  experimental: constrainedBuild ? { cpus: 1, workerThreads: false } : {},
   reactStrictMode: true,
   // Shared workspace packages are compiled by this app rather than pre-built,
   // so a token change is picked up without a separate build step.

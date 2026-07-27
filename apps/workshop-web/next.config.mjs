@@ -23,20 +23,6 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: constrainedBuild },
   typescript: { ignoreBuildErrors: constrainedBuild },
   /**
-   * One worker, in-process, on the deploy builder.
-   *
-   * After the checks were skipped the build still died — instantly, in the same
-   * second, with no output, at "Collecting page data". That step forks a worker
-   * pool sized from the CPU count, and an immediate silent death there is the
-   * pool failing to start rather than a page failing to load: a page that
-   * throws prints its own stack. Next swallows a worker that never comes up.
-   *
-   * `cpus: 1` plus `workerThreads: false` keeps page collection in one process.
-   * It is slower, which is irrelevant for a deploy and would be annoying
-   * locally — hence the flag.
-   */
-  experimental: constrainedBuild ? { cpus: 1, workerThreads: false } : {},
-  /**
    * Emit `.next/standalone` — a self-contained server plus only the node_modules
    * it actually traced.
    *

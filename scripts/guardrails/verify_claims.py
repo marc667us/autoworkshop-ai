@@ -61,8 +61,13 @@ DEFAULT_TARGETS = [
 
 TASK_QUEUE = Path(".claude/TASK_QUEUE.md")
 
+# "closed" is how the queue records a task investigated and dismissed -- T-0030
+# and T-0031 are both "**closed ... NOT A DEFECT**". Its absence here did not
+# merely mislabel them: because presence used to be inferred from status parsing,
+# an unrecognised word made a row that plainly exists invisible, and the checker
+# reported 15 real, correctly-documented references as missing from the queue.
 STATUS_WORDS = ["done", "queued", "partial", "blocked", "in progress", "complete", "open",
-                "withdrawn"]
+                "withdrawn", "closed"]
 HISTORICAL_MARKERS = [
     "was ", "were ", "until", "previously", "no longer", "used to", "had ",
     "shipped without", "said otherwise", "went stale", "before", "history",
@@ -107,9 +112,19 @@ def git_object_exists(sha: str) -> bool:
         return False
 
 
-def canonical_task_status(queue_text: str) -> dict[str, str]:
+def canonical_task_status(queue_text: str) -> tuple[set[str], dict[str, str]]:
     """
     Parse the TASK_QUEUE table -- it is the single source of truth for status.
+
+    Returns (known_ids, statuses). THESE ARE TWO DIFFERENT QUESTIONS and
+    conflating them was a bug: a row whose status cell used a word outside
+    STATUS_WORDS produced no entry at all, so "does this task exist" answered
+    NO for a task documented on its own line. That reported 15 correct
+    references as missing and failed the gate for the wrong reason -- the sort
+    of false positive that gets a guardrail switched off.
+
+    So presence is now recorded for EVERY row carrying a task id, and status is
+    recorded only when it can actually be read.
 
     The status cell is prose as well as a verdict: T-0003 reads
     "**partial** -- organizations + tenant DB layer + audit done; ... outstanding".
@@ -117,6 +132,7 @@ def canonical_task_status(queue_text: str) -> dict[str, str]:
     which is the opposite of what the row says. So the **bolded** verdict wins,
     and only if there is none do we fall back to a bare scan.
     """
+    known: set[str] = set()
     statuses: dict[str, str] = {}
     for line in queue_text.splitlines():
         if not line.strip().startswith("|"):
@@ -127,6 +143,7 @@ def canonical_task_status(queue_text: str) -> dict[str, str]:
         m = TASK_RE.search(cells[0])
         if not m:
             continue
+        known.add(f"T-{m.group(1)}")
         cell = cells[3]
         bold = re.findall(r"\*\*([^*]+)\*\*", cell)
         candidates = [b.lower() for b in bold] or [cell.lower()]
@@ -140,7 +157,7 @@ def canonical_task_status(queue_text: str) -> dict[str, str]:
                 break
         if chosen:
             statuses[f"T-{m.group(1)}"] = chosen
-    return statuses
+    return known, statuses
 
 
 def resolve_path(ref: str, repo_files: dict[str, list[Path]]) -> bool:
@@ -181,7 +198,8 @@ def is_historical(line: str) -> bool:
     return any(mark in low for mark in HISTORICAL_MARKERS)
 
 
-def check_document(path: Path, canonical: dict[str, str], f: Findings, citations_only: bool,
+def check_document(path: Path, known_ids: set[str], canonical: dict[str, str],
+                   f: Findings, citations_only: bool,
                    repo_files: dict[str, list[Path]]) -> None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -238,8 +256,13 @@ def check_document(path: Path, canonical: dict[str, str], f: Findings, citations
         # --- 3 & 4. task ids and status agreement ---------------------------
         for m in TASK_RE.finditer(line):
             tid = f"T-{m.group(1)}"
-            if tid not in canonical:
+            if tid not in known_ids:
                 f.add("FAIL", where, f"{tid} is referenced but is not in TASK_QUEUE.md")
+                continue
+            # The row exists but its verdict is not machine-readable. That is a
+            # documentation nit, not a contradiction, and there is nothing to
+            # compare a claim against -- so say nothing rather than guess.
+            if tid not in canonical:
                 continue
             if path.samefile(TASK_QUEUE) if TASK_QUEUE.exists() else False:
                 continue
@@ -286,7 +309,8 @@ def main() -> int:
         print(f"! {TASK_QUEUE} not found -- run from the repository root", file=sys.stderr)
         return 2
 
-    canonical = canonical_task_status(TASK_QUEUE.read_text(encoding="utf-8", errors="replace"))
+    known_ids, canonical = canonical_task_status(
+        TASK_QUEUE.read_text(encoding="utf-8", errors="replace"))
     targets = [Path(t) for t in (args.targets or DEFAULT_TARGETS)]
 
     repo_files = index_repo_files()
@@ -297,10 +321,10 @@ def main() -> int:
             f.add("WARN", str(t), "target document does not exist")
             continue
         checked += 1
-        check_document(t, canonical, f, args.citations_only, repo_files)
+        check_document(t, known_ids, canonical, f, args.citations_only, repo_files)
 
     print(f"=== claim verification -- {checked} document(s), "
-          f"{len(canonical)} known task ids ===")
+          f"{len(known_ids)} known task ids ===")
     if not f.items:
         print("  OK        every checked claim resolves")
     for level, where, msg in f.items:
