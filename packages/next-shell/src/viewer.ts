@@ -35,7 +35,27 @@ const DEMO_GRANTS: Record<string, readonly PermissionKey[]> = {
   admin: ['platform.admin', 'organization.admin', 'finance.read'],
 };
 
-const DEMO_DEFAULT: readonly PermissionKey[] = ['finance.read', 'organization.admin'];
+/**
+ * The default demo viewer deliberately does NOT hold `finance.read`.
+ *
+ * It used to. The nav model only ever gates on two keys — `finance.read` (9
+ * items) and `organization.admin` (1) — and this default granted both, so for
+ * every non-admin workspace *every* module in the tree was visible. The
+ * consequence was not cosmetic: `gatedHref()` in the journey suite could not
+ * find a single gated module in any of the seven workspaces, so
+ * "a gated URL 404s when typed directly" — the regression test for defect 1,
+ * the permission-bypass defect, and the only security-relevant assertion in the
+ * suite — silently `test.skip`ped in all seven. The suite reported green while
+ * proving nothing at all about permission gating.
+ *
+ * Withholding one grant makes the gating real: finance modules are now genuinely
+ * denied to the default viewer, the catch-all must fail closed for them, and the
+ * test that checks it actually executes. The admin workspace keeps `finance.read`
+ * because a platform administrator legitimately sees finance — and
+ * `at least one workspace must exercise permission gating` in the journey suite
+ * now fails if this ever drifts back to granting everything.
+ */
+const DEMO_DEFAULT: readonly PermissionKey[] = ['organization.admin'];
 
 export function viewerGrants(workspaceId: WorkspaceId | string): readonly PermissionKey[] {
   return DEMO_GRANTS[workspaceId] ?? DEMO_DEFAULT;

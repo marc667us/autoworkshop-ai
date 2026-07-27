@@ -1,6 +1,6 @@
 # Current phase
 
-**Phase 3 — Application shell and navigation** · Release **0.2** · 🔵 IN PROGRESS
+**Phase 3 — Application shell and navigation** · Release **0.2** · ✅ COMPLETE (2026-07-27)
 (Phase 1 / Release 0.1 ✅ complete and tagged `v0.1.0`; Phase 2 identity partially complete —
 see `TASK_QUEUE.md` for exactly which parts.)
 
@@ -27,8 +27,8 @@ seven workspaces, from one shared shell.
 - [x] Runtime theming: light / dark / system, no flash of wrong theme
 - [x] Responsive — mobile overlay nav drawer with focus trap; `prefers-reduced-motion` honoured
 - [x] Permission-aware visibility, with the router resolving from the same grants as the nav
-- [ ] Storybook story per component (`01 (1).txt` §71)
-- [ ] Playwright shell journey + axe-core gate
+- [x] Storybook story per component (`01 (1).txt` §71) — 77 stories, axe 84/84
+- [x] Playwright shell journey + axe-core gate — `apps/e2e`, 138 passing
 - [ ] Workspace / org / branch switchers (blocked on Phase 2 membership data)
 - [ ] Quick-create, tasks, messages, notifications, help panels (§9-§14)
 
@@ -38,8 +38,10 @@ seven workspaces, from one shared shell.
 own navigation · no route reachable that the navigation does not advertise to that viewer · no paid
 dependency.
 
-**Status against those:** typecheck 13/13, lint 13/13, tests 64, build 9/9 — all green. Route/nav
-agreement verified live and locked by a regression test in `packages/next-shell/src/viewer.test.ts`.
+**Status against those (2026-07-27):** typecheck 14/14, lint 14/14, unit tests 64, build 10/10,
+Playwright 138 passed / 0 failed / 2 legitimate skips. Route/nav agreement verified live and locked by
+`packages/next-shell/src/viewer.test.ts`; permission gating is now genuinely exercised in 5 of the 7
+workspaces, having previously skipped in all 7 without anyone noticing.
 
 ## Next phase
 
@@ -50,5 +52,12 @@ service history, complaint submission, appointment request, workshop search, das
 outstanding Supervisor condition; it is done, drilled 4/4 (RTO 16–106 s, RPO 0) and scheduled
 (T-0018). Phase 4 is blocked only by the remaining Release 0.2 items below.
 
-**Remaining to close Release 0.2:** T-0014 (Storybook stories) and T-0015 (Playwright journey +
-axe-core). T-0016 stays blocked on T-0003 membership data; T-0017 is queued.
+**Release 0.2 is closed.** T-0014 and T-0015 shipped 2026-07-26; T-0030 — the last item holding it
+open — closed 2026-07-27 and turned out not to be a product defect at all, but a stale `next start`
+server feeding the test suite a build that no longer existed on disk. A build-freshness gate now
+fails the run when that recurs. See `reviews/supervisor-adjudication-t0030-harness.md`.
+
+**Still open, and correctly NOT blocking 0.2:** T-0031 (ThemeToggle radiogroup activation), T-0016
+(switchers, blocked on T-0003 membership data) and T-0017 (quick-create / tasks / messages /
+notifications / help panels). T-0027 — the navigation model becoming workspace × role per `07.txt`
+part 2 §46–§50 — lands in Phase 3's scope but blocks Phase 5, so it is the next structural item.

@@ -31,17 +31,22 @@ function advertisedHrefs(workspaceId: string): string[] {
 }
 
 /**
- * An href that EXISTS in the workspace tree but is gated behind a permission
+ * A module that EXISTS in the workspace tree but is gated behind a permission
  * this viewer does not hold. Derived, never hardcoded: hardcoding a route makes
  * the test stop testing the moment that route's permission changes.
+ *
+ * Returns the required permission alongside the href, because the disclosure
+ * assertion below needs to name the exact secret it is checking for.
  */
-function gatedHref(workspaceId: string): string | undefined {
+function gatedModule(workspaceId: string): { href: string; permission?: string } | undefined {
   const workspace = getWorkspace(workspaceId);
   if (!workspace) return undefined;
   const visible = new Set(advertisedHrefs(workspaceId));
   for (const group of workspace.groups) {
     for (const item of group.items) {
-      if (!visible.has(item.href)) return item.href;
+      if (!visible.has(item.href)) {
+        return { href: item.href, permission: item.permission ?? group.permission };
+      }
     }
   }
   return undefined;
@@ -50,6 +55,40 @@ function gatedHref(workspaceId: string): string | undefined {
 async function gotoShell(page: Page, port: number, path = '/') {
   const res = await page.goto(base(port) + path, { waitUntil: 'domcontentloaded' });
   return res;
+}
+
+/**
+ * Block until React has actually hydrated the document.
+ *
+ * ANY responsive assertion about this shell needs this, because the structural
+ * mobile/desktop switch is decided by `useIsMobile()`, which is a hook: the
+ * server always renders the desktop tree, and the overlay drawer only replaces
+ * the inline column once effects have run. Measure before that and you measure
+ * the server's tree, which is a layout no user keeps for longer than a frame.
+ *
+ * WHY NOT `waitForTimeout`. Because a fixed sleep is a race with the machine,
+ * not with the app. On a loaded box — seven Next servers plus a nine-target
+ * build, which is exactly the state this repo was in on 2026-07-26 — 400ms is
+ * not reliably enough, and the test then reports a responsive defect that does
+ * not exist. That is not hypothetical: it is how T-0030 was born, and the same
+ * class of sleep-race had already produced a false focus-trap failure in the
+ * same suite. Wait for the CONDITION, never for a duration.
+ *
+ * React attaches `__reactFiber$…`/`__reactProps$…` expando keys to the DOM
+ * nodes it owns, and only once the client render has run. Their presence on
+ * <body> is therefore a direct, positive signal that hydration happened, as
+ * opposed to `readyState === 'complete'`, which only says the network went
+ * quiet and is equally true of a page whose JavaScript 404'd.
+ */
+async function waitForHydration(page: Page) {
+  await page.waitForFunction(() => document.readyState === 'complete', undefined, {
+    timeout: 15_000,
+  });
+  await page.waitForFunction(
+    () => Object.keys(document.body).some((k) => k.startsWith('__react')),
+    undefined,
+    { timeout: 15_000 },
+  );
 }
 
 test.describe('permission gating — defect 1: the catch-all ignored permissions', () => {
@@ -61,22 +100,65 @@ test.describe('permission gating — defect 1: the catch-all ignored permissions
    */
   for (const server of servers) {
     test(`${server.name}: a gated URL 404s when typed directly`, async ({ page }) => {
-      const href = gatedHref(server.name);
-      test.skip(!href, `no permission-gated module in the ${server.name} tree for this viewer`);
+      const gated = gatedModule(server.name);
+      test.skip(!gated, `no permission-gated module in the ${server.name} tree for this viewer`);
 
-      const res = await gotoShell(page, server.port, href!);
-      expect(res?.status(), `${href} must not render for a viewer without the grant`).toBe(404);
+      const res = await gotoShell(page, server.port, gated!.href);
+      expect(res?.status(), `${gated!.href} must not render for a viewer without the grant`).toBe(404);
 
-      // And it must not name the permission it wanted. Telling an anonymous
-      // visitor which grant to obtain is the enumeration hole itself.
+      // And it must not name the permission IT wanted. Telling a visitor which
+      // grant to obtain is the enumeration hole itself.
+      //
+      // This asserts the absence of that specific permission, not of anything
+      // permission-SHAPED. The broader regex it replaced (`/\b(platform|
+      // organization|finance)\.[a-z]+\b/`) also matched the viewer's own grants,
+      // which Next serialises into the RSC flight payload inside <script> tags
+      // in <body> — and `textContent('body')` reads script text. So it failed on
+      // `"grants":["organization.admin"]`: the viewer's own grants, which the
+      // viewer already holds and which `viewerGrants()` documents as
+      // client-visible and not a security control. That is a different fact from
+      // the required permission, and conflating them makes the test unfixable
+      // without either weakening it or restructuring how a client component
+      // receives its props.
       const body = (await page.textContent('body')) ?? '';
-      expect(body).not.toMatch(/\b(platform|organization|finance)\.[a-z]+\b/);
+      if (gated!.permission) {
+        expect(
+          body,
+          `the 404 for ${gated!.href} disclosed the permission that gates it ` +
+            `(${gated!.permission}), which tells a visitor exactly which grant to acquire`,
+        ).not.toContain(gated!.permission);
+      }
     });
   }
 
   test('an href that is in no workspace tree 404s', async ({ page }) => {
     const res = await gotoShell(page, WORKSHOP.port, '/definitely/not/a/module');
     expect(res?.status()).toBe(404);
+  });
+
+  /**
+   * The tests above `test.skip` themselves when a workspace has no gated module
+   * for this viewer. That skip is legitimate per workspace — a platform admin
+   * really does see everything — but it is NOT legitimate for every workspace at
+   * once, because then the fail-closed property is never exercised anywhere and
+   * the suite is green over zero assertions.
+   *
+   * That is not hypothetical. It was the actual state until 2026-07-27: the demo
+   * viewer held both of the only two permission keys the nav model gates on, so
+   * all seven skipped and the defect-1 regression test had never once run.
+   *
+   * `a11y-storybook` already guards its equivalent hole (it refuses to pass over
+   * an empty story index). This is the same guard for this suite.
+   */
+  test('at least one workspace must exercise permission gating', () => {
+    const exercised = servers.map((s) => s.name).filter((name) => gatedModule(name));
+    expect(
+      exercised,
+      'No workspace has a permission-gated module for the demo viewer, so every ' +
+        '"a gated URL 404s" test above skipped and the fail-closed behaviour of the ' +
+        'catch-all route is completely untested. Withhold a grant in ' +
+        'packages/next-shell/src/viewer.ts so gating is actually exercised.',
+    ).not.toEqual([]);
   });
 });
 
@@ -218,13 +300,9 @@ test.describe('responsive — defect 7: the top bar overflowed at 360px', () => 
       await page.goto(base(WORKSHOP.port), { waitUntil: 'networkidle' });
       // The responsive layout is decided by `useIsMobile()`, which resolves
       // AFTER hydration — the server render is the desktop layout. Measuring
-      // before hydration therefore measures the wrong tree and reports an
-      // overflow that a user would only ever see as a brief flash. Wait for
-      // hydration to have actually run, then measure.
-      await page.waitForFunction(() => document.readyState === 'complete', undefined, {
-        timeout: 15_000,
-      });
-      await page.waitForTimeout(400);
+      // before hydration measures the wrong tree and reports an overflow that a
+      // user would only ever see as a brief flash.
+      await waitForHydration(page);
 
       const overflow = await page.evaluate(() => ({
         scrollWidth: document.documentElement.scrollWidth,
@@ -243,6 +321,11 @@ test.describe('responsive — defect 7: the top bar overflowed at 360px', () => 
   test('below 768px the side nav is an overlay, not an inline column', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 800 });
     await gotoShell(page, WORKSHOP.port);
+    // Same reason as the overflow tests above: without this the assertion runs
+    // against the server-rendered desktop tree and fails on a correct app. This
+    // test previously omitted it, which is why it was still red after the real
+    // cause of T-0030 (a stale server) had already been fixed.
+    await waitForHydration(page);
 
     // The nav must not be occupying layout width next to the content.
     const main = page.locator('main').first();

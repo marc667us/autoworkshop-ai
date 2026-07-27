@@ -15,8 +15,8 @@
 | T-0011 | Shell surfaces: tabs, dialogs, drawers, AI assistant panel | 3 | **done** |
 | T-0012 | Runtime theming (light / dark / system) | 3 | **done** |
 | T-0013 | Responsive shell — mobile overlay nav, tablet behaviour | 3 | **done** |
-| T-0014 | Storybook stories for every shell component (`01 (1).txt` §71) | 3 | queued |
-| T-0015 | Playwright shell journey + axe-core accessibility gate | 3 | queued |
+| T-0014 | Storybook stories for every shell component (`01 (1).txt` §71) | 3 | **done** — 10 story files, 77 stories, axe 84/84 |
+| T-0015 | Playwright shell journey + axe-core accessibility gate | 3 | **done** — `apps/e2e`, 138 passing, harness defects fixed 2026-07-27 |
 | T-0016 | Workspace / organisation / branch switchers | 3 | **blocked** on T-0003 membership data |
 | T-0017 | Quick-create, tasks, messages, notifications, help panels (§9-§14) | 3 | queued |
 
@@ -32,11 +32,11 @@
 | T-0027 | Navigation model becomes **workspace x role** (07 pt2 §46-§50) | 3 | queued — blocks Phase 5 |
 | T-0028 | Account types as *requests*, workshop staff invitation, approval limits | 2 | queued |
 | T-0029 | Plan extension v1 r2 — specs 07/08/09 folded into the phase plan | — | **done** — `docs/00-project/PLAN_EXTENSION_v1.md` |
-| T-0030 | 🔴 **Side nav renders INLINE at 360px** — `useIsMobile()` false in the built app, so the overlay never engages: `main` 103px, page overflows 161px | 3 | **open, test failing on purpose** |
+| T-0030 | ~~Side nav renders INLINE at 360px~~ | 3 | **closed 2026-07-27 — NOT A PRODUCT DEFECT.** A stale `next start` server was serving chunk hashes a later rebuild had deleted; every chunk 404'd, React never hydrated, so `useIsMobile()` never left its SSR default. Reproduced under control (main 103px, overflow 161px, `__react*` absent) and fixed with a build-freshness gate |
 | T-0031 | ThemeToggle radiogroup: arrow keys move focus but not selection (radiogroup requires automatic activation) | 3 | open |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
-**Next up:** T-0014 and T-0015 close Release 0.2.
+**Next up:** T-0031, then T-0027 (navigation model → workspace × role, blocks Phase 5), then the T-0003 remainder.
 
 **The Phase 2 backup thread is now closed except for delivery.** T-0008 is done and drilled (RTO
 16–106 s, RPO 0, 4/4 runs); T-0018 is done and every job has actually fired; T-0019 detects but does

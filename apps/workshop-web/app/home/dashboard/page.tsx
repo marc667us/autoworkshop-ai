@@ -1,5 +1,6 @@
 import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
+import { viewerGrants } from '@autoworkshop/next-shell';
 
 /**
  * Workshop dashboard — §18, the default landing page for the workspace.
@@ -81,8 +82,22 @@ export default function Dashboard() {
             and collapse the whole sidebar from the ☰ button.
           </li>
           <li>
-            <strong>Permission-aware visibility is real.</strong> Finance items and the Settings group only appear
-            because the demo viewer holds <code>finance.read</code> and <code>organization.admin</code>.
+            {/* DERIVED, never restated. This sentence used to name the granted
+                permissions as literal text, and it went false the moment the
+                demo grants changed — describing visible finance items that were
+                by then correctly hidden. A page that explains the permission
+                model must read the permission model, or it becomes confident
+                misinformation. Same lesson as the nav/router grants split. */}
+            <strong>Permission-aware visibility is real.</strong> This viewer holds{' '}
+            {viewerGrants('workshop').map((grant, i, all) => (
+              <span key={grant}>
+                <code>{grant}</code>
+                {i < all.length - 1 ? ' and ' : ''}
+              </span>
+            ))}
+            , so only the groups those grants unlock are listed. Modules gated behind any other permission —
+            the finance items among them — are absent from the menu <em>and</em> answer 404 if their URL is
+            typed directly.
           </li>
           <li>
             <strong>Counters and warning badges are real mechanics, fake numbers.</strong> They resolve through the

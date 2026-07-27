@@ -57,15 +57,48 @@ export default defineConfig({
   },
 
   projects: [
+    /**
+     * Runs before everything else and fails the whole run if any server is
+     * serving a build that no longer exists on disk.
+     *
+     * This exists because of T-0030. A phantom "defect" — side nav inline at
+     * 360px, `main` squeezed to 103px, 161px of horizontal overflow — was
+     * reported, recorded and carried across a session boundary as live. It was
+     * none of those things. Seven `next start` servers had been launched at
+     * 12:35, the apps were rebuilt at 14:38 underneath them, and
+     * `reuseExistingServer` handed those stale servers straight to the suite.
+     * A running Next server resolves its chunk manifest once at boot, so it
+     * kept emitting HTML referencing chunk hashes the rebuild had deleted.
+     * Every one 404'd, React never hydrated, `useIsMobile()` never got past its
+     * SSR default of `false` — and the side nav rendered inline for a reason
+     * that had nothing whatsoever to do with the shell.
+     *
+     * The trap is that it fails *silently and plausibly*: the server still
+     * returns 200, the SSR markup is correct, and the pure-CSS half of the
+     * responsive design keeps working, so the page looks merely broken rather
+     * than unhydrated. It is indistinguishable from a real responsive bug
+     * unless you check whether the JavaScript actually loaded.
+     *
+     * A guard belongs here rather than in a doc note: the previous instruction
+     * ("stop the servers before rebuilding") was already written down in
+     * SESSION_HANDOVER.md and was still followed incorrectly.
+     */
+    {
+      name: 'build-guard',
+      testMatch: /build-freshness\.setup\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
     {
       name: 'storybook-a11y',
       testMatch: /(a11y-storybook|component-behaviour)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], baseURL: `http://127.0.0.1:${STORYBOOK_PORT}` },
+      dependencies: ['build-guard'],
     },
     {
       name: 'shell-journey',
       testMatch: /(shell-journey|a11y-workspaces)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+      dependencies: ['build-guard'],
     },
   ],
 
@@ -80,7 +113,18 @@ export default defineConfig({
       timeout: 120_000,
     },
     ...WORKSPACES.map((w) => ({
-      command: `npx next start ../${w.name}-web -p ${w.port}`,
+      // `cwd` MATTERS, and getting it wrong is not cosmetic. This previously read
+      // `npx next start ../${w.name}-web` with the default cwd of `apps/e2e`, so
+      // npx resolved `next` from THIS package — which pinned 14.2.21 — and used
+      // it to serve apps built with 15.1.3. Next 14 cannot read a Next 15 build:
+      // it dies on a missing `font-manifest.json`, a file Next 15 no longer
+      // emits. The mismatch stayed invisible for as long as the suite happened
+      // to reuse servers someone had started by hand from inside each app.
+      //
+      // Running from the app's own directory guarantees an app is always served
+      // by the same Next it was built with.
+      command: `npx next start -p ${w.port}`,
+      cwd: `../${w.name}-web`,
       url: `http://127.0.0.1:${w.port}`,
       reuseExistingServer: !CI,
       timeout: 120_000,

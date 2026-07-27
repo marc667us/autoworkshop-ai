@@ -178,25 +178,89 @@ intelligence), 13 (knowledge ops), 14 (community). ⚠️ `autoworkshop 07.txt` 
 exit 0 over 9 failures, and let a commit through while both guardrails were failing. Capture `$?` before any
 pipe.
 
+## SESSION 2026-07-27 — T-0030 CLOSED. It was never a product defect.
+
+**Start here: T-0031, then T-0027.** Release 0.2 is closed.
+
+### T-0030 was a stale server, not a responsive bug
+
+Carried in as a live red defect: at 360px the side nav rendered inline, `main` squeezed to 103px,
+161px of horizontal overflow, `useIsMobile()` false in the built app. **The shell was correct all
+along.**
+
+Seven `next start` servers were launched at 12:35 and the apps were rebuilt at 14:38 underneath them.
+`next start` resolves its chunk manifest once at boot, so those servers kept serving HTML that
+referenced chunk hashes the rebuild had deleted. Every chunk 404'd, React never hydrated, and
+`useIsMobile()` never advanced past the `false` it deliberately starts with for SSR safety.
+`reuseExistingServer: !CI` handed those stale servers straight to Playwright.
+
+Reproduced under control rather than argued: stale server -> `main` 103px, scrollWidth 521 vs
+clientWidth 360, no `__react*` keys on `<body>`. Fresh server, same build -> 360px, no overflow,
+hydrated. Both numbers match the original report exactly.
+
+**Why it fooled a careful reader.** The server still answers 200, the SSR markup is correct, and
+TopNav's mobile rules are plain CSS *inside that markup* so they keep working. The previous session
+cited that asymmetry as proof the bug was real. It is actually the signature of a page whose
+JavaScript never ran. Waiting longer for hydration cannot fix a chunk that 404s — which is why "I
+waited for hydration, so it is not a race" ruled out the wrong hypothesis.
+
+### Now gated
+
+`apps/e2e/tests/build-freshness.setup.ts` runs as a Playwright dependency project before every other
+project and fails the run if any server references a `/_next/static` asset that is not on disk in
+that app's `.next`. Proven both directions: it names the exact missing chunk on a stale server, and
+passes 7/7 on fresh ones. "Stop the servers before rebuilding" was already written in THIS FILE when
+the incident happened — documentation did not prevent it, so it is a gate now.
+
+### Four more defects found, none of them by Codex
+
+1. **The only security-relevant test in the suite had never once executed.** `"<workspace>: a gated
+   URL 404s when typed directly"` — the regression test for the permission-BYPASS defect —
+   `test.skip`ped in **all seven** workspaces, silently, every run. The nav model gates on just two
+   permission keys and the demo viewer held both, so `gatedHref()` found nothing gated anywhere.
+   Fixed: `DEMO_DEFAULT` no longer holds `finance.read`, and a new test fails if no workspace
+   exercises gating. **When it was made to run, fail-closed held** — real 404s. It just had no proof.
+2. **The suite served every app with the wrong Next major.** `npx next start ../<app>` ran from
+   `apps/e2e`, which pinned `next@14.2.21`, against apps built with `15.1.3`. Next 14 dies on a
+   missing `font-manifest.json`. Latent since T-0015 was written and masked entirely by the stale
+   server reuse — removing one bug exposed the other. Fixed with per-app `cwd` + version alignment.
+3. **The overlay test was a sleep-race** and would have stayed red on a correct app: it never waited
+   for hydration. The overflow tests waited with `waitForTimeout(400)` — a race with the machine, not
+   the app. All now use `waitForHydration()`, which waits for React's `__reactFiber$` keys, not a
+   duration. `readyState === 'complete'` is NOT sufficient: it is equally true of a page whose JS 404'd.
+4. **The disclosure assertion could not pass on correct code** — it matched the viewer's own grants in
+   the RSC flight payload. Tightened to the gated module's specific required permission.
+
+Codex found one real defect (stale copy on the workshop dashboard naming `finance.read`), which was
+outside the changed files — a good catch. It also skipped both questions it was explicitly told to
+answer and emitted no `VERDICT` line, for the third review running.
+
+### Open, recorded honestly
+
+- **One unexplained anomaly:** a single build-guard run passed against a demonstrably stale server.
+  Two later runs on the same state failed correctly and named the chunk, and a direct replication of
+  the guard's logic also reported it missing. Not reproducible, no explanation. Recorded rather than
+  rationalised — the direction (passing when it should fail) is the one that matters.
+- **Guard covers each app's entry route only.** The shared runtime chunks it does check change on
+  essentially any edit, so coverage is high but not total. Extending to a sample of routes is a cheap
+  follow-up.
+
+### Gates, 2026-07-27
+
+typecheck 14/14 · lint 14/14 · unit 64 · build 10/10 · **Playwright 138 passed, 0 failed, 2
+legitimate skips** (admin holds every grant; customer has no gated item). The three tests left
+deliberately red last session are green and **none was weakened** to get there.
+
 ## IN FLIGHT — pick up here
 
-**No feature work is in flight.** Working tree clean at `bdfe65c`, all gates green except the four
-deliberately-failing journey tests (T-0030, T-0031).
-See `.claude/CURRENT_TASK.md` for the detail on the next two.
+**No feature work is in flight.** See `.claude/CURRENT_TASK.md`.
 
-1. **T-0014 / T-0015** — a Storybook story per shell component (`01 (1).txt` §71) and the Playwright
-   journey + axe-core gate. **These close Release 0.2.** T-0015 is the one that matters: all 7
-   defects last session survived a green typecheck, lint, unit suite and 7-app build.
-2. **T-0003 remainder** — users, branches, memberships services on the `OrganizationService`
-   pattern. Unblocks T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
-3. **T-0023** — deliver the backup health alert somewhere a human sees it. Detection is done
-   (T-0019); on Windows nothing routes it to a person.
-4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, and a cluster rebuild with
-   `--data-checksums` on (it is currently **off** locally and cannot be enabled in place).
-
-**T-0018 is closed and T-0019 is partial** — both were delivered by `71a17fd` while this list still
-called them untouched, until 2026-07-26. T-0019's remaining half (delivering the alert to a human)
-is tracked as T-0023 above, not as T-0019. See the scheduling section.
+1. **T-0031** — ThemeToggle: arrows move focus but not selection; a `role="radiogroup"` requires
+   automatic activation. Genuine ARIA defect. `packages/ui/src/ThemeProvider.tsx:125`.
+2. **T-0027** — navigation model becomes **workspace x role** (`07.txt` pt2 §46-§50). **Blocks Phase 5.**
+3. **T-0003 remainder** — users, branches, memberships. Unblocks T-0016 and replaces `viewerGrants()`.
+4. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
+5. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, `--data-checksums` rebuild.
 
 ## Environment
 
