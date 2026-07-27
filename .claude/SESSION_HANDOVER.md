@@ -365,13 +365,53 @@ all failing closed.
 **NOT done, and not claimed:** the web apps are still not session-wired, so `viewerGrants()` and
 `viewerRole()` keep their demo bodies. Replacing them is **T-0005**, not more identity services.
 
+## T-0005 STARTED — API side done, Next side NOT. Resume exactly here.
+
+`viewerGrants()`/`viewerRole()` cannot stop being demo data until something can
+answer "what may this viewer see?" from a real role. **Nothing could**: the navigation gates on
+`finance.read`, `organization.admin` and `platform.admin`, and no code anywhere mapped a role to any
+of them. So T-0004's matrix was built first, because T-0005 is blocked on it in practice.
+
+**Landed:**
+- `apps/api/src/authz/permission-matrix.ts` — all 13 grantable roles → the 3 keys the nav gates on,
+  each entry traced to `07.txt` pt2 §50, `01 (1).txt` §29 or §32. Deliberately small; new keys arrive
+  with the modules that gate on them.
+- **`GET /api/v1/me`** — userId, displayName, tenantId, organizationId, branchId, activeRole,
+  `permissions[]`, and `memberships[]` (org + branch names, for T-0016's switchers). Every field
+  derived server-side from the validated token plus membership; no request field can influence the
+  role or the permission list.
+
+**A real defect the tests caught:** `permissionsForRole('constructor')` returned the `Object`
+function, because `ROLE_PERMISSIONS[roleName] ?? []` resolves up the **prototype chain** — truthy, so
+`??` never fired. `Object.freeze` does not help; it seals own properties and says nothing about
+inherited ones. Now `Object.hasOwn`. Same trap applies to any string-keyed lookup in this codebase.
+
+### ▶ NEXT SLICE — the actual remaining work of T-0005
+
+**The seven Next apps have NO session at all.** There is no Auth.js/next-auth dependency anywhere;
+`packages/auth` exists but is an EMPTY directory. So:
+
+1. Add Auth.js (next-auth v5) with the **Keycloak provider** into `packages/auth` — FOSS, zero cost,
+   and named in the approved stack (`05.txt` §1 "Keycloak, Auth.js, JWT").
+2. Server-side session → access token → call `GET /api/v1/me` → that becomes the body of
+   `viewerGrants()` and `viewerRole()`.
+3. **The refactor that will bite:** both are SYNC today and `viewerRole()` also feeds
+   `workspaceForRole()`. They must become async server-side reads. Known call sites:
+   the 7 `layout.tsx`, `renderModulePage`, and — watch this one —
+   `apps/workshop-web/app/home/dashboard/page.tsx` computes `VISIBLE` / `NAV_GROUP_COUNT` /
+   `PAGE_TITLE` **at MODULE SCOPE**. Module scope cannot await a per-request session; those must move
+   into the component body.
+4. `apps/e2e/tests/shell-journey.spec.ts` imports both functions to derive what the nav should
+   advertise. Once they need a session, the suite needs a fixture identity — do not let this silently
+   become untestable.
+
 ## IN FLIGHT — pick up here
 
 **No feature work is in flight.** See `.claude/CURRENT_TASK.md`.
 
-1. **T-0005** — tenant context from the Keycloak session inside the Next apps. THE next blocker: it
-   is what actually replaces the demo bodies of `viewerGrants()` and `viewerRole()`, and the only
-   thing still holding T-0016 (the switchers), whose data layer landed with T-0003.
+1. **T-0005 remainder** — Auth.js + Keycloak session in the 7 Next apps, then point
+   `viewerGrants()`/`viewerRole()` at `GET /api/v1/me`. See the slice notes above, especially the
+   sync→async refactor and the module-scope constants. Still the only thing holding T-0016.
 2. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
 3. **T-0017** — quick-create / tasks / messages / notifications / help panels (§9-§14).
 4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, `--data-checksums` rebuild.

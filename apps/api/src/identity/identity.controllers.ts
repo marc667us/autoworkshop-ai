@@ -13,6 +13,7 @@ import {
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { BranchService } from './branch.service';
 import { MembershipService } from './membership.service';
+import { MeService } from './me.service';
 import { UserService } from './user.service';
 
 /**
@@ -102,5 +103,23 @@ export class MembershipController {
     @Body() body: { status: 'suspended' | 'revoked' },
   ) {
     return this.memberships.withdraw(req.tenantContext, id, body.status);
+  }
+}
+
+/**
+ * `GET /me` — who the caller is, and what their role may see.
+ *
+ * The endpoint the Next apps call to stop guessing. Everything it returns is
+ * derived from the validated token plus membership records; no field of the
+ * request can influence the role or the permission list (`1.txt` §9).
+ */
+@Controller('me')
+@UseGuards(TenantGuard)
+export class MeController {
+  constructor(private readonly me: MeService) {}
+
+  @Get()
+  describe(@Req() req: AuthenticatedRequest) {
+    return this.me.describe(req.tenantContext);
   }
 }
