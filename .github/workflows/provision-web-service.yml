@@ -1,0 +1,233 @@
+# Provision `autoworkshop-web` — the production service for
+# https://autoworkshop.aiappinvent.com — and move the custom domain onto it.
+#
+# WHY A NEW SERVICE RATHER THAN REPAIRING THE OLD ONE
+#
+# The existing `autoworkshop` service (srv-d9jsliu7r5hc73b1kncg) is a NODE
+# service: Render clones the repo and runs the build itself. That build fails
+# with exit 1 and empty stderr and has resisted six attempts to diagnose it,
+# including one this session that ruled out the heap limit by reproducing it.
+# A service's runtime cannot be changed from `node` to `image` in place, so
+# deploying a prebuilt image requires a new service. The owner asked for a
+# separate one.
+#
+# THE DOMAIN CAN ONLY BE ATTACHED TO ONE SERVICE. Render refuses to attach a
+# hostname that another service already holds, so this DETACHES it from the old
+# service first. That is the one genuinely destructive act here, which is why it
+# is gated and why it is done in this order: create and verify the new service,
+# then move the domain, so the window in which the domain points at nothing is
+# as short as possible.
+#
+# Nothing is deleted. The old service is left in place, domainless and
+# suspended-by-neglect, so it remains available for comparison.
+name: Provision web service
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to create the service and MOVE the domain. Anything else is a dry run.'
+        required: false
+        default: 'DRYRUN'
+      service_name:
+        description: 'Name of the new service'
+        required: false
+        default: 'autoworkshop-web'
+      image_tag:
+        description: 'Image tag to deploy (a commit sha, or latest)'
+        required: false
+        default: 'latest'
+      move_domain:
+        description: 'Detach the custom domain from the old service and attach it here'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  OLD_SERVICE_ID: srv-d9jsliu7r5hc73b1kncg
+  CUSTOM_DOMAIN: autoworkshop.aiappinvent.com
+  IMAGE: ghcr.io/${{ github.repository_owner }}/autoworkshop-web
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SERVICE_NAME: ${{ inputs.service_name }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      CONFIRM: ${{ inputs.confirm }}
+
+    steps:
+      - name: The image must already exist
+        run: |
+          set -euo pipefail
+          # Provisioning a service that points at an image nobody published
+          # produces a service stuck in a pull loop with a confusing error. The
+          # release workflow publishes only images whose container was started
+          # and smoke-tested, so this also proves the gate ran.
+          if ! docker manifest inspect "${IMAGE}:${IMAGE_TAG}" > /dev/null 2>&1; then
+            echo "::error::${IMAGE}:${IMAGE_TAG} is not pullable."
+            echo "Run the Release workflow first, and make sure the GHCR package is PUBLIC"
+            echo "(Render pulls anonymously; a private package fails with 'manifest unknown')."
+            exit 1
+          fi
+          echo "${IMAGE}:${IMAGE_TAG} is pullable"
+
+      - name: Resolve owner and check for an existing service
+        id: lookup
+        run: |
+          set -euo pipefail
+          OWNER="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/owners?limit=1" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)[0]['owner']['id'])")"
+          echo "owner=$OWNER" >> "$GITHUB_OUTPUT"
+
+          # Filtered by name so this never enumerates the account. The same
+          # Render account hosts the Solar production application and it is
+          # explicitly off-limits.
+          EXISTING="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services?name=${SERVICE_NAME}&limit=20" \
+            | python3 -c "
+          import sys, json, os
+          want = os.environ['SERVICE_NAME']
+          print(next((r['service']['id'] for r in json.load(sys.stdin)
+                      if r['service']['name'] == want), ''))")"
+          echo "existing=$EXISTING" >> "$GITHUB_OUTPUT"
+          if [ -n "$EXISTING" ]; then
+            echo "service '$SERVICE_NAME' already exists: $EXISTING (will reuse)"
+          else
+            echo "service '$SERVICE_NAME' does not exist yet"
+          fi
+
+      - name: Show the plan
+        run: |
+          echo "image        : ${IMAGE}:${IMAGE_TAG}"
+          echo "new service  : ${SERVICE_NAME} (free / oregon / image runtime)"
+          echo "health check : /home/dashboard"
+          echo "domain move  : ${{ inputs.move_domain }}  (${CUSTOM_DOMAIN}: ${OLD_SERVICE_ID} -> ${SERVICE_NAME})"
+          if [ "$CONFIRM" != "APPLY" ]; then
+            echo "=============================================="
+            echo "DRY RUN. Nothing was created or changed."
+            echo "=============================================="
+          fi
+
+      - name: Create the service
+        id: create
+        if: ${{ inputs.confirm == 'APPLY' && steps.lookup.outputs.existing == '' }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > service.json
+          import json, os, secrets
+          spec = {
+            "type": "web_service",
+            "name": os.environ['SERVICE_NAME'],
+            "ownerId": "${{ steps.lookup.outputs.owner }}",
+            # An image-backed service. There is no repo, no clone and no build:
+            # Render's builder is out of the critical path entirely, which is
+            # the entire reason this service exists.
+            "image": {
+              "ownerId": "${{ steps.lookup.outputs.owner }}",
+              "imagePath": f"{os.environ['IMAGE']}:{os.environ['IMAGE_TAG']}",
+            },
+            "serviceDetails": {
+              "env": "image",
+              "runtime": "image",
+              "plan": "free",
+              "region": "oregon",
+              # Must be a path the app really serves. Render marks a deploy live
+              # only when this returns 2xx, so a wrong path here reads as a
+              # broken app forever.
+              "healthCheckPath": "/home/dashboard",
+            },
+            "envVars": [
+              {"key": "NODE_ENV", "value": "production"},
+              # From `autoworkshop service.txt`. NEXT_PUBLIC_* are compiled into
+              # the client bundle at BUILD time, so setting them here affects
+              # only server-side reads -- noted rather than silently assumed.
+              {"key": "NEXT_PUBLIC_APP_NAME", "value": "AutoWorkshop AI"},
+              {"key": "NEXT_PUBLIC_APP_URL",
+               "value": "https://autoworkshop.aiappinvent.com"},
+              # Auth.js v5 names. The spec file says NEXTAUTH_URL/NEXTAUTH_SECRET,
+              # which are the v4 names; v5 reads AUTH_URL/AUTH_SECRET and would
+              # silently ignore the v4 ones.
+              {"key": "AUTH_URL", "value": "https://autoworkshop.aiappinvent.com"},
+              {"key": "AUTH_SECRET", "value": secrets.token_urlsafe(32)},
+              # Auth.js rejects an unrecognised Host and only auto-detects
+              # Vercel. Behind Render's proxy, absent this, every /api/auth/*
+              # route 500s while ordinary pages return 200.
+              {"key": "AUTH_TRUST_HOST", "value": "true"},
+              # No public Keycloak, Postgres or API yet. Left pointing at
+              # localhost ON PURPOSE: a plausible-looking fake URL would turn
+              # "identity is not deployed" into "identity is broken". The spec
+              # file's DATABASE_URL / REDIS_URL / OPENAI_API_KEY are omitted for
+              # the same reason -- there is nothing behind them to name.
+              {"key": "KEYCLOAK_URL", "value": "http://localhost:8080"},
+              {"key": "KEYCLOAK_REALM", "value": "autoworkshop"},
+              {"key": "API_BASE_URL", "value": "http://localhost:4000"},
+            ],
+          }
+          print(json.dumps(spec))
+          PY
+
+          RESP="$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            --data @service.json \
+            "https://api.render.com/v1/services")"
+          SID="$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['service']['id'])")"
+          echo "created: $SID"
+          echo "id=$SID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the service id in use
+        id: sid
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          SID="${{ steps.create.outputs.id }}"
+          [ -z "$SID" ] && SID="${{ steps.lookup.outputs.existing }}"
+          echo "id=$SID" >> "$GITHUB_OUTPUT"
+          echo "service id: $SID"
+
+      - name: Move the custom domain
+        if: ${{ inputs.confirm == 'APPLY' && inputs.move_domain }}
+        run: |
+          set -euo pipefail
+          SID="${{ steps.sid.outputs.id }}"
+
+          # Detach from the old service. 404 means it was not attached, which is
+          # success for this purpose -- hence no `-f`.
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${OLD_SERVICE_ID}/custom-domains/${CUSTOM_DOMAIN}")"
+          echo "detach from ${OLD_SERVICE_ID}: HTTP ${CODE}"
+
+          # Attach to the new one. 409 means already attached, which is success
+          # on a re-run.
+          CODE="$(curl -sS -o attach.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"${CUSTOM_DOMAIN}\"}" \
+            "https://api.render.com/v1/services/${SID}/custom-domains")"
+          echo "attach to ${SID}: HTTP ${CODE}"
+          cat attach.json
+          case "$CODE" in
+            200|201|409) ;;
+            *) echo "::error::could not attach ${CUSTOM_DOMAIN}"; exit 1 ;;
+          esac
+
+          # The DNS record already points at autoworkshop.onrender.com, which
+          # belongs to the OLD service. Render verifies a moved domain against
+          # the NEW service's hostname, so print what the record must become
+          # rather than letting it fail verification silently.
+          NEW_HOST="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SID}" \
+            | python3 -c "import sys,json;print((json.load(sys.stdin).get('serviceDetails') or {}).get('url',''))")"
+          echo "::notice::New service URL: ${NEW_HOST}"
+          echo "If this differs from https://autoworkshop.onrender.com, the Namecheap CNAME"
+          echo "for host 'autoworkshop' must be repointed at the new hostname."
+
+      - name: Record the service id for the release workflow
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          echo "::notice::Set the repository variable so Release can promote to it:"
+          echo "  gh variable set RENDER_WEB_SERVICE_ID -b ${{ steps.sid.outputs.id }}"
