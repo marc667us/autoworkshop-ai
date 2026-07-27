@@ -1,0 +1,123 @@
+# Deploy a published image to one Render service and PROVE IT SERVES.
+#
+# Reusable because staging and production do exactly the same thing to two
+# different services, and the one difference that matters -- which host gets
+# verified -- is an input. Copy-pasting it would guarantee the two drift, and
+# the half that drifts is usually the one nobody watches.
+#
+# The caller passes a DIGEST-SPECIFIC tag, never `:latest`, so the artifact that
+# passed the smoke test is provably the artifact that runs here.
+name: Deploy to Render
+
+on:
+  workflow_call:
+    inputs:
+      service_id:
+        description: Render service id to deploy
+        required: true
+        type: string
+      image:
+        description: Fully qualified image reference including tag
+        required: true
+        type: string
+      base_url:
+        description: Public URL to verify after the deploy reports live
+        required: true
+        type: string
+      environment:
+        description: GitHub environment name for this deploy
+        required: false
+        default: ''
+        type: string
+    secrets:
+      RENDER_API_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Refuse to deploy without a configured service
+        run: |
+          if [ -z "${{ inputs.service_id }}" ]; then
+            echo "::error::No service id was supplied. The repository variable that"
+            echo "feeds this input is unset, so there is nothing to deploy to."
+            echo "NOTE: repository variables are snapshotted when a run is QUEUED --"
+            echo "setting one does not reach a run that is already in flight."
+            exit 1
+          fi
+          echo "deploying ${{ inputs.image }}"
+          echo "        -> ${{ inputs.service_id }}"
+
+      - name: Deploy and wait for a terminal state
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          RESP="$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"imageUrl":"${{ inputs.image }}"}' \
+            "https://api.render.com/v1/services/${{ inputs.service_id }}/deploys")"
+          DID="$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")"
+          echo "deploy $DID"
+
+          for i in $(seq 1 60); do
+            S="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/${{ inputs.service_id }}/deploys/${DID}" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])")"
+            echo "[$i] $S"
+            case "$S" in
+              live) echo "DEPLOY LIVE"; exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed)
+                echo "::error::deploy ended in $S"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::deploy did not reach a terminal state in 20 minutes"; exit 1
+
+      - name: Verify the deployed service actually serves
+        run: |
+          set -euo pipefail
+          # A `live` status means Render's own health check passed. It does not
+          # mean the public hostname routes here, and it says nothing about the
+          # auth routes -- which is the gap that let UntrustedHost and a missing
+          # Keycloak issuer reach a "green" build twice. Check the real host.
+          BASE="${{ inputs.base_url }}"
+
+          # A free service sleeps after ~15 minutes idle and takes roughly 50
+          # seconds to wake. The first request after a quiet period is therefore
+          # slow BY DESIGN, and failing on it would make the pipeline flaky for a
+          # property of the tier rather than a fault in the build.
+          for i in $(seq 1 5); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "${BASE}/home/dashboard" || echo 000)"
+            [ "$code" = "200" ] && break
+            echo "wake attempt ${i}: ${code}"
+            sleep 15
+          done
+
+          fail=0
+          for path in /home/dashboard /api/auth/providers /api/auth/session; do
+            code="$(curl -s -o /tmp/body -w '%{http_code}' --max-time 120 "${BASE}${path}" || echo 000)"
+            if [ "$code" = "200" ]; then
+              echo "ok   ${path} → ${code}"
+            else
+              echo "::error::${BASE}${path} returned ${code}"
+              head -c 300 /tmp/body; echo
+              fail=1
+            fi
+          done
+
+          # The session document is served to the browser as JSON. Re-asserted
+          # here and not only in the container smoke test, because the runtime
+          # env differs between the two and this is the one users can reach.
+          if curl -fsS --max-time 120 "${BASE}/api/auth/session" \
+               | grep -qiE '"(accessToken|refreshToken|idToken|id_token)"'; then
+            echo "::error::${BASE}/api/auth/session exposes a token to the browser"
+            fail=1
+          fi
+
+          [ "$fail" = "0" ] && echo "VERIFIED ${BASE}"
+          exit $fail

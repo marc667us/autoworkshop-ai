@@ -34,8 +34,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Service ids are NOT here. `env` is not available to a reusable workflow's
+  # `with:` block, so the deploy jobs read `vars.*` directly; a copy here would
+  # be dead config that reads like the live wiring.
   IMAGE: ghcr.io/${{ github.repository_owner }}/autoworkshop-web
-  RENDER_SERVICE_ID: ${{ vars.RENDER_WEB_SERVICE_ID }}
 
 jobs:
   # ── Gate 1: the checks that do not need a running app ────────────────────────
@@ -164,65 +166,36 @@ jobs:
           DOCKER_BUILDKIT: '1'
         # Login must precede this; see the step ordering note below.
 
-  # ── Promote: point production at the image that just passed ──────────────────
-  promote:
+  # ── Gate 3: deploy to STAGING and prove it serves ───────────────────────────
+  #
+  # Staging is not a copy of production kept alive for its own sake -- it is the
+  # last gate before the public domain. The container smoke test in `image` runs
+  # against a locally started container with test env vars; this runs against a
+  # real Render service, over the real proxy, with real per-service secrets.
+  # Those are different enough to fail independently, which is the whole point.
+  staging:
     needs: image
+    uses: ./.github/workflows/_deploy-render.yml
+    with:
+      service_id: ${{ vars.RENDER_STAGING_SERVICE_ID }}
+      image: ghcr.io/${{ github.repository_owner }}/autoworkshop-web:${{ github.sha }}
+      base_url: https://autoworkshop-web-staging.onrender.com
+      environment: staging
+    secrets: inherit
+
+  # ── Gate 4: promote the SAME image to production ─────────────────────────────
+  #
+  # `needs: staging` is what the owner's rule "only tested builds can be
+  # deployed here" actually reduces to: production is unreachable unless the
+  # identical image is already serving on staging. Same digest-tagged image, so
+  # no rebuild sneaks between the two.
+  promote:
+    needs: staging
     if: ${{ github.event_name == 'push' || inputs.promote }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: production
-    steps:
-      - name: Refuse to promote without a configured service
-        run: |
-          if [ -z "${RENDER_SERVICE_ID}" ]; then
-            echo "::error::RENDER_WEB_SERVICE_ID repository variable is not set."
-            echo "Set it to the new service id, e.g.:"
-            echo "  gh variable set RENDER_WEB_SERVICE_ID -b srv-xxxxxxxx"
-            exit 1
-          fi
-          echo "promoting to ${RENDER_SERVICE_ID}"
-
-      - name: Deploy the published image
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-        run: |
-          set -euo pipefail
-          # imageUrl pins the deploy to THIS commit's digest-tagged image, so the
-          # thing that was smoke-tested is the thing that runs. `:latest` would
-          # reintroduce ambiguity about which build is live.
-          RESP="$(curl -fsS -X POST \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "{\"imageUrl\":\"${IMAGE}:${GITHUB_SHA}\"}" \
-            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys")"
-          DID="$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")"
-          echo "deploy $DID"
-
-          for i in $(seq 1 60); do
-            S="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DID}" \
-              | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])")"
-            echo "[$i] $S"
-            case "$S" in
-              live) echo "PRODUCTION LIVE"; exit 0 ;;
-              build_failed|update_failed|canceled|pre_deploy_failed)
-                echo "::error::deploy ended in $S"; exit 1 ;;
-            esac
-            sleep 20
-          done
-          echo "::error::deploy did not reach a terminal state in 20 minutes"; exit 1
-
-      - name: Verify production actually serves
-        run: |
-          set -euo pipefail
-          # A `live` deploy status means Render's health check passed. It does
-          # not mean the custom domain resolves to it, and it says nothing about
-          # the auth routes. Both are checked here, against the real hostname.
-          for host in https://autoworkshop.aiappinvent.com; do
-            for path in /home/dashboard /api/auth/providers /api/auth/session; do
-              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "${host}${path}")"
-              echo "${host}${path} → ${code}"
-              [ "$code" = "200" ] || { echo "::error::${path} returned ${code}"; exit 1; }
-            done
-          done
-          echo "PRODUCTION VERIFIED"
+    uses: ./.github/workflows/_deploy-render.yml
+    with:
+      service_id: ${{ vars.RENDER_WEB_SERVICE_ID }}
+      image: ghcr.io/${{ github.repository_owner }}/autoworkshop-web:${{ github.sha }}
+      base_url: https://autoworkshop.aiappinvent.com
+      environment: production
+    secrets: inherit
