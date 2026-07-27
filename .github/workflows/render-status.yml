@@ -1,0 +1,97 @@
+# Read-only status probe for the `autoworkshop` Render service.
+#
+# Exists because the Render API key is a repository secret and cannot be read
+# from a developer machine, so there is otherwise no way to ask Render what
+# state the service is actually in without clicking through the console and
+# transcribing it — which is how several "facts" in earlier sessions turned out
+# to be wrong.
+#
+# SCOPED TO ONE SERVICE ID ON PURPOSE. The owner's Render account also hosts
+# the Solar production application, which is explicitly off-limits. This
+# workflow addresses `srv-d9jsliu7r5hc73b1kncg` directly and never enumerates
+# or touches anything else.
+#
+# READ-ONLY. GET requests only; it creates, updates and deletes nothing.
+name: Render status
+
+on:
+  workflow_dispatch:
+
+env:
+  # The `autoworkshop` service. Hardcoded rather than an input so a typo cannot
+  # point this at a neighbouring service.
+  SERVICE_ID: srv-d9jsliu7r5hc73b1kncg
+
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Service definition
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}" > svc.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('svc.json'))
+          det = d.get('serviceDetails', {}) or {}
+          esd = det.get('envSpecificDetails', {}) or {}
+          print(f"name        : {d.get('name')}")
+          print(f"id          : {d.get('id')}")
+          print(f"type        : {d.get('type')}   runtime: {det.get('env') or det.get('runtime')}")
+          print(f"suspended   : {d.get('suspended')}")
+          print(f"branch      : {d.get('branch')}   autoDeploy: {d.get('autoDeploy')}")
+          print(f"repo        : {d.get('repo')}")
+          print(f"rootDir     : {d.get('rootDir')!r}")
+          print(f"plan/region : {det.get('plan')} / {det.get('region')}")
+          print(f"healthCheck : {det.get('healthCheckPath')!r}")
+          print(f"url         : {det.get('url')}")
+          print()
+          print(f"buildCommand: {esd.get('buildCommand')!r}")
+          print(f"startCommand: {esd.get('startCommand')!r}")
+          PY
+
+      - name: Environment variable KEYS (values never printed)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Keys only. AUTH_SECRET lives here and a run log is not a vault.
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}/env-vars?limit=50" \
+          | python3 -c "import sys,json;[print(' -',r['envVar']['key']) for r in json.load(sys.stdin)]"
+
+      - name: Custom domains
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}/custom-domains?limit=20" \
+          | python3 -c "
+          import sys, json
+          rows = json.load(sys.stdin)
+          if not rows: print('NO CUSTOM DOMAIN ATTACHED')
+          for r in rows:
+              d = r['customDomain']
+              print(f\" - {d.get('name')}  verified={d.get('verificationStatus')}\")"
+
+      - name: Recent deploys
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}/deploys?limit=10" \
+          | python3 -c "
+          import sys, json
+          rows = json.load(sys.stdin)
+          if not rows: print('NO DEPLOYS HAVE EVER RUN ON THIS SERVICE')
+          for r in rows:
+              d = r['deploy']
+              c = (d.get('commit') or {}).get('id','')[:7]
+              print(f\" - {d.get('id')}  {d.get('status'):<12} commit={c or 'n/a'}  finished={d.get('finishedAt')}\")
+              if d.get('status') not in ('live','build_in_progress','update_in_progress'):
+                  print(f\"     trigger={d.get('trigger')}\")"
