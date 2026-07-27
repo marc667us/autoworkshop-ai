@@ -27,19 +27,26 @@ directions — it names the exact missing chunk on a stale server and passes 7/7
 
 Full record: `reviews/supervisor-adjudication-t0030-harness.md`.
 
+## T-0031 — closed the same day, same cause, also not a defect
+
+Recorded as "ThemeToggle arrows move focus but not selection". With no hydration `setPreference`
+never ran, so `aria-checked` never changed — which is indistinguishable from a missing activation
+handler. The roving tabindex and arrow/Home/End handling were already correct, having shipped with
+the defect-4 fix. Both radiogroup tests pass on a fresh build with the freshness guard green.
+
+**All four tests left deliberately red at the previous session's close were one environmental
+fault** — three T-0030, one T-0031. No shell code was wrong.
+
 ## Next up, in priority order
 
-1. **T-0031** — ThemeToggle arrow keys move focus but not selection. A `role="radiogroup"` requires
-   automatic activation, so this is a genuine ARIA-pattern defect, unlike Tabs (which implements
-   manual activation deliberately, and whose test was wrong). `packages/ui/src/ThemeProvider.tsx:125`.
-2. **T-0027** — navigation model becomes **workspace × role** (`07.txt` part 2 §46–§50). **Blocks
+1. **T-0027** — navigation model becomes **workspace × role** (`07.txt` part 2 §46–§50). **Blocks
    Phase 5.** Four distinct trees inside the single `workshop` workspace, resolved through the same
    grant filter the shell already uses — not a second mechanism.
-3. **T-0003 remainder** — users, branches, memberships on the `OrganizationService` pattern. Unblocks
+2. **T-0003 remainder** — users, branches, memberships on the `OrganizationService` pattern. Unblocks
    T-0016 (the switchers) and replaces `viewerGrants()`'s demo body.
-4. **T-0023** — deliver the backup health alert somewhere a human sees it. Detection is done; on
+3. **T-0023** — deliver the backup health alert somewhere a human sees it. Detection is done; on
    Windows nothing routes it to a person.
-5. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, cluster rebuild with
+4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, cluster rebuild with
    `--data-checksums`.
 
 ## Carry forward — two things that are easy to get wrong here

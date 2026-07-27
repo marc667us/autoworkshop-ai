@@ -235,6 +235,16 @@ Codex found one real defect (stale copy on the workshop dashboard naming `financ
 outside the changed files — a good catch. It also skipped both questions it was explicitly told to
 answer and emitted no `VERDICT` line, for the third review running.
 
+### T-0031 was the same phantom
+
+Closed the same day. "Arrows move focus but not selection" is exactly how a correct radiogroup
+behaves when its JavaScript never loaded: `setPreference` cannot run, so `aria-checked` never
+changes. The roving tabindex and arrow/Home/End handling had already shipped with the defect-4 fix.
+Both radiogroup tests pass on a fresh build, verified twice.
+
+**So all four tests left red at the previous close were one environmental fault** — three T-0030,
+one T-0031 — and no shell code was wrong in any of them.
+
 ### Open, recorded honestly
 
 - **One unexplained anomaly:** a single build-guard run passed against a demonstrably stale server.
@@ -255,12 +265,10 @@ deliberately red last session are green and **none was weakened** to get there.
 
 **No feature work is in flight.** See `.claude/CURRENT_TASK.md`.
 
-1. **T-0031** — ThemeToggle: arrows move focus but not selection; a `role="radiogroup"` requires
-   automatic activation. Genuine ARIA defect. `packages/ui/src/ThemeProvider.tsx:125`.
-2. **T-0027** — navigation model becomes **workspace x role** (`07.txt` pt2 §46-§50). **Blocks Phase 5.**
-3. **T-0003 remainder** — users, branches, memberships. Unblocks T-0016 and replaces `viewerGrants()`.
-4. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
-5. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, `--data-checksums` rebuild.
+1. **T-0027** — navigation model becomes **workspace x role** (`07.txt` pt2 §46-§50). **Blocks Phase 5.**
+2. **T-0003 remainder** — users, branches, memberships. Unblocks T-0016 and replaces `viewerGrants()`.
+3. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
+4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, `--data-checksums` rebuild.
 
 ## Environment
 

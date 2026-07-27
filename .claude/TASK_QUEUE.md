@@ -33,10 +33,12 @@
 | T-0028 | Account types as *requests*, workshop staff invitation, approval limits | 2 | queued |
 | T-0029 | Plan extension v1 r2 — specs 07/08/09 folded into the phase plan | — | **done** — `docs/00-project/PLAN_EXTENSION_v1.md` |
 | T-0030 | ~~Side nav renders INLINE at 360px~~ | 3 | **closed 2026-07-27 — NOT A PRODUCT DEFECT.** A stale `next start` server was serving chunk hashes a later rebuild had deleted; every chunk 404'd, React never hydrated, so `useIsMobile()` never left its SSR default. Reproduced under control (main 103px, overflow 161px, `__react*` absent) and fixed with a build-freshness gate |
-| T-0031 | ThemeToggle radiogroup: arrow keys move focus but not selection (radiogroup requires automatic activation) | 3 | open |
+| T-0031 | ~~ThemeToggle radiogroup: arrows move focus but not selection~~ | 3 | **closed 2026-07-27 — NOT A DEFECT.** Same stale-server cause as T-0030: with no hydration `setPreference` never ran, so `aria-checked` never changed. The roving tabindex and arrow handling were already correct (shipped in the defect-4 fix). Both tests pass on a fresh build |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
-**Next up:** T-0031, then T-0027 (navigation model → workspace × role, blocks Phase 5), then the T-0003 remainder.
+**Next up:** T-0027 (navigation model → workspace × role, `07.txt` pt2 §46–§50) — **blocks Phase 5** — then the T-0003 remainder, then T-0023.
+
+**All four tests left red at the 2026-07-26 close were one environmental fault.** Three were T-0030 and one was T-0031; none was a defect in the shell. The cause was a `next start` server serving a build that had been deleted underneath it.
 
 **The Phase 2 backup thread is now closed except for delivery.** T-0008 is done and drilled (RTO
 16–106 s, RPO 0, 4/4 runs); T-0018 is done and every job has actually fired; T-0019 detects but does
