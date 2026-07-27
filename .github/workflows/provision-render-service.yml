@@ -1,0 +1,220 @@
+name: Provision Render Service
+
+# Creates the `autoworkshop` web service on Render and attaches the custom
+# domain, so nobody has to reproduce a seven-step console form by hand.
+#
+# DRY-RUN BY DEFAULT. It prints exactly what it would create and changes
+# nothing unless `confirm` is literally `APPLY`. Creating cloud resources is
+# not reversible by re-running, and a workflow that provisions on push is one
+# accidental click from a duplicate service.
+#
+# REQUIRES ONE SECRET: RENDER_API_KEY, scoped to this repository. It is
+# deliberately NOT shared with the Solar repository — ADR-011 requires separate
+# secrets and CI between the two applications.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually create. Anything else is a dry run.'
+        required: false
+        default: 'DRYRUN'
+      service_name:
+        description: 'Render service name — decides the <name>.onrender.com host'
+        required: false
+        default: 'autoworkshop'
+      custom_domain:
+        description: 'Custom domain to attach'
+        required: false
+        default: 'autoworkshop.aiappinvent.com'
+      workspace:
+        description: 'Which Next app to serve (workshop, customer, admin, ...)'
+        required: false
+        default: 'workshop'
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SERVICE_NAME: ${{ inputs.service_name }}
+      CUSTOM_DOMAIN: ${{ inputs.custom_domain }}
+      WORKSPACE: ${{ inputs.workspace }}
+      CONFIRM: ${{ inputs.confirm }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the API key is present
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY is not set on this repository."
+            echo "Set it once with:"
+            echo "  gh secret set RENDER_API_KEY -R marc667us/autoworkshop-ai"
+            exit 1
+          fi
+          echo "RENDER_API_KEY present (${#RENDER_API_KEY} chars)"
+
+      - name: Resolve the Render owner id
+        id: owner
+        run: |
+          set -euo pipefail
+          # Every create call needs an ownerId, and it is not the account email.
+          RESP="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/owners?limit=10")"
+          OWNER_ID="$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0]['owner']['id'])")"
+          OWNER_NAME="$(echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0]['owner']['name'])")"
+          echo "owner: $OWNER_NAME ($OWNER_ID)"
+          echo "id=$OWNER_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Does the service already exist?
+        id: existing
+        run: |
+          set -euo pipefail
+          # Idempotence: re-running must not create a second service with the
+          # same name. Render allows that, and the duplicate silently takes the
+          # <name>.onrender.com host on a coin flip.
+          RESP="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services?name=${SERVICE_NAME}&limit=20")"
+          echo "$RESP" > services.json
+          ID="$(python3 - <<'PY'
+          import json, os
+          want = os.environ['SERVICE_NAME']
+          rows = json.load(open('services.json'))
+          print(next((r['service']['id'] for r in rows
+                      if r['service']['name'] == want), ''))
+          PY
+          )"
+          if [ -n "$ID" ]; then
+            echo "service '$SERVICE_NAME' already exists: $ID"
+          else
+            echo "service '$SERVICE_NAME' does not exist yet"
+          fi
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Build the service definition
+        id: spec
+        run: |
+          set -euo pipefail
+          # BUILD_CMD and START_CMD arrive through `env:` below rather than being
+          # built here, so the literal `$PORT` inside the start command survives
+          # to Render instead of being expanded by this shell into an empty
+          # string. `-p $PORT` is mandatory: package.json hardcodes a dev port,
+          # and a service listening on the wrong one fails every health check
+          # while its own logs look entirely healthy.
+          python3 - <<'PY' > service.json
+          import json, os, secrets
+          workspace = os.environ['WORKSPACE']
+          spec = {
+            "type": "web_service",
+            "name": os.environ['SERVICE_NAME'],
+            "ownerId": "${{ steps.owner.outputs.id }}",
+            "repo": "https://github.com/marc667us/autoworkshop-ai",
+            "branch": "master",
+            "autoDeploy": "yes",
+            "serviceDetails": {
+              "env": "node",
+              "plan": "free",
+              "region": "oregon",
+              "healthCheckPath": "/home/dashboard",
+              "envSpecificDetails": {
+                "buildCommand": os.environ['BUILD_CMD'],
+                "startCommand": os.environ['START_CMD'],
+              },
+            },
+            "envVars": [
+              {"key": "NODE_VERSION", "value": "20.19.2"},
+              {"key": "NODE_ENV", "value": "production"},
+              # Generated here, not committed. Absent, every route 500s: each app
+              # runs `auth` as middleware and the config resolves this when built.
+              {"key": "AUTH_SECRET", "value": secrets.token_urlsafe(32)},
+              # Auth.js v5 rejects an unrecognised Host and only auto-detects
+              # Vercel. Behind Render's proxy that 500s every /api/auth/* route
+              # while ordinary pages still return 200.
+              {"key": "AUTH_TRUST_HOST", "value": "true"},
+              # No public Keycloak or API yet. Left pointing at localhost ON
+              # PURPOSE — a plausible-looking fake URL would turn "identity is
+              # not deployed" into "identity is broken".
+              {"key": "KEYCLOAK_URL", "value": "http://localhost:8080"},
+              {"key": "KEYCLOAK_REALM", "value": "autoworkshop"},
+              {"key": "API_BASE_URL", "value": "http://localhost:4000"},
+            ],
+          }
+          print(json.dumps(spec, indent=2))
+          PY
+
+          echo "--- service definition ---"
+          # Redact the generated secret before it reaches the run log.
+          python3 - <<'PY'
+          import json
+          d = json.load(open('service.json'))
+          for v in d['envVars']:
+              if v['key'] == 'AUTH_SECRET':
+                  v['value'] = '<generated, redacted>'
+          print(json.dumps(d, indent=2))
+          PY
+        env:
+          BUILD_CMD: "corepack enable && corepack prepare pnpm@9.15.4 --activate && pnpm install --frozen-lockfile --filter @autoworkshop/${{ inputs.workspace }}-web... && pnpm --filter @autoworkshop/${{ inputs.workspace }}-web build"
+          START_CMD: "cd apps/${{ inputs.workspace }}-web && ./node_modules/.bin/next start -p $PORT"
+
+      - name: DRY RUN — stop here unless confirmed
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          echo "=============================================================="
+          echo "DRY RUN. Nothing was created."
+          echo "Re-run with confirm=APPLY to create '${SERVICE_NAME}'"
+          echo "and attach ${CUSTOM_DOMAIN}."
+          echo "=============================================================="
+
+      - name: Create the service
+        id: create
+        if: ${{ inputs.confirm == 'APPLY' && steps.existing.outputs.id == '' }}
+        run: |
+          set -euo pipefail
+          RESP="$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            --data @service.json \
+            "https://api.render.com/v1/services")"
+          ID="$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['service']['id'])")"
+          echo "created: $ID"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Attach the custom domain
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          SID="${{ steps.create.outputs.id }}"
+          [ -z "$SID" ] && SID="${{ steps.existing.outputs.id }}"
+          echo "service id: $SID"
+
+          # 409 here means the domain is already attached, which is success on a
+          # re-run — so this must not use `curl -f`.
+          CODE="$(curl -sS -o domain.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"name\":\"${CUSTOM_DOMAIN}\"}" \
+            "https://api.render.com/v1/services/$SID/custom-domains")"
+
+          echo "custom-domain HTTP $CODE"
+          cat domain.json
+          case "$CODE" in
+            2*) echo "domain attached" ;;
+            409) echo "domain already attached — fine" ;;
+            *)  echo "::error::attaching ${CUSTOM_DOMAIN} failed with $CODE"; exit 1 ;;
+          esac
+
+      - name: Report
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          SID="${{ steps.create.outputs.id }}"
+          [ -z "$SID" ] && SID="${{ steps.existing.outputs.id }}"
+          echo "=============================================================="
+          echo "service      : ${SERVICE_NAME} ($SID)"
+          echo "render url   : https://${SERVICE_NAME}.onrender.com"
+          echo "custom domain: https://${CUSTOM_DOMAIN}"
+          echo
+          echo "The first deploy takes ~5-10 minutes. Certificate issuance"
+          echo "follows domain verification, which the existing CNAME satisfies."
+          echo "=============================================================="
