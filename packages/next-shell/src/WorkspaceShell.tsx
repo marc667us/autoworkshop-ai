@@ -4,7 +4,8 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AppShell, ThemeProvider, type TopNavAction } from '@autoworkshop/ui';
-import { getWorkspace, type PermissionKey } from '@autoworkshop/navigation';
+import { getWorkspace, workspaceForRole, type PermissionKey } from '@autoworkshop/navigation';
+import { viewerRole } from './viewer';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
 /**
@@ -61,7 +62,11 @@ export function WorkspaceShell({
   drawer,
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
-  const workspace = getWorkspace(workspaceId);
+  const base = getWorkspace(workspaceId);
+  // T-0027: the role selects the tree (`07.txt` pt2 §46-§49) and `viewerRole()`
+  // is the ONLY place that decision is made — `renderModulePage` calls the same
+  // function, so the menu and the router cannot end up on different trees.
+  const workspace = base ? workspaceForRole(base, viewerRole(workspaceId)) : undefined;
 
   // A workspace with no navigation is a configuration error, and it must LOOK
   // like one. Rendering bare children would give a page with no nav that

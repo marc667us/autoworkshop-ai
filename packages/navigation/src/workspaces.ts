@@ -14,7 +14,7 @@
  * derivable from this tree instead of hand-maintained in parallel.
  */
 
-import type { NavGroup, Workspace } from './types';
+import type { NavGroup, RoleId, Workspace } from './types';
 
 /** Build an item whose href follows the `/group/item` convention. */
 function item(
@@ -483,6 +483,297 @@ const adminGroups: NavGroup[] = [
   group('reports', 'Reports', 'chart', [['reports', 'Reports']], 'platform.admin'),
 ];
 
+/* ------------------------------------------------------------------ *
+ * `autoworkshop 07.txt` PART 2 §46-§49 — WORKSHOP NAVIGATION PER ROLE
+ *
+ * ⚠️ `07.txt` holds TWO documents. Part 2 starts at line 1798 and restarts its
+ * numbering at §1, so these are part 2's §46-§49 — not part 1's. Grep for
+ * `^[0-9]+\. [A-Z]{3,}` and look for the restart before citing a section
+ * number from this file.
+ *
+ * Four DISTINCT trees, not four filtered views of `workshopGroups`. The spec
+ * groups and labels the same underlying work differently per role — the owner's
+ * "Repair Requests" is the manager's "Repair Request Inbox"; the technician has
+ * "MY JOBS" and "TECHNICAL TOOLS", which exist for nobody else. Collapsing them
+ * into one tagged tree would have been less code and a misreading of the spec.
+ *
+ * §50 additionally names supervisor, storekeeper, quality-control and cashier
+ * with control summaries but NO navigation tree. They are deliberately absent
+ * from `workshopRoleGroups` and fall back to the workspace default, rather than
+ * being invented here. §50's closing rule governs either way: "No user shall
+ * receive functions outside the user's approved role and branch."
+ * ------------------------------------------------------------------ */
+
+/** §46 — Workshop Owner: full governance, staff, financial and reporting. */
+const workshopOwnerGroups: NavGroup[] = [
+  group('home', 'Home', 'home', [
+    ['dashboard', 'Owner Dashboard'],
+    ['tasks-and-approvals', 'Tasks and Approvals', { counterKey: 'workshop.approvals.pending' }],
+    ['notification-inbox', 'Notification Inbox', { counterKey: 'workshop.notifications.unread' }],
+    ['calendar', 'Calendar'],
+  ]),
+  group('workshop-management', 'Workshop Management', 'factory', [
+    ['workshop-profile', 'Workshop Profile'],
+    ['branches', 'Branches'],
+    ['staff', 'Staff'],
+    ['roles-and-permissions', 'Roles and Permissions'],
+    ['service-categories', 'Service Categories'],
+    ['service-bays', 'Service Bays'],
+    ['tools-and-equipment', 'Tools and Equipment'],
+    ['opening-hours', 'Opening Hours'],
+    ['pricing-rules', 'Pricing Rules'],
+  ]),
+  group('customers-and-vehicles', 'Customers and Vehicles', 'users', [
+    ['customers', 'Customers'],
+    ['vehicles', 'Vehicles'],
+    ['repair-history', 'Repair History'],
+    ['customer-feedback', 'Customer Feedback'],
+  ]),
+  group('workshop-operations', 'Workshop Operations', 'clipboard', [
+    ['repair-requests', 'Repair Requests'],
+    ['customer-complaints', 'Customer Complaints', { counterKey: 'workshop.complaints.new' }],
+    ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
+    ['vehicle-intake', 'Vehicle Intake'],
+    ['repair-staging', 'Repair Staging', { counterKey: 'workshop.jobs.active' }],
+    ['job-cards', 'Job Cards'],
+  ]),
+  group('repair-control', 'Repair Control', 'wrench', [
+    ['inspection', 'Inspection'],
+    ['diagnosis', 'Diagnosis'],
+    ['repair-plans', 'Repair Plans'],
+    ['quotations', 'Quotations'],
+    ['customer-approvals', 'Customer Approvals'],
+    ['repairs-in-progress', 'Repairs in Progress'],
+    ['testing', 'Testing'],
+    ['quality-control', 'Quality Control'],
+    ['ready-for-collection', 'Ready for Collection'],
+  ]),
+  group('parts-and-suppliers', 'Parts and Suppliers', 'box', [
+    ['inventory', 'Inventory'],
+    ['parts-reservations', 'Parts Reservations'],
+    ['procurement', 'Procurement', { warningKey: 'workshop.parts.reorderAlerts' }],
+    ['suppliers', 'Suppliers'],
+    ['marketplace', 'Marketplace'],
+  ]),
+  // §29 keeps sensitive financial items permission-restricted. The owner role
+  // does not bypass that: role selects the TREE, permissions still filter it.
+  group(
+    'finance',
+    'Finance',
+    'card',
+    [
+      ['invoices', 'Invoices', { permission: 'finance.read' }],
+      ['payments', 'Payments', { permission: 'finance.read' }],
+      ['outstanding-balances', 'Outstanding Balances', { permission: 'finance.read' }],
+      ['refunds', 'Refunds', { permission: 'finance.read' }],
+      ['workshop-revenue', 'Workshop Revenue', { permission: 'finance.read' }],
+    ],
+  ),
+  group('knowledge-and-staff', 'Knowledge and Staff', 'book', [
+    ['fault-and-repair-knowledge-base', 'Fault and Repair Knowledge Base'],
+    ['repair-procedures-library', 'Repair Procedures Library'],
+    ['wiring-diagrams', 'Wiring Diagrams'],
+    ['training', 'Training'],
+    ['competencies', 'Competencies'],
+    ['certifications', 'Certifications'],
+  ]),
+  group('reports', 'Reports', 'chart', [
+    ['workshop-performance', 'Workshop Performance'],
+    ['technician-productivity', 'Technician Productivity'],
+    ['service-bay-utilization', 'Service-Bay Utilization'],
+    ['customer-service', 'Customer Service'],
+    ['inventory', 'Inventory'],
+    ['finance', 'Finance', { permission: 'finance.read' }],
+    ['warranty', 'Warranty'],
+  ]),
+  group(
+    'settings',
+    'Settings',
+    'cog',
+    [
+      ['workflow-rules', 'Workflow Rules'],
+      ['approval-limits', 'Approval Limits'],
+      ['templates', 'Templates'],
+      ['notifications', 'Notifications'],
+      ['security', 'Security'],
+      ['integrations', 'Integrations'],
+    ],
+    'organization.admin',
+  ),
+];
+
+/** §47 — Workshop Manager: daily operational control, assignment, workflow. */
+const workshopManagerGroups: NavGroup[] = [
+  group('home', 'Home', 'home', [
+    ['dashboard', 'Operations Dashboard'],
+    ['my-tasks', 'My Tasks', { counterKey: 'workshop.tasks.open' }],
+    ['notification-inbox', 'Notification Inbox', { counterKey: 'workshop.notifications.unread' }],
+    ['workshop-calendar', 'Workshop Calendar'],
+  ]),
+  group('requests-and-reception', 'Requests and Reception', 'users', [
+    ['repair-request-inbox', 'Repair Request Inbox'],
+    ['customer-complaint-inbox', 'Customer Complaint Inbox', { counterKey: 'workshop.complaints.new' }],
+    ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
+    ['vehicle-intake', 'Vehicle Intake'],
+  ]),
+  group('workshop-floor', 'Workshop Floor', 'factory', [
+    ['repair-staging', 'Repair Staging', { counterKey: 'workshop.jobs.active' }],
+    ['job-cards', 'Job Cards'],
+    ['technicians', 'Technicians'],
+    ['service-bays', 'Service Bays'],
+    ['tools-and-equipment', 'Tools and Equipment'],
+  ]),
+  group('repair-control', 'Repair Control', 'wrench', [
+    ['inspection-queue', 'Inspection Queue'],
+    ['diagnosis-queue', 'Diagnosis Queue'],
+    ['repair-plans', 'Repair Plans'],
+    ['internal-review', 'Internal Review'],
+    ['customer-approval', 'Customer Approval', { counterKey: 'workshop.proposals.pendingApproval' }],
+    ['repair-progress', 'Repair Progress'],
+    ['testing-queue', 'Testing Queue'],
+    ['quality-control-queue', 'Quality-Control Queue'],
+  ]),
+  group('parts', 'Parts', 'box', [
+    ['parts-status', 'Parts Status'],
+    ['reservations', 'Reservations'],
+    ['purchase-requisitions', 'Purchase Requisitions', { warningKey: 'workshop.parts.reorderAlerts' }],
+    ['supplier-inquiries', 'Supplier Inquiries'],
+  ]),
+  group('communication', 'Communication', 'chat', [
+    ['customer-messages', 'Customer Messages', { counterKey: 'workshop.messages.unread' }],
+    ['technician-messages', 'Technician Messages'],
+    ['supplier-messages', 'Supplier Messages'],
+    ['specialist-consultations', 'Specialist Consultations'],
+  ]),
+  group('reports', 'Reports', 'chart', [
+    ['job-progress', 'Job Progress'],
+    ['technician-workload', 'Technician Workload'],
+    ['delayed-jobs', 'Delayed Jobs'],
+    ['workshop-utilization', 'Workshop Utilization'],
+  ]),
+];
+
+/** §48 — Reception Staff: customer, vehicle, intake, invoice and release. */
+const workshopReceptionGroups: NavGroup[] = [
+  group('home', 'Home', 'home', [
+    ['dashboard', 'Reception Dashboard'],
+    ['my-tasks', 'My Tasks', { counterKey: 'workshop.tasks.open' }],
+    ['notification-inbox', 'Notification Inbox', { counterKey: 'workshop.notifications.unread' }],
+    ['calendar', 'Calendar'],
+  ]),
+  group('customers', 'Customers', 'users', [
+    ['customer-search', 'Customer Search'],
+    ['register-customer', 'Register Customer'],
+    ['customer-messages', 'Customer Messages', { counterKey: 'workshop.messages.unread' }],
+  ]),
+  group('vehicles', 'Vehicles', 'car', [
+    ['vehicle-search', 'Vehicle Search'],
+    ['register-vehicle', 'Register Vehicle'],
+    ['vehicle-history', 'Vehicle History'],
+  ]),
+  group('requests', 'Requests', 'clipboard', [
+    ['repair-request-inbox', 'Repair Request Inbox'],
+    ['customer-complaint-inbox', 'Customer Complaint Inbox', { counterKey: 'workshop.complaints.new' }],
+    ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
+    ['walk-in-requests', 'Walk-In Requests'],
+  ]),
+  group('vehicle-intake', 'Vehicle Intake', 'inbox', [
+    ['receive-vehicle', 'Receive Vehicle'],
+    ['condition-inspection', 'Condition Inspection'],
+    ['create-job-card', 'Create Job Card'],
+    ['issue-intake-receipt', 'Issue Intake Receipt'],
+  ]),
+  group('customer-approval', 'Customer Approval', 'sparkles', [
+    ['quotations', 'Quotations'],
+    ['pending-approvals', 'Pending Approvals', { counterKey: 'workshop.proposals.pendingApproval' }],
+    ['modification-requests', 'Modification Requests'],
+  ]),
+  group('collection-and-payment', 'Collection and Payment', 'card', [
+    ['ready-for-collection', 'Ready for Collection'],
+    ['invoices', 'Invoices', { permission: 'finance.read' }],
+    ['receive-payment', 'Receive Payment', { permission: 'finance.read' }],
+    ['receipts', 'Receipts', { permission: 'finance.read' }],
+    ['vehicle-release', 'Vehicle Release'],
+  ]),
+  group('communication', 'Communication', 'chat', [
+    ['messages', 'Messages'],
+    ['voice-calls', 'Voice Calls'],
+    ['video-consultations', 'Video Consultations'],
+  ]),
+];
+
+/** §49 — Technician: assigned-job inspection, diagnosis, execution, testing. */
+const workshopTechnicianGroups: NavGroup[] = [
+  group('home', 'Home', 'home', [
+    ['dashboard', 'Technician Dashboard'],
+    ['my-assigned-work', 'My Assigned Work', { counterKey: 'workshop.tasks.open' }],
+    ['notifications', 'Notifications', { counterKey: 'workshop.notifications.unread' }],
+    ['calendar', 'Calendar'],
+  ]),
+  group('my-jobs', 'My Jobs', 'clipboard', [
+    ['inspection-required', 'Inspection Required'],
+    ['diagnosis-required', 'Diagnosis Required'],
+    ['repair-approved', 'Repair Approved'],
+    ['awaiting-parts', 'Awaiting Parts', { warningKey: 'workshop.parts.reorderAlerts' }],
+    ['repair-in-progress', 'Repair in Progress', { counterKey: 'workshop.jobs.active' }],
+    ['testing-required', 'Testing Required'],
+    ['quality-control-returns', 'Quality-Control Returns'],
+  ]),
+  // Fault Simulation and Repair Solution Simulation are §18-§21 entry points.
+  // The tools themselves are Phase 12 (PLAN_EXTENSION_v1 §3.2); the menu entry
+  // is Phase 3. Listing them here does NOT advertise a built capability - the
+  // catch-all renders an honest "not built yet" page for every unbuilt route.
+  group('technical-tools', 'Technical Tools', 'book', [
+    ['fault-and-repair-knowledge-base', 'Fault and Repair Knowledge Base'],
+    ['fault-code-search', 'Fault Code Search'],
+    ['diagnostic-trees', 'Diagnostic Trees'],
+    ['wiring-diagrams', 'Wiring Diagrams'],
+    ['component-locations', 'Component Locations'],
+    ['repair-procedures-library', 'Repair Procedures Library'],
+    ['technical-service-information', 'Technical Service Information'],
+    ['fault-simulation', 'Fault Simulation'],
+    ['repair-solution-simulation', 'Repair Solution Simulation'],
+  ]),
+  group('plan-work', 'Plan Work', 'wrench', [
+    ['repair-planning', 'Repair Planning'],
+    ['find-parts', 'Find Parts'],
+    ['parts-compatibility', 'Parts Compatibility'],
+    ['tool-reservation', 'Tool Reservation'],
+    ['equipment-reservation', 'Equipment Reservation'],
+    ['request-specialist', 'Request Specialist'],
+  ]),
+  group('record-work', 'Record Work', 'inbox', [
+    ['inspection-results', 'Inspection Results'],
+    ['diagnostic-results', 'Diagnostic Results'],
+    ['repair-tasks', 'Repair Tasks'],
+    ['time-records', 'Time Records'],
+    ['parts-used', 'Parts Used'],
+    ['repair-evidence', 'Repair Evidence'],
+    ['variation-requests', 'Variation Requests'],
+  ]),
+  group('testing', 'Testing', 'check', [
+    ['repair-test-results', 'Repair Test Results'],
+    ['post-repair-scan', 'Post-Repair Scan'],
+    ['road-test', 'Road Test'],
+    ['submit-to-quality-control', 'Submit to Quality Control'],
+  ]),
+  group('learning', 'Learning', 'book', [
+    ['training-courses', 'Training Courses'],
+    ['technical-videos', 'Technical Videos'],
+    ['audio-guides', 'Audio Guides'],
+    ['assessments', 'Assessments'],
+    ['certifications', 'Certifications'],
+  ]),
+];
+
+/** §46-§49. Roles from §50 with no tree of their own are deliberately absent. */
+const workshopRoleGroups = {
+  owner: workshopOwnerGroups,
+  manager: workshopManagerGroups,
+  reception: workshopReceptionGroups,
+  technician: workshopTechnicianGroups,
+} satisfies Partial<Record<RoleId, NavGroup[]>>;
+
 /* ------------------------------------------------------------------ */
 
 /**
@@ -503,7 +794,11 @@ export const workspaces = {
     id: 'workshop',
     label: 'Workshop',
     audience: 'Technicians and managers — job cards, staging board, diagnosis',
+    // `01 (1).txt` §34 stays the workspace default: it is approved spec too, and
+    // it is what a member whose role is not yet resolved should see. The four
+    // role trees from `07.txt` pt2 §46-§49 sit beside it, not on top of it.
     groups: workshopGroups,
+    roleGroups: workshopRoleGroups,
   },
   supplier: {
     id: 'supplier',

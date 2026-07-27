@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   breadcrumbsFor,
   defaultExpanded,
+  groupsForRole,
   isActive,
   isGroupActive,
   searchItems,
   visibleGroups,
+  workspaceForRole,
 } from './resolve';
 import { getWorkspace, workspaces } from './workspaces';
 import type { Workspace } from './types';
@@ -205,5 +207,171 @@ describe('workspace trees match the specification', () => {
       const hrefs = ws.groups.flatMap((g) => g.items.map((i) => i.href));
       expect(new Set(hrefs).size).toBe(hrefs.length);
     }
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * T-0027 — workspace x role (`07.txt` part 2 §46-§49)
+ * ------------------------------------------------------------------ */
+
+describe('workspace x role navigation', () => {
+  const workshop = getWorkspace('workshop')!;
+
+  it('gives each of the four specified roles its own distinct tree', () => {
+    const trees = (['owner', 'manager', 'reception', 'technician'] as const).map((r) =>
+      groupsForRole(workshop, r),
+    );
+
+    // Distinct objects, and distinct CONTENT. Identity alone would pass if two
+    // roles were wired to the same array by a copy-paste slip.
+    const signatures = trees.map((groups) => groups.map((g) => g.id).join('|'));
+    expect(new Set(signatures).size, 'all four role trees must differ').toBe(4);
+
+    // And none of them may be the workspace default, or the role did nothing.
+    for (const groups of trees) {
+      expect(groups).not.toBe(workshop.groups);
+    }
+  });
+
+  it('falls back to the workspace default for a role the spec gives no tree', () => {
+    // §50 names these four with a control summary but no navigation. Falling
+    // back is the honest behaviour; inventing a tree for them would not be.
+    for (const role of ['supervisor', 'storekeeper', 'quality-control', 'cashier'] as const) {
+      expect(groupsForRole(workshop, role)).toBe(workshop.groups);
+    }
+  });
+
+  it('falls back to the workspace default when no role is supplied', () => {
+    expect(groupsForRole(workshop, undefined)).toBe(workshop.groups);
+  });
+
+  it('is idempotent, and a resolved view cannot be re-resolved to another role', () => {
+    // Codex found this: the resolved workspace used to keep `roleGroups`, so
+    // applying the helper again with a DIFFERENT role fell back to the FIRST
+    // role's tree rather than the workspace default — handing back the
+    // technician's navigation under a supervisor's name.
+    const technician = workspaceForRole(workshop, 'technician');
+    expect(technician.roleGroups).toBeUndefined();
+
+    // Re-applying with a role that has no tree must not resurrect a stale one.
+    expect(workspaceForRole(technician, 'supervisor').groups).toBe(technician.groups);
+    // Re-applying with a different role that DOES have a tree must not switch
+    // trees behind a caller's back either — a resolved view is final.
+    expect(workspaceForRole(technician, 'owner').groups).toBe(technician.groups);
+    // And re-applying the same role changes nothing.
+    expect(workspaceForRole(technician, 'technician')).toBe(technician);
+  });
+
+  it('leaves workspaces that have no role trees untouched', () => {
+    const customer = getWorkspace('customer')!;
+    expect(workspaceForRole(customer, 'owner')).toBe(customer);
+  });
+
+  it('ROLE SELECTS THE TREE, PERMISSIONS STILL FILTER IT', () => {
+    // The whole point of keeping these two concerns separate. An owner is the
+    // most privileged workshop role in §50, and still does not see a
+    // finance-gated item without the finance grant.
+    const owner = workspaceForRole(workshop, 'owner');
+    const hrefs = (grants: string[]) =>
+      visibleGroups(owner, grants).flatMap((g) => g.items.map((i) => i.href));
+
+    const withFinance = hrefs(['finance.read', 'organization.admin']);
+    const withoutFinance = hrefs(['organization.admin']);
+
+    expect(withFinance).toContain('/finance/invoices');
+    expect(withoutFinance).not.toContain('/finance/invoices');
+  });
+
+  it('every role tree resolves breadcrumbs for its own items', () => {
+    // Guards the failure where a role tree is reachable but produces bare
+    // crumbs because the resolver was still reading the default tree.
+    for (const role of ['owner', 'manager', 'reception', 'technician'] as const) {
+      const ws = workspaceForRole(workshop, role);
+      const first = ws.groups[0]?.items[0];
+      expect(first, `${role} has an empty first group`).toBeDefined();
+      const crumbs = breadcrumbsFor(ws, first!.href);
+      expect(crumbs.at(-1)?.label, `${role}: ${first!.href}`).toBe(first!.label);
+    }
+  });
+
+  it('no role tree contains a duplicate href', () => {
+    // Two items sharing an href makes one of them unreachable and breaks
+    // active-state highlighting for both.
+    for (const role of ['owner', 'manager', 'reception', 'technician'] as const) {
+      const hrefs = groupsForRole(workshop, role).flatMap((g) => g.items.map((i) => i.href));
+      expect(new Set(hrefs).size, `${role} has duplicate hrefs`).toBe(hrefs.length);
+    }
+  });
+});
+
+describe('role trees must not lose a permission in transcription', () => {
+  const workshop = getWorkspace('workshop')!;
+
+  /**
+   * The realistic transcription mistake: `07.txt` prints "Invoices" as plain
+   * text with no mention of permissions, so an item copied straight from the
+   * spec arrives ungated — and role trees are transcribed by hand, one per
+   * role. A single omission silently exposes a finance screen to a role that
+   * §50 says must not have it, and nothing else in the suite would notice.
+   *
+   * `01 (1).txt` §29 is the governing rule: "Sensitive financial menu items
+   * shall be restricted by permission."
+   */
+  const FINANCIAL = /invoice|payment|receipt|revenue|refund|balance|finance/i;
+
+  /**
+   * Items the pattern matches on a word but which are NOT financial.
+   *
+   * This list exists because the guard found exactly one hit on its first run
+   * and it was a false positive: §48's "Issue Intake Receipt" is the document
+   * proving the workshop took custody of the vehicle, not a payment receipt.
+   * Gating it on `finance.read` would have hidden a core reception function
+   * from reception staff — a real regression, introduced to satisfy a
+   * heuristic.
+   *
+   * Recorded as a named exception rather than by loosening the pattern, so the
+   * guard still fires for a genuine payment receipt and the reasoning stays
+   * attached to the decision.
+   */
+  const NOT_FINANCIAL = new Set(['/vehicle-intake/issue-intake-receipt']);
+
+  it('every financial item in every role tree is permission-gated', () => {
+    const offenders: string[] = [];
+
+    for (const [role, groups] of Object.entries(workshop.roleGroups ?? {})) {
+      for (const g of groups) {
+        for (const i of g.items) {
+          if (NOT_FINANCIAL.has(i.href)) continue;
+          const financial = FINANCIAL.test(i.id) || FINANCIAL.test(i.label);
+          const gated = Boolean(i.permission ?? g.permission);
+          if (financial && !gated) offenders.push(`${role}: ${i.href} (${i.label})`);
+        }
+      }
+    }
+
+    expect(offenders, 'financial items reachable with no permission').toEqual([]);
+  });
+
+  it('every exception in NOT_FINANCIAL still exists in a role tree', () => {
+    // An exception for an item that no longer exists is a hole waiting for a
+    // future item to reuse the href and inherit a waiver nobody reviewed.
+    const allHrefs = new Set(
+      Object.values(workshop.roleGroups ?? {})
+        .flat()
+        .flatMap((g) => g.items.map((i) => i.href)),
+    );
+    for (const href of NOT_FINANCIAL) {
+      expect(allHrefs.has(href), `stale exception: ${href}`).toBe(true);
+    }
+  });
+
+  it('the guard itself is not vacuous — financial items exist to be checked', () => {
+    // Without this, deleting every finance item would make the test above pass.
+    const financialCount = Object.values(workshop.roleGroups ?? {})
+      .flat()
+      .flatMap((g) => g.items)
+      .filter((i) => FINANCIAL.test(i.id) || FINANCIAL.test(i.label)).length;
+
+    expect(financialCount).toBeGreaterThan(0);
   });
 });

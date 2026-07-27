@@ -29,14 +29,16 @@
 | T-0023 | Deliver the health-check alert somewhere a human sees it (closes T-0019) | 2 | queued |
 | T-0025 | ~~axe `color-contrast`~~ | 3 | **withdrawn** — the 10 hits came from stories rendering Storybook's error page, not from the palette |
 | T-0026 | Dangling `aria-controls` (nav toggle + every collapsed SideNav group) | 3 | **done** — both were real; axe rated them CRITICAL |
-| T-0027 | Navigation model becomes **workspace x role** (07 pt2 §46-§50) | 3 | queued — blocks Phase 5 |
+| T-0027 | Navigation model becomes **workspace x role** (07 pt2 §46-§50) | 3 | **done 2026-07-27** — 4 role trees (§46-§49) beside the §34 workspace default; `viewerRole()` is the single decision point for BOTH the shell and the catch-all router. Verified live: §49 routes 200, §34-only routes 404. **Phase 5 unblocked** |
 | T-0028 | Account types as *requests*, workshop staff invitation, approval limits | 2 | queued |
 | T-0029 | Plan extension v1 r2 — specs 07/08/09 folded into the phase plan | — | **done** — `docs/00-project/PLAN_EXTENSION_v1.md` |
 | T-0030 | ~~Side nav renders INLINE at 360px~~ | 3 | **closed 2026-07-27 — NOT A PRODUCT DEFECT.** A stale `next start` server was serving chunk hashes a later rebuild had deleted; every chunk 404'd, React never hydrated, so `useIsMobile()` never left its SSR default. Reproduced under control (main 103px, overflow 161px, `__react*` absent) and fixed with a build-freshness gate |
 | T-0031 | ~~ThemeToggle radiogroup: arrows move focus but not selection~~ | 3 | **closed 2026-07-27 — NOT A DEFECT.** Same stale-server cause as T-0030: with no hydration `setPreference` never ran, so `aria-checked` never changed. The roving tabindex and arrow handling were already correct (shipped in the defect-4 fix). Both tests pass on a fresh build |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
-**Next up:** T-0027 (navigation model → workspace × role, `07.txt` pt2 §46–§50) — **blocks Phase 5** — then the T-0003 remainder, then T-0023.
+**Next up:** T-0003 remainder (users, branches, memberships) — it replaces the demo bodies of BOTH `viewerGrants()` and `viewerRole()` and unblocks T-0016 — then T-0023, then T-0017.
+
+**Phase 5 is unblocked.** T-0027 landed the workspace × role navigation it was waiting on.
 
 **All four tests left red at the 2026-07-26 close were one environmental fault.** Three were T-0030 and one was T-0031; none was a defect in the shell. The cause was a `next start` server serving a build that had been deleted underneath it.
 

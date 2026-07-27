@@ -1,6 +1,12 @@
 import { notFound } from 'next/navigation';
 import { PageHeader, EmptyState, StatusBadge } from '@autoworkshop/ui';
-import { getWorkspace, visibleGroups, type PermissionKey } from '@autoworkshop/navigation';
+import {
+  getWorkspace,
+  visibleGroups,
+  workspaceForRole,
+  type PermissionKey,
+} from '@autoworkshop/navigation';
+import { viewerRole } from './viewer';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
 /**
@@ -44,8 +50,14 @@ export async function renderModulePage(
    */
   grants: readonly PermissionKey[] = [],
 ) {
-  const workspace = getWorkspace(workspaceId);
-  if (!workspace) notFound();
+  const base = getWorkspace(workspaceId);
+  if (!base) notFound();
+
+  // Resolve the ROLE tree from the same function the shell uses (T-0027).
+  // Reading `base.groups` here while the shell rendered a role tree would put
+  // the menu and the router back on different maps — defect 3, one layer up:
+  // every route the technician's menu advertises would 404.
+  const workspace = workspaceForRole(base, viewerRole(workspaceId));
 
   const pathname = '/' + (slug ?? []).join('/');
   // Resolve against the filtered tree, not `workspace.groups` — otherwise a

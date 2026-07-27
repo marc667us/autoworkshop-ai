@@ -1,4 +1,4 @@
-import type { PermissionKey, WorkspaceId } from '@autoworkshop/navigation';
+import type { PermissionKey, RoleId, WorkspaceId } from '@autoworkshop/navigation';
 
 /**
  * The viewer's permission grants — THE single source, for both the navigation
@@ -59,4 +59,35 @@ const DEMO_DEFAULT: readonly PermissionKey[] = ['organization.admin'];
 
 export function viewerGrants(workspaceId: WorkspaceId | string): readonly PermissionKey[] {
   return DEMO_GRANTS[workspaceId] ?? DEMO_DEFAULT;
+}
+
+/**
+ * The viewer's ROLE within a workspace — `07.txt` part 2 §46-§49 (T-0027).
+ *
+ * Same contract, same caveats and the same replacement point as
+ * `viewerGrants()`: demo data until Phase 2 resolves it from validated Keycloak
+ * claims and membership records, never from anything the client supplies.
+ *
+ * IT LIVES BESIDE `viewerGrants()` ON PURPOSE. The role decides *which*
+ * navigation tree the viewer is on, and the grants decide which of its entries
+ * they may open. If the shell resolved the role from one place and the catch-all
+ * route from another, the menu would advertise routes the router would 404 —
+ * which is not a hypothetical, it is defect 3 of the Phase 3 set, caused by
+ * exactly that split for grants. One function, one truth, both callers.
+ *
+ * ROLE IS NOT AUTHORITY. Selecting a tree grants nothing: every item in it is
+ * still permission-filtered, and the API plus RLS deny independently. §50's rule
+ * — "No user shall receive functions outside the user's approved role and
+ * branch" — is enforced there, not by which menu got rendered.
+ */
+const DEMO_ROLES: Partial<Record<string, RoleId>> = {
+  // The workshop app demonstrates the role-specific navigation from §46-§49.
+  // `technician` is the demo role because the seeded user is "A. Technician",
+  // and a workspace whose menu contradicts its own user label is exactly the
+  // kind of quiet inconsistency this codebase keeps paying for.
+  workshop: 'technician',
+};
+
+export function viewerRole(workspaceId: WorkspaceId | string): RoleId | undefined {
+  return DEMO_ROLES[workspaceId];
 }

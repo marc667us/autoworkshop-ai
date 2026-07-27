@@ -6,7 +6,61 @@
  * the Playwright journeys and the permission tests.
  */
 
-import type { Crumb, NavGroup, PermissionKey, Workspace } from './types';
+import type { Crumb, NavGroup, PermissionKey, RoleId, Workspace } from './types';
+
+/**
+ * The navigation a ROLE sees inside a workspace — `07.txt` part 2 §46-§49.
+ *
+ * Falls back to the workspace default when the role is unknown or has no tree
+ * of its own. §50 defines eight workshop roles but only four trees, so the
+ * fallback is the normal path for half of them, not an error case.
+ */
+export function groupsForRole(workspace: Workspace, role?: RoleId): NavGroup[] {
+  if (!role) return workspace.groups;
+  return workspace.roleGroups?.[role] ?? workspace.groups;
+}
+
+/**
+ * A workspace as seen by one role.
+ *
+ * WHY THIS SHAPE. It returns a `Workspace`, not a bare group list, so that
+ * every existing consumer — the shell, `breadcrumbsFor`, the catch-all route
+ * resolver, the journey tests — keeps taking exactly the type it already took
+ * and needs no change. The alternative, threading a `role` parameter through
+ * each of them, would have created a second place where "which tree is this
+ * viewer on" is decided, and this repo has already shipped that bug once: the
+ * nav and the router each held their own copy of the viewer's grants and
+ * disagreed, so the menu advertised routes that 404'd.
+ *
+ * Resolve the workspace ONCE, at the edge, and pass it down.
+ *
+ * Role selects the tree; permissions still filter it. Those are different
+ * questions — "which map am I holding" versus "which doors on it may I open" —
+ * and a role never bypasses a permission. Compose with `visibleGroups`.
+ */
+export function workspaceForRole(workspace: Workspace, role?: RoleId): Workspace {
+  const groups = groupsForRole(workspace, role);
+  if (groups === workspace.groups) return workspace;
+
+  // `roleGroups` is DROPPED from the result, deliberately.
+  //
+  // Keeping it made this function non-idempotent in a way that quietly lied:
+  // re-applying it to an already-resolved workspace with a DIFFERENT role fell
+  // back to the first role's tree instead of the workspace default, because
+  // `groups` was no longer the default by then. So
+  // `workspaceForRole(workspaceForRole(w, 'technician'), 'supervisor')` handed
+  // back the technician's navigation — under a supervisor's name.
+  //
+  // The returned object is a RESOLVED VIEW for one role. A resolved view has no
+  // business carrying the menu of alternatives it was chosen from: anything
+  // holding it could re-derive a different role and reintroduce exactly the
+  // nav/router divergence this whole design exists to prevent. Dropping the
+  // field makes a second application a no-op instead of a surprise, and makes
+  // "resolve once, at the edge, then pass it down" enforceable rather than
+  // merely advised.
+  const { roleGroups: _resolved, ...rest } = workspace;
+  return { ...rest, groups };
+}
 
 /**
  * Filter a workspace's navigation to what `grants` may see.

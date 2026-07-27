@@ -11,8 +11,10 @@ export type {
   NavGroup,
   NavItem,
   PermissionKey,
+  RoleId,
   Workspace,
   WorkspaceId,
+  WorkshopRoleId,
 } from './types';
 
 export { getWorkspace, pendingWorkspaces, workspaces } from './workspaces';
@@ -21,8 +23,10 @@ export {
   breadcrumbsFor,
   defaultExpanded,
   flattenItems,
+  groupsForRole,
   isActive,
   isGroupActive,
   searchItems,
   visibleGroups,
+  workspaceForRole,
 } from './resolve';

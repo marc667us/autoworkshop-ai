@@ -74,13 +74,60 @@ export type WorkspaceId =
   | 'towing'
   | 'admin';
 
+/**
+ * A role WITHIN a workspace — `autoworkshop 07.txt` part 2 §50.
+ *
+ * ⚠️ `07.txt` is TWO documents in one file. Part 2 begins at line 1798 and
+ * restarts its own numbering at §1; these roles are part 2's §50, not part 1's.
+ *
+ * §50 names eight workshop roles. Four of them (§46-§49) are given a complete,
+ * distinct navigation tree; the other four are given a control summary but no
+ * tree, so they fall back to the workspace default until the spec defines one.
+ * They are listed here anyway, because a role that exists in the authority
+ * table but not in the type is a role nobody can grant.
+ *
+ * ROLE IS NOT WORKSPACE, and conflating them would fork the workspace tree
+ * eight ways for no benefit. All eight live inside the single `workshop`
+ * workspace; the workspace decides which app you are in, the role decides which
+ * navigation that app shows you.
+ */
+export type WorkshopRoleId =
+  | 'owner'
+  | 'manager'
+  | 'reception'
+  | 'supervisor'
+  | 'technician'
+  | 'storekeeper'
+  | 'quality-control'
+  | 'cashier';
+
+/** Any role id. Only `workshop` has role-specific trees today (07 pt2 §46-§49). */
+export type RoleId = WorkshopRoleId;
+
 export interface Workspace {
   id: WorkspaceId;
   /** Shown in the top-nav workspace switcher (§5). */
   label: string;
   /** One-line description of who this workspace is for. */
   audience: string;
+  /**
+   * The workspace-level navigation — `01 (1).txt` §33-§39.
+   *
+   * This is the DEFAULT tree, used when the viewer's role is unknown or when
+   * that role has no tree of its own. It is not a superset of the role trees
+   * and must not be treated as one: §46-§49 group and label the same work
+   * differently per role ("Repair Requests" for the owner is "Repair Request
+   * Inbox" for the manager), so they are distinct trees, not filtered views.
+   */
   groups: NavGroup[];
+  /**
+   * Role-specific navigation — `07.txt` part 2 §46-§49.
+   *
+   * Present only where the spec actually defines a tree for that role. A role
+   * absent from this map is not an error; it falls back to `groups`, which is
+   * the honest behaviour for a role the spec has not yet detailed.
+   */
+  roleGroups?: Partial<Record<RoleId, NavGroup[]>>;
 }
 
 /** A single breadcrumb hop. */

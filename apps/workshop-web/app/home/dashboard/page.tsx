@@ -1,6 +1,37 @@
 import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
-import { viewerGrants } from '@autoworkshop/next-shell';
+import { viewerGrants, viewerRole } from '@autoworkshop/next-shell';
+import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
+
+/**
+ * Everything this page says about the navigation is COMPUTED from the model it
+ * is describing, never restated. Both facts below were previously written out
+ * by hand and both went false the moment the model changed — the group/item
+ * counts when T-0027 introduced per-role trees, and the granted-permission list
+ * when the demo grants were narrowed. A page whose job is to explain the system
+ * has to read the system.
+ */
+const WORKSHOP_ROLE = viewerRole('workshop');
+const RESOLVED_WORKSPACE = workspaceForRole(getWorkspace('workshop')!, WORKSHOP_ROLE);
+const VISIBLE = visibleGroups(RESOLVED_WORKSPACE, viewerGrants('workshop'));
+const NAV_GROUP_COUNT = VISIBLE.length;
+const NAV_ITEM_COUNT = VISIBLE.reduce((n, g) => n + g.items.length, 0);
+const ROLE_LABEL = WORKSHOP_ROLE ? `${WORKSHOP_ROLE} role` : 'workspace default';
+
+/**
+ * This page's own title, taken from the navigation entry that points at it.
+ *
+ * A concrete `page.tsx` takes precedence over the catch-all, so this route is
+ * the one place where the header text is written by hand instead of being
+ * derived from the nav item — and it promptly disagreed with it: the technician
+ * tree calls `/home/dashboard` "Technician Dashboard" while the header said
+ * "Workshop Dashboard", so the menu, the breadcrumb and the heading named the
+ * same screen three ways. Reading the label from the model removes the second
+ * source rather than syncing it.
+ */
+const THIS_ROUTE = '/home/dashboard';
+const PAGE_TITLE =
+  VISIBLE.flatMap((g) => g.items).find((i) => i.href === THIS_ROUTE)?.label ?? 'Workshop Dashboard';
 
 /**
  * Workshop dashboard — §18, the default landing page for the workspace.
@@ -45,7 +76,7 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader
-        title="Workshop Dashboard"
+        title={PAGE_TITLE}
         description="Today at Demo Motors Ltd — Accra Main"
         actions={<StatusBadge kind="draft" label="Demo data — not yet wired to the API" />}
       />
@@ -77,9 +108,14 @@ export default function Dashboard() {
         </h2>
         <ul style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.sm, lineHeight: 1.7 }}>
           <li>
-            <strong>Navigation is real and complete.</strong> Every group and item is transcribed from
-            <code> autoworkshop 01 (1).txt</code> §34 — 11 groups, 55 items. Expand, collapse, search the menu,
-            and collapse the whole sidebar from the ☰ button.
+            {/* DERIVED for the same reason as the permissions line below: the
+                counts used to be written out as "11 groups, 55 items" and went
+                wrong the moment T-0027 gave this workspace a per-role tree. */}
+            <strong>Navigation is real and complete.</strong> Every group and item is transcribed from the
+            approved specification — <code>autoworkshop 01 (1).txt</code> §34 for the workspace, and{' '}
+            <code>autoworkshop 07.txt</code> part 2 §46–§49 for the four workshop roles. You are seeing the{' '}
+            <strong>{ROLE_LABEL}</strong> navigation: {NAV_GROUP_COUNT} groups, {NAV_ITEM_COUNT} items.
+            Expand, collapse, search the menu, and collapse the whole sidebar from the ☰ button.
           </li>
           <li>
             {/* DERIVED, never restated. This sentence used to name the granted

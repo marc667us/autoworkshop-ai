@@ -1,6 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
-import { getWorkspace, visibleGroups, workspaces } from '@autoworkshop/navigation';
-import { viewerGrants } from '@autoworkshop/next-shell';
+import {
+  getWorkspace,
+  visibleGroups,
+  workspaceForRole,
+  workspaces,
+} from '@autoworkshop/navigation';
+import { viewerGrants, viewerRole } from '@autoworkshop/next-shell';
 import { workspaces as servers } from '../playwright.config';
 
 /**
@@ -21,11 +26,23 @@ import { workspaces as servers } from '../playwright.config';
 const WORKSHOP = servers.find((w) => w.name === 'workshop')!;
 const base = (port: number) => `http://127.0.0.1:${port}`;
 
-/** Every href the side nav advertises to this viewer, per workspace. */
-function advertisedHrefs(workspaceId: string): string[] {
+/**
+ * The workspace as the running app resolves it — role tree included (T-0027).
+ *
+ * This MUST compose `workspaceForRole` + `viewerRole` exactly as
+ * `WorkspaceShell` and `renderModulePage` do. Reading the raw workspace here
+ * would test a tree the app never renders: every assertion would be about
+ * `01 (1).txt` §34 while the browser showed `07.txt` pt2 §49.
+ */
+function resolvedWorkspace(workspaceId: string) {
   const workspace = getWorkspace(workspaceId);
   if (!workspace) throw new Error(`unknown workspace: ${workspaceId}`);
-  return visibleGroups(workspace, viewerGrants(workspaceId)).flatMap((g) =>
+  return workspaceForRole(workspace, viewerRole(workspaceId));
+}
+
+/** Every href the side nav advertises to this viewer, per workspace. */
+function advertisedHrefs(workspaceId: string): string[] {
+  return visibleGroups(resolvedWorkspace(workspaceId), viewerGrants(workspaceId)).flatMap((g) =>
     g.items.map((i) => i.href),
   );
 }
@@ -39,8 +56,7 @@ function advertisedHrefs(workspaceId: string): string[] {
  * assertion below needs to name the exact secret it is checking for.
  */
 function gatedModule(workspaceId: string): { href: string; permission?: string } | undefined {
-  const workspace = getWorkspace(workspaceId);
-  if (!workspace) return undefined;
+  const workspace = resolvedWorkspace(workspaceId);
   const visible = new Set(advertisedHrefs(workspaceId));
   for (const group of workspace.groups) {
     for (const item of group.items) {

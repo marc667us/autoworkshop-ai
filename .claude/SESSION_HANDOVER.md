@@ -261,13 +261,63 @@ typecheck 14/14 · lint 14/14 · unit 64 · build 10/10 · **Playwright 138 pass
 legitimate skips** (admin holds every grant; customer has no gated item). The three tests left
 deliberately red last session are green and **none was weakened** to get there.
 
+## T-0027 DONE — navigation is now workspace x role. Phase 5 unblocked.
+
+`07.txt` **part 2** §46-§49 gives four DISTINCT navigation trees inside the single `workshop`
+workspace. They are not filtered views of §34: the spec groups and labels the same work differently
+per role (the owner's "Repair Requests" is the manager's "Repair Request Inbox"; "MY JOBS" and
+"TECHNICAL TOOLS" exist for the technician alone). §50 names EIGHT roles but gives trees for four —
+supervisor, storekeeper, quality-control and cashier fall back to the workspace default, which is what
+the spec provides.
+
+**Design, and why:** `workspaceForRole()` returns a `Workspace` with the role's groups swapped in, so
+the shell, `breadcrumbsFor`, the catch-all router and the journey tests all keep taking the type they
+already took. Threading a `role` parameter through each would have created a SECOND place where "which
+tree is this viewer on" gets decided — and this repo already shipped that bug for grants, where the nav
+advertised routes the router 404'd. **`viewerRole()` is the single decision point**, called by both
+`WorkspaceShell` and `renderModulePage`. Role selects the tree; permissions still filter it.
+
+**Verified live, not just built:** the workshop app renders §49 exactly (Home · My Jobs · Technical
+Tools · Plan Work · Record Work · Testing · Learning). `/my-jobs/inspection-required` -> 200,
+`/technical-tools/fault-code-search` -> 200, and the §34-only `/workshop-floor/repair-staging` -> **404**.
+The menu and the router moved together, which is the entire property at stake.
+
+**Codex found two real defects, both confirmed and fixed:**
+1. `workspaceForRole` kept `roleGroups` on its result, so re-applying it with a different role fell
+   back to the FIRST role's tree — a supervisor would have got the technician's navigation under their
+   own name. Fixed by dropping the field: a resolved view has no business carrying the menu of
+   alternatives it was chosen from.
+2. `/home/dashboard` is a concrete route that bypasses the catch-all, and its header still said
+   "Workshop Dashboard" while the technician nav called it "Technician Dashboard". Now derived.
+
+**The Supervisor pass found a third**, in the area Codex was asked about and skipped: a role tree could
+silently drop a permission during transcription — `07.txt` prints "Invoices" as plain text, the trees
+are hand-transcribed per role, and every existing test would stay green because the item is *supposed*
+to be there. Guard added.
+
+**One finding was correctly REJECTED.** That guard's first run flagged
+`reception: /vehicle-intake/issue-intake-receipt`. §48's "Issue Intake Receipt" is proof the workshop
+took custody of the vehicle, not a payment receipt — gating it would have hidden a core reception
+function from reception staff to satisfy a regex. Handled as a named exception with its reason, plus a
+test that the exception still refers to a live item.
+
+**Skips rose 2 -> 3:** `workshop` no longer exercises the gated-URL test, because §49's technician tree
+legitimately has no permission-gated item. Five workspaces still do, and
+`at least one workspace must exercise permission gating` enforces it never reaches zero.
+
+Records: `reviews/supervisor-adjudication-t0027-workspace-role.md`.
+
+**Gates:** typecheck 14/14 · lint 14/14 · **unit 79** · build 10/10 · **Playwright 137 passed, 0
+failed, 3 legitimate skips**.
+
 ## IN FLIGHT — pick up here
 
 **No feature work is in flight.** See `.claude/CURRENT_TASK.md`.
 
-1. **T-0027** — navigation model becomes **workspace x role** (`07.txt` pt2 §46-§50). **Blocks Phase 5.**
-2. **T-0003 remainder** — users, branches, memberships. Unblocks T-0016 and replaces `viewerGrants()`.
-3. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
+1. **T-0003 remainder** — users, branches, memberships. Unblocks T-0016 and replaces the demo bodies
+   of BOTH `viewerGrants()` and `viewerRole()`. These are the two functions Phase 2 must land on.
+2. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
+3. **T-0017** — quick-create / tasks / messages / notifications / help panels (§9-§14).
 4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, `--data-checksums` rebuild.
 
 ## Environment
