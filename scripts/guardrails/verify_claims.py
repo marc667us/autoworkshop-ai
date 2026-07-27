@@ -66,8 +66,14 @@ TASK_QUEUE = Path(".claude/TASK_QUEUE.md")
 # merely mislabel them: because presence used to be inferred from status parsing,
 # an unrecognised word made a row that plainly exists invisible, and the checker
 # reported 15 real, correctly-documented references as missing from the queue.
-STATUS_WORDS = ["done", "queued", "partial", "blocked", "in progress", "complete", "open",
-                "withdrawn", "closed"]
+#
+# ORDER MATTERS -- the first word found in the status cell wins, so the most
+# specific verdicts must come first. T-0005 reads "**code complete 2026-07-27,
+# GATES PENDING**". Matching "complete" there normalised to "done" and reported
+# the repo's one piece of knowingly unreviewed work as finished, in the very
+# checker built to stop stale status claims. "gates pending" must be seen first.
+STATUS_WORDS = ["gates pending", "in progress", "done", "queued", "partial", "blocked",
+                "complete", "open", "withdrawn", "closed"]
 HISTORICAL_MARKERS = [
     "was ", "were ", "until", "previously", "no longer", "used to", "had ",
     "shipped without", "said otherwise", "went stale", "before", "history",
@@ -112,7 +118,7 @@ def git_object_exists(sha: str) -> bool:
         return False
 
 
-def canonical_task_status(queue_text: str) -> tuple[set[str], dict[str, str]]:
+def canonical_task_status(queue_text: str) -> tuple[set[str], dict[str, str], list[str]]:
     """
     Parse the TASK_QUEUE table -- it is the single source of truth for status.
 
@@ -134,6 +140,7 @@ def canonical_task_status(queue_text: str) -> tuple[set[str], dict[str, str]]:
     """
     known: set[str] = set()
     statuses: dict[str, str] = {}
+    unparsed: list[str] = []
     for line in queue_text.splitlines():
         if not line.strip().startswith("|"):
             continue
@@ -157,7 +164,13 @@ def canonical_task_status(queue_text: str) -> tuple[set[str], dict[str, str]]:
                 break
         if chosen:
             statuses[f"T-{m.group(1)}"] = chosen
-    return known, statuses
+        else:
+            # Presence is recorded above, so this no longer breaks the task-id
+            # check -- but staying silent would trade a false failure for a
+            # false green: a typo or a new status word would simply exempt that
+            # row from status checking forever. Make it visible instead.
+            unparsed.append(f"T-{m.group(1)}")
+    return known, statuses, unparsed
 
 
 def resolve_path(ref: str, repo_files: dict[str, list[Path]]) -> bool:
@@ -175,10 +188,19 @@ def resolve_path(ref: str, repo_files: dict[str, list[Path]]) -> bool:
     if Path(ref).exists() or Path(clean).exists():
         return True
     name = Path(clean).name
-    for cand in repo_files.get(name, []):
-        if str(cand).replace("\\", "/").endswith(clean):
-            return True
-    return False
+    # Codex asked for exactly-one-match here, on the reasoning that an ambiguous
+    # reference is not really grounded. Implemented literally it produced 25 new
+    # FAILs reading "cited file does not exist: tsconfig.json" -- a file that
+    # exists seven times over. `tsconfig.json`, `page.tsx` and `main.ts` are
+    # ordinary things to name in a review, and multiplicity is evidence the file
+    # EXISTS, not evidence it is missing.
+    #
+    # This function answers one question -- does this reference point at a real
+    # file -- and for that, any match is a yes. Imprecision is a different
+    # complaint and does not belong behind a word like "does not exist".
+    matches = [c for c in repo_files.get(name, [])
+               if str(c).replace("\\", "/").endswith(clean)]
+    return bool(matches)
 
 
 def index_repo_files() -> dict[str, list[Path]]:
@@ -215,7 +237,16 @@ def check_document(path: Path, known_ids: set[str], canonical: dict[str, str],
             target, start, end = m.group(1), int(m.group(2)), m.group(3)
             tp = Path(target)
             if not tp.exists():
-                continue        # handled by the path check below
+                # "handled by the path check below" was not true in two ways.
+                # PATH_RE requires the path to be wrapped in backticks, and a
+                # citation is usually written `file.ts:42` -- the trailing :42
+                # keeps PATH_RE from matching at all. And in --citations-only
+                # mode the path check never runs, which is precisely the mode
+                # the README recommends for reviews/. So a review could cite a
+                # file that does not exist and still pass. Check it here.
+                if not resolve_path(target, repo_files):
+                    f.add("FAIL", where, f"cited file does not exist: {target}")
+                continue
             try:
                 n_lines = len(tp.read_text(encoding="utf-8", errors="replace").splitlines())
             except OSError:
@@ -309,12 +340,16 @@ def main() -> int:
         print(f"! {TASK_QUEUE} not found -- run from the repository root", file=sys.stderr)
         return 2
 
-    known_ids, canonical = canonical_task_status(
+    known_ids, canonical, unparsed = canonical_task_status(
         TASK_QUEUE.read_text(encoding="utf-8", errors="replace"))
     targets = [Path(t) for t in (args.targets or DEFAULT_TARGETS)]
 
     repo_files = index_repo_files()
     f = Findings()
+    for tid in unparsed:
+        f.add("WARN", str(TASK_QUEUE),
+              f"{tid} has a status cell no known status word matches -- it is exempt "
+              f"from status checking until the wording or STATUS_WORDS is fixed")
     checked = 0
     for t in targets:
         if not t.exists():
