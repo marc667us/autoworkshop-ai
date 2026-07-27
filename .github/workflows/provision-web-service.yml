@@ -42,6 +42,16 @@ on:
         required: false
         default: true
         type: boolean
+      public_url:
+        # AUTH_URL must match the host the browser actually uses. Hardcoding the
+        # production domain into a staging service would send its sign-in
+        # callbacks to production -- a subtle cross-environment leak that looks
+        # like "staging auth is broken" rather than like a misconfiguration.
+        # Blank derives https://<service_name>.onrender.com, which is correct for
+        # any service that is not the one holding the custom domain.
+        description: 'Public URL for AUTH_URL / NEXT_PUBLIC_APP_URL (blank = https://<service_name>.onrender.com)'
+        required: false
+        default: ''
 
 env:
   OLD_SERVICE_ID: srv-d9jsliu7r5hc73b1kncg
@@ -57,6 +67,7 @@ jobs:
       SERVICE_NAME: ${{ inputs.service_name }}
       IMAGE_TAG: ${{ inputs.image_tag }}
       CONFIRM: ${{ inputs.confirm }}
+      PUBLIC_URL: ${{ inputs.public_url }}
 
     steps:
       - name: The image must already exist
@@ -119,6 +130,10 @@ jobs:
           set -euo pipefail
           python3 - <<'PY' > service.json
           import json, os, secrets
+          # Render derives <name>.onrender.com from the service name, so this is
+          # knowable before the service exists.
+          public_url = (os.environ.get('PUBLIC_URL')
+                        or f"https://{os.environ['SERVICE_NAME']}.onrender.com")
           spec = {
             "type": "web_service",
             "name": os.environ['SERVICE_NAME'],
@@ -146,12 +161,11 @@ jobs:
               # the client bundle at BUILD time, so setting them here affects
               # only server-side reads -- noted rather than silently assumed.
               {"key": "NEXT_PUBLIC_APP_NAME", "value": "AutoWorkshop AI"},
-              {"key": "NEXT_PUBLIC_APP_URL",
-               "value": "https://autoworkshop.aiappinvent.com"},
+              {"key": "NEXT_PUBLIC_APP_URL", "value": public_url},
               # Auth.js v5 names. The spec file says NEXTAUTH_URL/NEXTAUTH_SECRET,
               # which are the v4 names; v5 reads AUTH_URL/AUTH_SECRET and would
               # silently ignore the v4 ones.
-              {"key": "AUTH_URL", "value": "https://autoworkshop.aiappinvent.com"},
+              {"key": "AUTH_URL", "value": public_url},
               {"key": "AUTH_SECRET", "value": secrets.token_urlsafe(32)},
               # Auth.js rejects an unrecognised Host and only auto-detects
               # Vercel. Behind Render's proxy, absent this, every /api/auth/*
