@@ -1,0 +1,115 @@
+# Diagnose the silent `next build` failure that blocks the Render deploy.
+#
+# WHY THIS EXISTS
+#
+# On Render's builder `next build` exits 1 immediately after "Skipping
+# linting", with COMPLETELY EMPTY stderr. Six fixes were attempted from that
+# log and two of them were fixes for wrong diagnoses, because a log with no
+# error in it supports any hypothesis equally well.
+#
+# This workflow runs the IDENTICAL command on ubuntu-latest — Linux like
+# Render, free for a public repo, and Actions does not swallow stderr. It is a
+# measuring instrument, not a fix. Two outcomes, both of them useful:
+#
+#   · fails with a visible error  → that is the bug
+#   · succeeds                    → the fault is specific to Render's builder,
+#                                   and the answer is to build the image here
+#                                   and have Render deploy it from GHCR
+#
+# Deliberately `workflow_dispatch` only. It duplicates work `ci.yml` already
+# does and has no business running on every push.
+name: Diagnose Next build
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: Which app to build
+        required: true
+        default: workshop-web
+        type: choice
+        options: [workshop-web, admin-web, customer-web, fleet-web, insurance-web, supplier-web, towing-web]
+      skip_build_checks:
+        description: Set SKIP_BUILD_CHECKS=1 (what the deploy does)
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must match render.yaml's NODE_VERSION and package.json engines
+      # (>=20.19.0 <21). A different major here would measure the wrong thing.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.2
+
+      - name: Describe the runner
+        # Render's builder reported 48 CPUs / 95 GB RAM with an 8 GB cgroup cap.
+        # If this runner differs sharply, that difference is itself a lead.
+        run: |
+          echo "::group::runner"
+          nproc; free -h; df -h /; node -v
+          cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "no cgroup v2 memory.max"
+          echo "::endgroup::"
+
+      - name: Activate pnpm exactly as Render does
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.4 --activate
+          pnpm --version
+
+      - name: Install (filtered, as Render does)
+        run: pnpm install --frozen-lockfile --filter "@autoworkshop/${{ inputs.app }}..."
+
+      - name: next build
+        id: build
+        # `set +e` so a failure does not end the job before the diagnostics step
+        # below runs. The real exit code is re-raised at the end.
+        run: |
+          set +e
+          cd apps/${{ inputs.app }}
+          ./node_modules/.bin/next build
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "next build exited $code"
+          exit 0
+        env:
+          NODE_ENV: production
+          SKIP_BUILD_CHECKS: ${{ inputs.skip_build_checks && '1' || '' }}
+          # Set on the Render service; absent at build time it is a plausible
+          # cause of a crash during page collection, since every app runs `auth`
+          # as middleware and resolves its config when the route is built.
+          AUTH_SECRET: diagnostic-only-not-a-real-secret-0000000000000000
+          AUTH_TRUST_HOST: 'true'
+          KEYCLOAK_URL: http://localhost:8080
+          KEYCLOAK_REALM: autoworkshop
+          API_BASE_URL: http://localhost:4000
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Diagnostics
+        if: always()
+        run: |
+          echo "::group::build-diagnostics.json"
+          cat apps/${{ inputs.app }}/.next/diagnostics/*.json 2>/dev/null || echo "none written"
+          echo "::endgroup::"
+          echo "::group::.next tree"
+          ls -la apps/${{ inputs.app }}/.next 2>/dev/null || echo "no .next"
+          echo "::endgroup::"
+          echo "::group::kernel — did anything get OOM-killed?"
+          dmesg 2>/dev/null | tail -40 || echo "dmesg unavailable"
+          echo "::endgroup::"
+
+      - name: Re-raise the build result
+        run: |
+          code="${{ steps.build.outputs.exit_code }}"
+          if [ "$code" != "0" ]; then
+            echo "::error::next build exited $code — see the 'next build' step above for the error Render did not print"
+            exit "$code"
+          fi
+          echo "next build SUCCEEDED on ubuntu-latest — the fault is specific to Render's builder"
