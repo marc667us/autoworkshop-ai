@@ -441,6 +441,15 @@ imperative first line, a diff already written to disk, and closed stdin. Its san
 
 ## Owner directions — binding
 
+10. **Use RELATIONSHIPS in databases and schemas** (2026-07-27). Model with real foreign keys and
+    joins — normalised, referential, no duplicated columns standing in for a relation and no
+    denormalised blobs where a table belongs. Already the shape of the identity schema
+    (`tenants → organizations → branches → memberships → users`, with `/me` joining across them for
+    organisation and branch names rather than copying them). It is binding for every table added from
+    here: parts, job cards, quotations, invoices, warranty, fleet, claims, library records.
+    ⚠️ **A foreign key still cannot carry a tenant predicate** — see the T-0003 finding. Relationships
+    give integrity, RLS gives isolation, and you need both.
+
 1. Name fixed: **AutoWorkshop AI** at `autoworkshop.aiappinvent.com` (Namecheap DNS)
 2. **Stop cutting scope** — build everything structurally; only licensed content and labelled ML
    corpora stage
