@@ -4,7 +4,7 @@
 |---|---|---|---|
 | T-0001 | Release 0.1 foundation | 1 | **done** — tagged `v0.1.0` |
 | T-0002 | Keycloak realm + client + docker wiring | 2 | **done** — realm as configuration-as-code |
-| T-0003 | Users, organizations, branches, memberships | 2 | **partial** — organizations + tenant DB layer + audit done; users/branches/memberships services outstanding |
+| T-0003 | Users, organizations, branches, memberships | 2 | **done 2026-07-27** — `BranchService`, `UserService`, `MembershipService` + controllers on the `OrganizationService` pattern. 8 routes live under `/api/v1`, all 401 unauthenticated. Role gates, role allow-list, audit, one-way withdrawal. **`viewerGrants()`/`viewerRole()` still demo — replacing them is T-0005 (session wiring), not more services** |
 | T-0004 | Roles, permissions, permission matrix | 2 | queued |
 | T-0005 | Tenant context resolution from validated claims | 2 | **partial** — `KeycloakJwtService` + `TenantGuard` done; web apps not yet session-wired (see `viewerGrants`) |
 | T-0006 | RLS FORCE + tenant-isolation test suite | 2 | **partial** — RLS proven as non-superuser; full suite outstanding |
@@ -17,7 +17,7 @@
 | T-0013 | Responsive shell — mobile overlay nav, tablet behaviour | 3 | **done** |
 | T-0014 | Storybook stories for every shell component (`01 (1).txt` §71) | 3 | **done** — 10 story files, 77 stories, axe 84/84 |
 | T-0015 | Playwright shell journey + axe-core accessibility gate | 3 | **done** — `apps/e2e`, 138 passing, harness defects fixed 2026-07-27 |
-| T-0016 | Workspace / organisation / branch switchers | 3 | **blocked** on T-0003 membership data |
+| T-0016 | Workspace / organisation / branch switchers | 3 | **unblocked on the data side** (T-0003 done); still needs T-0005 session wiring to know who the viewer is |
 | T-0017 | Quick-create, tasks, messages, notifications, help panels (§9-§14) | 3 | queued |
 
 | T-0018 | Schedule the backup + drill | 2 | **done** — 4 Windows tasks live + `autoworkshop-backup.cron` for production; all 4 proven by triggering, `LastResult 0x0` |
@@ -36,7 +36,7 @@
 | T-0031 | ~~ThemeToggle radiogroup: arrows move focus but not selection~~ | 3 | **closed 2026-07-27 — NOT A DEFECT.** Same stale-server cause as T-0030: with no hydration `setPreference` never ran, so `aria-checked` never changed. The roving tabindex and arrow handling were already correct (shipped in the defect-4 fix). Both tests pass on a fresh build |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
-**Next up:** T-0003 remainder (users, branches, memberships) — it replaces the demo bodies of BOTH `viewerGrants()` and `viewerRole()` and unblocks T-0016 — then T-0023, then T-0017.
+**Next up:** **T-0005** — tenant context from the Keycloak session inside the Next apps. It is now the single blocker for T-0016 (switchers) and is what actually replaces the demo bodies of `viewerGrants()` and `viewerRole()`. Then T-0023, then T-0017.
 
 **Phase 5 is unblocked.** T-0027 landed the workspace × role navigation it was waiting on.
 

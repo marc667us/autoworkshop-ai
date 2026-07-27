@@ -310,12 +310,68 @@ Records: `reviews/supervisor-adjudication-t0027-workspace-role.md`.
 **Gates:** typecheck 14/14 · lint 14/14 · **unit 79** · build 10/10 · **Playwright 137 passed, 0
 failed, 3 legitimate skips**.
 
+## T-0003 DONE — identity services. Next blocker is T-0005, not more services.
+
+The tables already existed (migration 001). This was the SERVICES: `BranchService`, `UserService`,
+`MembershipService` + controllers, on the `OrganizationService` pattern so a REST controller and an
+MCP tool are thin callers of one service. Eight routes live under `/api/v1`; every one returns **401**
+unauthenticated, on a forged token, and on the privilege-granting POST.
+
+### The defect class this task is really about
+
+**`identity.users` has NO `tenant_id` and NO row-level security** — deliberately, because one human
+may hold memberships in several tenants. So unlike everywhere else in this schema, **RLS will not
+save you here**: a plain `SELECT * FROM identity.users` inside `withTenant` returns every user on the
+platform and no policy stops it. It type-checks and reads naturally.
+
+Every `UserService` query therefore starts `FROM identity.memberships` (which IS under FORCE RLS) and
+joins outward. **The join is the security control**, and `identity.spec.ts` asserts the query SHAPE
+because nothing downstream would notice the property being violated.
+
+### Three defects found, all fixed
+
+1. **HIGH — a foreign key cannot carry a tenant predicate.** The FKs reference
+   `organizations(id)`/`branches(id)` by id alone, and RLS `WITH CHECK` validates the tenant of the
+   INSERTED row, never the tenant of the row it points at. So `tenant_id = A` +
+   `organization_id = <org in tenant B>` satisfied both. On the privilege-granting operation. Fixed by
+   looking the parent up through the RLS-protected table first: a foreign organization is invisible
+   there, so the check IS the isolation. Branch-belongs-to-organization checked too.
+2. **The same hole in `BranchService`**, which Codex never saw because it was outside the file it
+   focused on. Found by asking "where else does this shape appear?".
+3. **MEDIUM — `withdraw`'s status was never validated at runtime.** The union type is erased and the
+   controller forwards the body verbatim, so `{"status":"active"}` passed the DB CHECK: a withdrawal
+   that changed nothing but still audited `membership.active`. **Fixed in the SERVICE, not the
+   controller** — an MCP tool calls the service directly, so a rule at the HTTP edge does not bind
+   agents.
+
+### Reviewer note — Codex's best pass yet
+
+First time it answered every question it was asked AND emitted the required `VERDICT` line
+(`CHANGES REQUIRED`). Two of its three findings this pass had already been found independently by the
+Supervisor; **the third had not, and would have shipped.** The standing rule to run the Supervisor
+independently still holds — it now cuts both ways.
+
+### Operational warning
+
+The API on :4000 had been running since **2026-07-26 05:09**, serving a build older than every
+controller in this change — the same stale-server condition that produced the T-0030 phantom, in a
+service the build-freshness gate does NOT cover (it watches the seven Next apps only). **A long-lived
+`node dist/main.js` is exactly as dangerous as a long-lived `next start`.** Restart it after every
+`nest build`.
+
+**Gates:** typecheck 14/14 · lint 14/14 · **unit 98** (api 39) · `nest build` clean · 8 routes live,
+all failing closed.
+
+**NOT done, and not claimed:** the web apps are still not session-wired, so `viewerGrants()` and
+`viewerRole()` keep their demo bodies. Replacing them is **T-0005**, not more identity services.
+
 ## IN FLIGHT — pick up here
 
 **No feature work is in flight.** See `.claude/CURRENT_TASK.md`.
 
-1. **T-0003 remainder** — users, branches, memberships. Unblocks T-0016 and replaces the demo bodies
-   of BOTH `viewerGrants()` and `viewerRole()`. These are the two functions Phase 2 must land on.
+1. **T-0005** — tenant context from the Keycloak session inside the Next apps. THE next blocker: it
+   is what actually replaces the demo bodies of `viewerGrants()` and `viewerRole()`, and the only
+   thing still holding T-0016 (the switchers), whose data layer landed with T-0003.
 2. **T-0023** — deliver the backup health alert to a human. Detection done; Windows routes it nowhere.
 3. **T-0017** — quick-create / tasks / messages / notifications / help panels (§9-§14).
 4. T-0020…T-0022 — off-host-only restore drill, MinIO object-lock, `--data-checksums` rebuild.
