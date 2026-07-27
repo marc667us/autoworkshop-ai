@@ -36,6 +36,26 @@ const nextConfig = {
    * locally — hence the flag.
    */
   experimental: constrainedBuild ? { cpus: 1, workerThreads: false } : {},
+  /**
+   * Emit `.next/standalone` — a self-contained server plus only the node_modules
+   * it actually traced.
+   *
+   * This app is deployed as a prebuilt container image rather than built on the
+   * host that runs it, because Render's builder fails this build for reasons
+   * that survived six attempts to find them, while the identical command
+   * succeeds on Linux in CI. Standalone is what makes the runtime image small
+   * enough to be worth doing: no pnpm store, no workspace, no build toolchain.
+   *
+   * Safe locally — `next start` prefers a normal build when one is present, and
+   * this only ADDS the standalone directory.
+   */
+  output: 'standalone',
+  /**
+   * The workspace root, not this app. pnpm links workspace packages through
+   * symlinks into ../../node_modules/.pnpm, and file tracing rooted at the app
+   * directory would follow those links outside its root and drop the files.
+   */
+  outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
   reactStrictMode: true,
   // Shared workspace packages are compiled by this app rather than pre-built,
   // so a token change is picked up without a separate build step.

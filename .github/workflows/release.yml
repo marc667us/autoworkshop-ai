@@ -1,0 +1,228 @@
+# Build → TEST THE RUNNING CONTAINER → publish → promote to production.
+#
+# THIS WORKFLOW IS THE PRODUCTION GATE. `autoworkshop.aiappinvent.com` runs
+# whatever image this publishes, and nothing else can put an image there, so
+# every check below is load-bearing rather than decorative.
+#
+# The gate is deliberately NOT "did it compile". Twice now this repo has shipped
+# changes that were green on typecheck, lint, 122 unit tests and a 10-target
+# build and still broken the moment the app was started: `UntrustedHost` and a
+# Keycloak provider with no `issuer` both made every `/api/auth/*` route return
+# 500 while ordinary pages returned 200. A check that only loads a page cannot
+# see that asymmetry. So this starts the real container and calls the real
+# endpoints, including the auth ones, before anything is promoted.
+#
+# ZERO COST: GitHub Actions and GHCR are free for a public repository, and the
+# Render service is on the free plan.
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: 'Deploy to production after the gate passes'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  # A newer commit supersedes an in-flight release; two deploys racing to the
+  # same service is how a service ends up serving neither commit.
+  group: release-production
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/autoworkshop-web
+  RENDER_SERVICE_ID: ${{ vars.RENDER_WEB_SERVICE_ID }}
+
+jobs:
+  # ── Gate 1: the checks that do not need a running app ────────────────────────
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.2
+      - run: corepack enable && corepack prepare pnpm@9.15.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: typecheck
+        run: pnpm typecheck
+      - name: lint
+        run: pnpm lint
+      - name: unit tests
+        run: pnpm test
+
+  # ── Gate 2: build the image and PROVE IT SERVES ──────────────────────────────
+  image:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.meta.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Before the build, not between build and push: the publish step below
+      # reuses the buildx cache and would otherwise fail at the very end of a
+      # long job for a reason that has nothing to do with the code.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image (not pushed yet)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/workshop-web/Dockerfile
+          # Load into the local daemon so the smoke test runs the EXACT artifact
+          # that would be published. Building once and testing a rebuild would
+          # test something else.
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the running container
+        run: |
+          set -euo pipefail
+          docker run -d --name aw \
+            -p 3000:3000 \
+            -e AUTH_SECRET=smoke-test-secret-not-used-in-production-000000 \
+            -e AUTH_TRUST_HOST=true \
+            -e KEYCLOAK_URL=http://localhost:8080 \
+            -e KEYCLOAK_REALM=autoworkshop \
+            -e API_BASE_URL=http://localhost:4000 \
+            "${IMAGE}:${GITHUB_SHA}"
+
+          # Wait for readiness rather than sleeping a guessed interval.
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://localhost:3000/home/dashboard; then
+              echo "server up after ${i}s"; break
+            fi
+            if ! docker ps --filter name=aw --filter status=running -q | grep -q .; then
+              echo "::error::container exited during startup"; docker logs aw; exit 1
+            fi
+            sleep 1
+          done
+
+          fail=0
+          check() { # path, expected status, label
+            code="$(curl -s -o /tmp/body -w '%{http_code}' "http://localhost:3000$1")"
+            if [ "$code" != "$2" ]; then
+              echo "::error::$3 — GET $1 returned $code, expected $2"
+              head -c 400 /tmp/body; echo; fail=1
+            else
+              echo "ok   $1 → $code   ($3)"
+            fi
+          }
+
+          check /home/dashboard 200 "the health check path Render will use"
+          # THE ASYMMETRY THAT TWICE ESCAPED EVERY OTHER GATE. These 500 while
+          # pages return 200 when AUTH_TRUST_HOST or the provider issuer is
+          # wrong, so they are checked explicitly and separately.
+          check /api/auth/providers 200 "auth providers — 500 here means no issuer"
+          check /api/auth/session    200 "auth session — 500 here means UntrustedHost"
+
+          # The session document is served to the browser as JSON. A token in it
+          # is a token in the page source.
+          curl -fsS http://localhost:3000/api/auth/session > /tmp/session.json
+          echo "session payload: $(cat /tmp/session.json)"
+          if grep -qiE '"(accessToken|refreshToken|idToken|id_token)"' /tmp/session.json; then
+            echo "::error::/api/auth/session exposes a token to the browser"; fail=1
+          fi
+
+          docker logs aw | tail -30
+          exit $fail
+
+      - name: Publish to GHCR
+        id: meta
+        # Only reached when the container demonstrably serves. Nothing untested
+        # is ever published, which is what makes the promote step below safe.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/workshop-web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+        env:
+          DOCKER_BUILDKIT: '1'
+        # Login must precede this; see the step ordering note below.
+
+  # ── Promote: point production at the image that just passed ──────────────────
+  promote:
+    needs: image
+    if: ${{ github.event_name == 'push' || inputs.promote }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Refuse to promote without a configured service
+        run: |
+          if [ -z "${RENDER_SERVICE_ID}" ]; then
+            echo "::error::RENDER_WEB_SERVICE_ID repository variable is not set."
+            echo "Set it to the new service id, e.g.:"
+            echo "  gh variable set RENDER_WEB_SERVICE_ID -b srv-xxxxxxxx"
+            exit 1
+          fi
+          echo "promoting to ${RENDER_SERVICE_ID}"
+
+      - name: Deploy the published image
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # imageUrl pins the deploy to THIS commit's digest-tagged image, so the
+          # thing that was smoke-tested is the thing that runs. `:latest` would
+          # reintroduce ambiguity about which build is live.
+          RESP="$(curl -fsS -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"imageUrl\":\"${IMAGE}:${GITHUB_SHA}\"}" \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys")"
+          DID="$(echo "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")"
+          echo "deploy $DID"
+
+          for i in $(seq 1 60); do
+            S="$(curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DID}" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin)['status'])")"
+            echo "[$i] $S"
+            case "$S" in
+              live) echo "PRODUCTION LIVE"; exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed)
+                echo "::error::deploy ended in $S"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::deploy did not reach a terminal state in 20 minutes"; exit 1
+
+      - name: Verify production actually serves
+        run: |
+          set -euo pipefail
+          # A `live` deploy status means Render's health check passed. It does
+          # not mean the custom domain resolves to it, and it says nothing about
+          # the auth routes. Both are checked here, against the real hostname.
+          for host in https://autoworkshop.aiappinvent.com; do
+            for path in /home/dashboard /api/auth/providers /api/auth/session; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "${host}${path}")"
+              echo "${host}${path} → ${code}"
+              [ "$code" = "200" ] || { echo "::error::${path} returned ${code}"; exit 1; }
+            done
+          done
+          echo "PRODUCTION VERIFIED"
