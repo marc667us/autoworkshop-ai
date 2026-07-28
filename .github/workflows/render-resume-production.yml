@@ -1,0 +1,118 @@
+# Attempt to resume the suspended PRODUCTION service.
+#
+# CONTEXT. On 2026-07-28 Render suspended every AutoWorkshop web service with
+# `suspenders: ['billing']`; `autoworkshop.aiappinvent.com` returned 503 on every
+# request. The staging service was deleted (owner decision) so that production
+# alone draws on the account's free instance-hour allowance.
+#
+# ⚠️ DELETING STAGING DOES NOT UN-SUSPEND PRODUCTION. Stopping future consumption
+# is not the same as restoring a consumed allowance, and a billing suspension is
+# not lifted by the account merely using less. This workflow asks Render to
+# resume the service and then CHECKS WHETHER IT ACTUALLY CAME BACK — the two are
+# different questions and a 2xx from the resume endpoint answers only the first.
+#
+# If the allowance for the cycle is genuinely exhausted, the honest outcome is
+# that resume either fails or the service re-suspends, and this reports that
+# rather than declaring success. Zero cost is a hard rule: there is no paid
+# remedy here and none is proposed.
+#
+# NON-DESTRUCTIVE — resume is reversible by suspending again. It is still
+# dry-run by default, because it changes the state of the live production
+# service and the project's convention is that state-changing workflows say what
+# they would do before they do it.
+name: Render resume production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually resume. Anything else is a dry run.'
+        required: true
+        default: DRYRUN
+        type: string
+
+env:
+  # Hardcoded, as in every other Render workflow here: the account also hosts the
+  # Solar production application, which is off-limits (ADR-011).
+  SERVICE_ID: srv-d9ju49id0e5s7389fjlg
+  EXPECT_NAME: autoworkshop-web
+  PUBLIC_URL: https://autoworkshop.aiappinvent.com
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    steps:
+      - name: State before (read-only)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}" > svc.json
+          python3 - <<'PY'
+          import json, os, sys
+          d = json.load(open('svc.json'))
+          name = d.get('name')
+          print(f"name      : {name}")
+          print(f"suspended : {d.get('suspended')}  suspenders: {d.get('suspenders')}")
+          if name != os.environ['EXPECT_NAME']:
+              print(f"::error::refusing to touch '{name}'"); sys.exit(1)
+          PY
+          echo "public URL now: $(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$PUBLIC_URL/home/dashboard")"
+
+      - name: Dry run
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          echo "DRY RUN. Nothing changed."
+          echo "With confirm=APPLY this would POST /v1/services/${SERVICE_ID}/resume"
+          echo "and then re-check both the API state and the public URL."
+          exit 0
+
+      - name: Resume
+        if: ${{ inputs.confirm == 'APPLY' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /tmp/out -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}/resume")"
+          echo "resume returned $code"
+          head -c 500 /tmp/out || true; echo ""
+          # NOT a failure of this workflow if Render refuses — that is a real
+          # answer about the allowance, and the verify step below records it.
+          if [ "$code" != "200" ] && [ "$code" != "202" ] && [ "$code" != "204" ]; then
+            echo "::warning::resume was refused with $code — the allowance is probably still exhausted"
+          fi
+
+      - name: Did it actually come back?
+        if: ${{ inputs.confirm == 'APPLY' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # VERIFY THE EFFECT, NOT THE CALL. A service can report resumed and
+          # still be re-suspended moments later when the allowance is gone, so
+          # both the API state and the public URL are checked, and the public
+          # URL is checked LAST because it is the thing users actually get.
+          sleep 20
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}" > after.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('after.json'))
+          print(f"suspended after: {d.get('suspended')}  suspenders: {d.get('suspenders')}")
+          PY
+
+          # A free service takes ~50s to wake, so this waits rather than judging
+          # on one request. 503 throughout means it did not come back.
+          for i in $(seq 1 10); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$PUBLIC_URL/home/dashboard")"
+            echo "attempt $i: $code"
+            if [ "$code" = "200" ]; then
+              echo "PRODUCTION IS SERVING AGAIN"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::warning::production did not return 200 — still suspended or still waking"
