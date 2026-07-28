@@ -244,7 +244,6 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // `auth()` returns the SESSION and the session deliberately has no
       // tokens on it.
       const req = { headers: await headers() };
-      const secureCookie = process.env['NODE_ENV'] === 'production';
 
       // IS THERE A SESSION AT ALL? Asked FIRST, and without the secret.
       //
@@ -254,22 +253,9 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // for a visitor who has no session and needs none, which is every visitor
       // to a signed-out page and every page the Playwright suite loads.
       //
-      // `raw: true` returns the cookie's contents undecrypted, and `getToken`
-      // checks for the cookie before it checks for a secret. So: no cookie, no
-      // session, no secret required. A cookie that IS present must be
-      // decryptable, and if the secret is missing then the throw below is the
-      // correct outcome — that is a real misconfiguration, not a signed-out user.
-      const rawToken = await getToken({ req, secret: '', secureCookie, raw: true });
-      if (!rawToken) return null;
-
-      // `getToken` decrypts the JWT with the same secret; the salt defaults to
-      // the cookie name, which is why `secureCookie` must match how the cookie
-      // was written or decryption silently returns null.
-      const token = await getToken({
-        req,
-        secret: authSecret(),
-        secureCookie,
-      });
+      // Both cookie names are tried, because the name is decided by the URL
+      // scheme and not by NODE_ENV — see `readSessionToken`.
+      const token = await readSessionToken(req);
 
       const keycloak = token?.keycloak;
       if (!keycloak) return null;
@@ -284,19 +270,19 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // reason: the session object deliberately carries no tokens, so the JWT
       // is the only place the refresh token exists.
       const req = { headers: await headers() };
-      const secureCookie = process.env['NODE_ENV'] === 'production';
 
       let refreshTokenRevoked = false;
       let idToken: string | undefined;
 
-      const rawToken = await getToken({ req, secret: '', secureCookie, raw: true });
-      if (rawToken) {
-        const token = await getToken({ req, secret: authSecret(), secureCookie });
-        const keycloak = token?.keycloak;
-        idToken = keycloak?.idToken;
-        if (keycloak?.refreshToken) {
-          refreshTokenRevoked = await revokeRefreshToken(clientId, keycloak.refreshToken);
-        }
+      // Same both-names read as `getAccessToken`. Getting this wrong here is
+      // WORSE than getting it wrong there: a miss means the refresh token is
+      // never found, so sign-out silently degrades to clearing a cookie —
+      // exactly the defect this method exists to fix.
+      const token = await readSessionToken(req);
+      const keycloak = token?.keycloak;
+      idToken = keycloak?.idToken;
+      if (keycloak?.refreshToken) {
+        refreshTokenRevoked = await revokeRefreshToken(clientId, keycloak.refreshToken);
       }
 
       // Returned rather than thrown on failure: a user who cannot sign out
@@ -308,6 +294,52 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       };
     },
   };
+}
+
+/**
+ * Read and decrypt the session JWT, trying BOTH cookie names.
+ *
+ * WHY THIS IS NOT A GUESS ANY MORE. Auth.js picks the cookie name from the
+ * SCHEME of the resolved URL: `authjs.session-token` over http,
+ * `__Secure-authjs.session-token` over https. The previous implementation
+ * derived it from `NODE_ENV === 'production'` instead, and those two agree only
+ * by coincidence — on the deployed site, where production and https happen to
+ * coincide.
+ *
+ * THEY DISAGREE ON EVERY PRODUCTION BUILD SERVED OVER HTTP, which is what
+ * `next start` is locally and what any http deployment would be. Measured: a
+ * genuine Keycloak login set `authjs.session-token.0/.1`, `/api/auth/session`
+ * reported the signed-in user, and `getAccessToken()` returned null the whole
+ * time because it was looking for `__Secure-…`. The shell rendered "Not signed
+ * in" to a signed-in user, `viewerGrants()` returned none, and nothing anywhere
+ * logged an error. This is the failure mode where a check reads correct while
+ * the mechanism is inert.
+ *
+ * TRYING BOTH IS SAFE, and safer than deriving the right one. The cookie name is
+ * the decryption SALT, so the wrong name cannot yield a valid token — it yields
+ * null. There is no path where this reads one user's session as another's; the
+ * only outcomes are "the real session" and "nothing".
+ *
+ * Chunked cookies (`.0`, `.1`) are handled by `getToken` itself. They are not
+ * exotic here: a Keycloak access + refresh + id token set reliably exceeds the
+ * 4096-byte cookie limit, so the session is ALWAYS chunked in practice.
+ */
+async function readSessionToken(req: { headers: Headers }) {
+  // Ask without the secret first — see the note in `getAccessToken`. `getToken`
+  // checks for the cookie before it checks for a secret, so a visitor with no
+  // session never forces `AUTH_SECRET` to be present.
+  const present = await Promise.all([
+    getToken({ req, secret: '', secureCookie: false, raw: true }),
+    getToken({ req, secret: '', secureCookie: true, raw: true }),
+  ]);
+  if (!present[0] && !present[1]) return null;
+
+  const secret = authSecret();
+  for (const secureCookie of [false, true]) {
+    const token = await getToken({ req, secret, secureCookie });
+    if (token) return token;
+  }
+  return null;
 }
 
 /**

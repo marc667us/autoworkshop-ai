@@ -48,6 +48,13 @@ export interface AppShellProps {
   counters?: Record<string, number>;
   warnings?: Record<string, number>;
   topNavActions?: TopNavAction[];
+  /**
+   * Sign in / sign out (§15). A NODE, not a handler: signing out revokes a
+   * token at Keycloak and clears an httpOnly cookie, so it is necessarily a
+   * server concern, and this package must stay renderable with no server and no
+   * Next runtime. `@autoworkshop/next-shell` supplies the real control.
+   */
+  accountControl?: React.ReactNode;
   renderLink: (props: {
     href: string;
     children: React.ReactNode;
@@ -69,6 +76,7 @@ export function AppShell({
   counters,
   warnings,
   topNavActions,
+  accountControl,
   renderLink,
   children,
   drawer,
@@ -202,6 +210,7 @@ export function AppShell({
         onSearchChange={setSearch}
         actions={actions}
         themeControl={<ThemeToggle />}
+        accountControl={accountControl}
       />
 
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>

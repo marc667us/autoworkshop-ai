@@ -7,6 +7,7 @@ import {
   viewerLabels,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
+import { signOutAction } from './sign-out-action';
 
 export const metadata: Metadata = {
   title: 'AutoWorkshop AI — Workshop',
@@ -43,6 +44,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
           {...viewerLabels(viewer)}
+          // T-0005 finding 5: a real sign-out — revoke the refresh token at
+          // Keycloak, clear the cookie, end the SSO session. Passed from the
+          // server layout because a server action cannot be created in the
+          // client shell that renders the button.
+          signOutAction={signOutAction}
+          signInHref="/api/auth/signin"
           counters={{
             'workshop.tasks.open': 7,
             'workshop.approvals.pending': 3,

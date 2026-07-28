@@ -86,6 +86,12 @@ export interface TopNavProps {
    * the theme context and stays renderable in isolation in Storybook.
    */
   themeControl?: React.ReactNode;
+  /**
+   * Sign in / sign out (§15). Injected for the same reason as `themeControl`:
+   * signing out is a SERVER action bound to this app's Keycloak client, and
+   * TopNav must stay renderable with no server, no session and no Next runtime.
+   */
+  accountControl?: React.ReactNode;
 }
 
 const ICONS: Record<string, string> = {
@@ -227,6 +233,7 @@ export function TopNav({
   actions = [],
   userLabel,
   themeControl,
+  accountControl,
 }: TopNavProps) {
   return (
     <header
@@ -382,6 +389,13 @@ export function TopNav({
             <Selector label="User" value={userLabel} />
           </span>
         ) : null}
+        {/* Deliberately NOT in `.aw-topnav-secondary`, unlike the user chip it
+            sits beside. Ending a session on a shared workshop terminal is the
+            one control that must survive on a phone — and §68's overflow rule
+            allows hiding a control only while an alternative exists, which for
+            sign-out there is not. It is a fixed ~5.5rem; the search field is
+            already allowed to shrink to 8rem below 480px to make room. */}
+        {accountControl}
       </nav>
 
       {/* Responsive rule (§68 breakpoints). Inline styles cannot express media

@@ -11,6 +11,7 @@ import {
   type RoleId,
 } from '@autoworkshop/navigation';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
+import { AccountControl } from './AccountControl';
 
 /**
  * The Next.js binding for the shared application shell.
@@ -69,6 +70,14 @@ export interface WorkspaceShellProps {
   counters?: Record<string, number>;
   warnings?: Record<string, number>;
   topNavActions?: TopNavAction[];
+  /**
+   * Sign-out server action, supplied by the app (T-0005 finding 5). It is
+   * per-app because the workspace decides which Keycloak client the refresh
+   * token is revoked at; the sequence itself lives once in `@autoworkshop/auth`.
+   */
+  signOutAction?: () => Promise<void>;
+  /** Where a signed-out viewer goes to sign in. */
+  signInHref?: string;
   drawer?: React.ReactNode;
 }
 
@@ -83,6 +92,8 @@ export function WorkspaceShell({
   counters,
   warnings,
   topNavActions,
+  signOutAction,
+  signInHref,
   drawer,
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
@@ -119,6 +130,9 @@ export function WorkspaceShell({
       counters={counters}
       warnings={warnings}
       topNavActions={topNavActions}
+      accountControl={
+        <AccountControl userLabel={userLabel} signOutAction={signOutAction} signInHref={signInHref} />
+      }
       drawer={drawer}
       renderLink={({ href, children: linkChildren, active, title }) => (
         <Link

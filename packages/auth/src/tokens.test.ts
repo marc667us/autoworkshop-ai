@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   isExpired,
   refreshAccessToken,
+  revokeRefreshToken,
   RefreshFailedError,
   REFRESH_SKEW_SECONDS,
 } from './tokens';
+import { postLogoutOrigin } from './origin';
 
 const NOW = 1_800_000_000;
 
@@ -111,5 +113,91 @@ describe('refreshAccessToken', () => {
     // the whole request instead of just the session.
     await expect(refreshAccessToken('c', 'r', impl)).rejects.toThrowError(RefreshFailedError);
     await expect(refreshAccessToken('c', 'r', impl)).rejects.toThrowError('502');
+  });
+});
+
+/**
+ * T-0005 finding 5. These tests exist because the function shipped in `1d10bd5`
+ * with none, and an untested revocation is indistinguishable from no revocation
+ * — both leave a valid refresh token behind and both typecheck.
+ */
+describe('revokeRefreshToken', () => {
+  function stubFetch(status: number) {
+    const calls: Array<{ url: string; body: string; headers: unknown }> = [];
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: String(init?.body ?? ''), headers: init?.headers });
+      return { ok: status >= 200 && status < 300, status } as Response;
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it('posts to the revocation endpoint, not the token endpoint', async () => {
+    const { impl, calls } = stubFetch(200);
+    await revokeRefreshToken('autoworkshop-workshop-web', 'r', impl);
+    expect(calls[0]!.url).toMatch(/\/protocol\/openid-connect\/revoke$/);
+  });
+
+  it('sends token_type_hint — without it Keycloak guesses and can silently no-op', async () => {
+    // The whole failure mode this guards: a wrong guess makes the revoke do
+    // nothing while STILL returning 200, so the boolean below would report
+    // success on a token that is still live.
+    const { impl, calls } = stubFetch(200);
+
+    await revokeRefreshToken('autoworkshop-customer-web', 'the-refresh-token', impl);
+
+    const body = new URLSearchParams(calls[0]!.body);
+    expect(body.get('token_type_hint')).toBe('refresh_token');
+    expect(body.get('token')).toBe('the-refresh-token');
+    expect(body.get('client_id')).toBe('autoworkshop-customer-web');
+  });
+
+  it('sends no client secret — these are public clients', async () => {
+    const { impl, calls } = stubFetch(200);
+    await revokeRefreshToken('autoworkshop-fleet-web', 'r', impl);
+    expect(new URLSearchParams(calls[0]!.body).has('client_secret')).toBe(false);
+  });
+
+  it('reports true on 2xx', async () => {
+    const { impl } = stubFetch(200);
+    expect(await revokeRefreshToken('c', 'r', impl)).toBe(true);
+  });
+
+  it('reports FALSE on a non-2xx — RFC 7009 returns 200 even for an already-dead token', async () => {
+    // So a non-2xx is a genuine failure to revoke, never "it was already gone".
+    // Collapsing the two is how a live credential gets reported as revoked.
+    const { impl } = stubFetch(503);
+    expect(await revokeRefreshToken('c', 'r', impl)).toBe(false);
+  });
+
+  it('reports false rather than throwing when the endpoint is unreachable', async () => {
+    // Fails soft on purpose: sign-out must still clear the cookie and end the
+    // Keycloak session. A user who cannot sign out at all is left MORE exposed
+    // than one whose refresh token outlives the session.
+    const impl = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+
+    await expect(revokeRefreshToken('c', 'r', impl)).resolves.toBe(false);
+  });
+});
+
+describe('postLogoutOrigin', () => {
+  const original = process.env['AUTH_URL'];
+  afterEach(() => {
+    if (original === undefined) delete process.env['AUTH_URL'];
+    else process.env['AUTH_URL'] = original;
+  });
+
+  it('prefers AUTH_URL over the request Host', async () => {
+    // AUTH_URL is set per service by provision-web-service.yml and is what
+    // Auth.js already builds callback URLs from. Preferring it keeps sign-in and
+    // sign-out on ONE origin; the Host header is client-supplied.
+    process.env['AUTH_URL'] = 'https://autoworkshop.aiappinvent.com';
+    expect(await postLogoutOrigin()).toBe('https://autoworkshop.aiappinvent.com');
+  });
+
+  it('strips a trailing slash so the URL is not built with a double one', async () => {
+    process.env['AUTH_URL'] = 'https://autoworkshop.aiappinvent.com/';
+    expect(await postLogoutOrigin()).toBe('https://autoworkshop.aiappinvent.com');
   });
 });

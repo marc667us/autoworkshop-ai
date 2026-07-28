@@ -101,7 +101,17 @@ export function grantsFor(viewer: ViewerDescription | null): readonly Permission
 export interface ViewerLabels {
   organizationLabel: string;
   branchLabel: string;
-  userLabel: string;
+  /**
+   * The signed-in user's name. **Absent means nobody is signed in**, and that
+   * is now load-bearing rather than cosmetic: the account control renders Sign
+   * out when it is present and Sign in when it is not.
+   *
+   * It used to be the string `'Sign in'` for a signed-out viewer, which read
+   * fine as a chip and was a lie as a value — the account control believed it
+   * and offered Sign out to an anonymous visitor. A display label must never
+   * double as an authentication fact.
+   */
+  userLabel?: string;
 }
 
 /**
@@ -123,7 +133,10 @@ export function viewerLabels(viewer: ViewerDescription | null): ViewerLabels {
     return {
       organizationLabel: 'Not signed in',
       branchLabel: '—',
-      userLabel: 'Sign in',
+      // Undefined, not a prompt. The prompt is the Sign in button beside it;
+      // two controls both reading "Sign in", one of them inert text, is the
+      // ambiguity §70 forbids.
+      userLabel: undefined,
     };
   }
 

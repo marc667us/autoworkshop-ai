@@ -6,7 +6,13 @@ import {
   workspaces,
   type PermissionKey,
 } from '@autoworkshop/navigation';
-import { grantsFor, navRoleFor, NO_GRANTS, type ViewerDescription } from './viewer-contract';
+import {
+  grantsFor,
+  navRoleFor,
+  viewerLabels,
+  NO_GRANTS,
+  type ViewerDescription,
+} from './viewer-contract';
 
 /**
  * REGRESSION GUARD: the navigation and the router must resolve from the SAME
@@ -308,5 +314,40 @@ describe('nav and router must agree — for every identity, in every workspace',
       // back to the workspace default. Either is valid — an EMPTY tree is not.
       expect(tree.groups.length, `${dbRole} resolved to an empty navigation`).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * T-0005 finding 5. `userLabel` stopped being decoration the moment the account
+ * control started deciding Sign in vs Sign out from it.
+ */
+describe('viewerLabels — the signed-out contract the account control depends on', () => {
+  it('leaves userLabel ABSENT for a signed-out viewer, not the string "Sign in"', () => {
+    // Caught by rendering the built app, not by any check that passed first:
+    // with the old `'Sign in'` placeholder the account control read a truthy
+    // label as a session and offered SIGN OUT to an anonymous visitor. Pressing
+    // it would revoke nothing, warn that revocation had failed, and bounce the
+    // user through Keycloak's logout — so the one log line that says "a live
+    // credential was left behind" would fire on every anonymous click.
+    expect(viewerLabels(null).userLabel).toBeUndefined();
+  });
+
+  it('still says plainly that nobody is signed in', () => {
+    // The strip must not name a plausible organisation to an anonymous viewer.
+    expect(viewerLabels(null).organizationLabel).toBe('Not signed in');
+  });
+
+  it('uses the real display name once there is a session', () => {
+    const labels = viewerLabels({
+      userId: 'u1',
+      displayName: 'Ama Mensah',
+      tenantId: 't1',
+      organizationId: 'o1',
+      branchId: null,
+      activeRole: 'technician',
+      permissions: [],
+      memberships: [],
+    } as never);
+    expect(labels.userLabel).toBe('Ama Mensah');
   });
 });

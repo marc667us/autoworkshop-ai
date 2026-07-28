@@ -41,6 +41,9 @@ const CI = !!process.env.CI;
 
 export default defineConfig({
   testDir: './tests',
+  // The identity journey has its own config — it needs a real Keycloak and a
+  // session-capable server, and must not drag eight webServers into every run.
+  testIgnore: /sign-out-revocation\.spec\.ts/,
   // A shell defect is usually deterministic; a retry that goes green is a
   // flake worth seeing, so retry only on CI and never locally.
   retries: CI ? 1 : 0,

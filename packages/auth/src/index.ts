@@ -9,6 +9,8 @@ export {
   REFRESH_SKEW_SECONDS,
 } from './tokens';
 export type { KeycloakTokenSet } from './tokens';
+export { performSignOut } from './sign-out';
+export { postLogoutOrigin } from './origin';
 
 /**
  * Which requests the auth middleware must see.
