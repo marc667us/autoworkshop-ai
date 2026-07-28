@@ -140,16 +140,13 @@ jobs:
           code="$(curl -s -o owner.json -w '%{http_code}'             -H "Authorization: Bearer $RENDER_API_KEY"             "https://api.render.com/v1/owners/${OWNER}")"
           echo "GET /owners/$OWNER -> $code"
           if [ "$code" = "200" ]; then
-            python3 - <<'PY2'
-          import json
-          d = json.load(open('owner.json'))
-          o = d.get('owner', d)
-          for k in sorted(o.keys()):
-              if k in ('email',):
-                  continue  # not printed: it is the owner's address, not a fact about the outage
-              print(f"{k:24}: {o[k]}")
-          PY2
+            # jq, not a nested heredoc: an indented terminator inside a YAML
+            # `run:` block does not close the heredoc, so the first attempt at
+            # this step printed nothing at all and looked like an empty result
+            # rather than a broken script.
+            # `.owner.email` is deleted — it is the owner's address, not a fact
+            # about the outage.
+            jq 'if has("owner") then .owner else . end | del(.email)' owner.json
           else
-            head -c 300 owner.json || true; echo ""
             echo "::warning::owner endpoint not readable with this key — the account reason cannot be fetched here"
           fi
