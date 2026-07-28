@@ -1,0 +1,115 @@
+# Delete the STAGING Render service — owner-approved 2026-07-28.
+#
+# WHY. Render suspended every AutoWorkshop web service with
+# `suspenders: ['billing']` on 2026-07-28; production and staging both returned
+# 503 and the release pipeline could not deploy to either. Zero cost is a hard
+# project rule, so the lever is to stop running several free web services from
+# one account at once. The owner chose to drop staging and let production carry
+# the free allowance alone.
+#
+# ⚠️ THIS DELETES A LIVE RESOURCE AND CANNOT BE UNDONE FROM HERE.
+# `provision-web-service.yml` can recreate an equivalent service, but the
+# service id changes, so `vars.RENDER_STAGING_SERVICE_ID` would need updating.
+#
+# THREE INDEPENDENT SAFEGUARDS, because the account also hosts the Solar
+# production application, which is explicitly off-limits (ADR-011):
+#   1. The service id is HARDCODED here. There is no input that can redirect it.
+#   2. Before deleting, the service is fetched and its `name` must be exactly
+#      `autoworkshop-web-staging`. A wrong id therefore aborts instead of
+#      deleting whatever it happens to point at.
+#   3. It is DRY-RUN BY DEFAULT and refuses to act without `confirm=APPLY`.
+name: Render drop staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually delete. Anything else is a dry run.'
+        required: true
+        default: DRYRUN
+        type: string
+
+env:
+  SERVICE_ID: srv-d9jun8m417fc73dore50
+  EXPECT_NAME: autoworkshop-web-staging
+
+jobs:
+  drop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify the service (read-only)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}" > svc.json
+          python3 - <<'PY'
+          import json, os, sys
+          d = json.load(open('svc.json'))
+          name = d.get('name')
+          print(f"id        : {d.get('id')}")
+          print(f"name      : {name}")
+          print(f"type      : {d.get('type')}")
+          print(f"suspended : {d.get('suspended')}  suspenders: {d.get('suspenders')}")
+          print(f"url       : {(d.get('serviceDetails') or {}).get('url')}")
+          expected = os.environ['EXPECT_NAME']
+          if name != expected:
+              # SAFEGUARD 2. Reached only if the hardcoded id above is wrong, at
+              # which point deleting would remove something nobody named.
+              print(f"::error::refusing to touch '{name}' — expected '{expected}'")
+              sys.exit(1)
+          print(f"\nverified: this is {expected}")
+          PY
+
+      - name: Dry run — what would happen
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          echo "DRY RUN. Nothing was deleted."
+          echo ""
+          echo "With confirm=APPLY this would issue:"
+          echo "  DELETE https://api.render.com/v1/services/${SERVICE_ID}"
+          echo ""
+          echo "Consequences:"
+          echo "  · the staging gate disappears from the release pipeline"
+          echo "  · https://autoworkshop-web-staging.onrender.com stops resolving"
+          echo "  · vars.RENDER_STAGING_SERVICE_ID becomes stale"
+          echo "  · recreating it via provision-web-service.yml yields a NEW id"
+          exit 0
+
+      - name: Delete the service
+        if: ${{ inputs.confirm == 'APPLY' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /tmp/del.out -w '%{http_code}' -X DELETE \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}")"
+          echo "DELETE returned $code"
+          head -c 400 /tmp/del.out || true
+          echo ""
+          # Render answers 204 on success. Anything else is a failure, and a 2xx
+          # is not assumed to mean the resource is gone — that is checked next.
+          case "$code" in
+            204|200) : ;;
+            *) echo "::error::delete failed with $code"; exit 1 ;;
+          esac
+
+      - name: Prove it is gone
+        if: ${{ inputs.confirm == 'APPLY' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          # VERIFY THE EFFECT, NOT THE CALL. A 2xx from a delete endpoint is a
+          # statement about the request; this is a statement about the world.
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/${SERVICE_ID}")"
+          echo "GET after delete returned $code"
+          if [ "$code" != "404" ]; then
+            echo "::error::service still present after delete (GET $code)"
+            exit 1
+          fi
+          echo "confirmed: ${SERVICE_ID} no longer exists"

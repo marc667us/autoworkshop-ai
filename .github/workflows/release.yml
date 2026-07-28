@@ -166,31 +166,38 @@ jobs:
           DOCKER_BUILDKIT: '1'
         # Login must precede this; see the step ordering note below.
 
-  # ── Gate 3: deploy to STAGING and prove it serves ───────────────────────────
+  # ── Gate 3: promote the tested image to production ───────────────────────────
   #
-  # Staging is not a copy of production kept alive for its own sake -- it is the
-  # last gate before the public domain. The container smoke test in `image` runs
-  # against a locally started container with test env vars; this runs against a
-  # real Render service, over the real proxy, with real per-service secrets.
-  # Those are different enough to fail independently, which is the whole point.
-  staging:
-    needs: image
-    uses: ./.github/workflows/_deploy-render.yml
-    with:
-      service_id: ${{ vars.RENDER_STAGING_SERVICE_ID }}
-      image: ghcr.io/${{ github.repository_owner }}/autoworkshop-web:${{ github.sha }}
-      base_url: https://autoworkshop-web-staging.onrender.com
-      environment: staging
-    secrets: inherit
-
-  # ── Gate 4: promote the SAME image to production ─────────────────────────────
+  # ⚠️ THE STAGING GATE WAS REMOVED ON 2026-07-28, AND THIS IS A REAL LOSS.
   #
-  # `needs: staging` is what the owner's rule "only tested builds can be
-  # deployed here" actually reduces to: production is unreachable unless the
-  # identical image is already serving on staging. Same digest-tagged image, so
-  # no rebuild sneaks between the two.
+  # Render suspended every AutoWorkshop web service with `suspenders: ['billing']`
+  # — production and staging both 503, and the pipeline could not deploy to
+  # either. Zero cost is a hard project rule, and several free web services on
+  # one account consume the free instance-hour allowance between them, so the
+  # owner chose to drop staging and let production carry it alone.
+  #
+  # WHAT THAT COSTS US, stated plainly rather than glossed: the `image` job
+  # starts the real container and calls the real endpoints, but with test
+  # environment variables, on the runner, with no proxy in front. Staging
+  # exercised the same image on a real Render service, through Render's proxy,
+  # with real per-service secrets. Those fail independently — which is precisely
+  # why the gate existed. `AUTH_URL` pointing at the wrong host, a missing
+  # per-service secret, or a proxy-header problem are all faults that staging
+  # would have caught and this pipeline now cannot, until production is serving.
+  #
+  # WHAT STILL PROTECTS PRODUCTION:
+  #   · nothing is published to GHCR unless the container demonstrably serves,
+  #     including `/api/auth/providers` and `/api/auth/session` and a check that
+  #     no token appears in the session document;
+  #   · `_deploy-render.yml` verifies the deployed service actually serves after
+  #     the deploy — which is after it is live, so it detects rather than
+  #     prevents. That asymmetry is the gap.
+  #
+  # RESTORE THE GATE when the allowance permits: recreate a staging service with
+  # `provision-web-service.yml`, set `vars.RENDER_STAGING_SERVICE_ID` to the NEW
+  # id, and reinstate a `staging` job here with `promote` depending on it.
   promote:
-    needs: staging
+    needs: image
     if: ${{ github.event_name == 'push' || inputs.promote }}
     uses: ./.github/workflows/_deploy-render.yml
     with:
