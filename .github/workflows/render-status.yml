@@ -61,6 +61,13 @@ jobs:
           print(f"id          : {d.get('id')}")
           print(f"type        : {d.get('type')}   runtime: {det.get('env') or det.get('runtime')}")
           print(f"suspended   : {d.get('suspended')}")
+          # WHO suspended it is the whole diagnosis. Render reports `suspenders`
+          # as a list: an empty list with suspended=suspended means the platform
+          # did it (free instance-hour exhaustion is the usual cause on this
+          # account), whereas ['user'] or ['admin'] means someone chose to. The
+          # remedies are completely different and the 503 looks identical.
+          print(f"suspenders  : {d.get('suspenders')}")
+          print(f"root keys   : {sorted(d.keys())}")
           print(f"branch      : {d.get('branch')}   autoDeploy: {d.get('autoDeploy')}")
           print(f"repo        : {d.get('repo')}")
           print(f"rootDir     : {d.get('rootDir')!r}")
