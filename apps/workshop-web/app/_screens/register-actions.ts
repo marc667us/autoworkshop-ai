@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '@autoworkshop/next-shell';
-import type { ActionResult } from './form-controls';
+import type { ActionResult } from '@autoworkshop/ui';
 
 /**
  * The Phase 4 write actions.

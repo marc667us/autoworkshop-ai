@@ -1,8 +1,17 @@
 import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
-import { PageHeader, ErrorState, EmptyState } from '@autoworkshop/ui';
+import {
+  PageHeader,
+  ErrorState,
+  EmptyState,
+  Field,
+  FormShell,
+  Select,
+  SubmitButton,
+  TextInput,
+} from '@autoworkshop/ui';
 import { navLabelFor } from './nav-label';
 import { registerVehicleAction } from './register-actions';
-import { Field, FormShell, Select, SubmitButton, TextInput } from './form-controls';
+
 
 /**
  * Register a vehicle — `2.txt` §537.
@@ -147,6 +156,14 @@ export async function RegisterVehicleScreen({ route }: { route: string }) {
             autoComplete="off"
             style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}
           />
+        </Field>
+
+        <Field
+          label="Engine"
+          hint="Engine code or size, if you know it — for example 2KD-FTV or 2.4L."
+          htmlFor="engineType"
+        >
+          <TextInput id="engineType" name="engineType" autoComplete="off" />
         </Field>
 
         <Field label="Fuel" htmlFor="fuelType">

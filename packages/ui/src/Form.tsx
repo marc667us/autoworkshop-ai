@@ -4,7 +4,12 @@ import * as React from 'react';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
 /**
- * Form controls for the Phase 4 write screens.
+ * Form controls — shared by every app that writes.
+ *
+ * MOVED HERE FROM `workshop-web/app/_screens` when customer-web needed the same
+ * controls (Directive §3: extend, never duplicate). Two copies of a submit
+ * handler is how one of them quietly stops preserving typed values, or stops
+ * calling `checkValidity`, and nothing says so.
  *
  * ⚠️ WHY THIS IS HAND-ROLLED STATE AND NOT `useFormState`. This workspace runs
  * **React 18.3.1** (checked, not assumed — `apps/workshop-web/node_modules/react`)

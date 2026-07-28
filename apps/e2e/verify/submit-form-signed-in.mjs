@@ -46,6 +46,7 @@ const fills = pairs(argAll('fill'));
 const selects = pairs(argAll('select'));
 const expects = argAll('expect');
 const rejects = argAll('reject');
+const submitLabel = new RegExp(arg('submit', 'Register|Save|Submit|Add'), 'i');
 
 if (!url) {
   console.error('usage: submit-form-signed-in.mjs --url <url> [--fill n=v] [--select n=label] [--expect s]');
@@ -100,7 +101,10 @@ try {
     await page.selectOption(`[name="${name}"]`, { label });
   }
 
-  await page.getByRole('button', { name: /Register|Save|Submit/i }).first().click();
+  // `--submit` overrides the label when a form's button says something else.
+  // The default list is not a guess at every future verb — a form whose button
+  // is not matched FAILS LOUDLY here rather than silently submitting nothing.
+  await page.getByRole('button', { name: submitLabel }).first().click();
 
   // SCOPED TO THE FORM. An unscoped `[role="status"]` also matches the app
   // shell's own live region, which is present and EMPTY on every page — so the

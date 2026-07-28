@@ -1,7 +1,14 @@
-import { PageHeader } from '@autoworkshop/ui';
+import {
+  PageHeader,
+  Field,
+  FormShell,
+  Select,
+  SubmitButton,
+  TextInput,
+} from '@autoworkshop/ui';
 import { navLabelFor } from './nav-label';
 import { registerCustomerAction } from './register-actions';
-import { Field, FormShell, Select, SubmitButton, TextInput } from './form-controls';
+
 
 /**
  * Register a customer — the first screen in this product that WRITES.
