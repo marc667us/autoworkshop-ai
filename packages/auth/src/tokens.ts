@@ -113,3 +113,51 @@ export async function refreshAccessToken(
     idToken: payload.id_token,
   };
 }
+
+/**
+ * Revoke a refresh token at Keycloak's revocation endpoint (RFC 7009).
+ *
+ * WHY THIS IS NOT OPTIONAL
+ *
+ * Auth.js's `signOut()` deletes this app's cookie. It does not tell Keycloak
+ * anything, so a refresh token captured before sign-out stays valid and can be
+ * rotated indefinitely until the realm's session or token lifespan expires.
+ * Clearing a cookie is not revocation, and CLAUDE.md §9 requires the real
+ * thing: "logout endpoint · refresh token revocation · session invalidation ·
+ * backend rejection of revoked tokens".
+ *
+ * On a shared workshop terminal that gap is the whole risk.
+ *
+ * FAILS SOFT, DELIBERATELY. If revocation fails, sign-out must still proceed —
+ * a user who cannot sign out because an upstream call failed is left MORE
+ * exposed than one whose token outlives the session. The boolean is returned so
+ * the caller can log or audit the difference rather than discover it later.
+ *
+ * No client secret: these are PUBLIC clients (PKCE S256), so the endpoint
+ * authenticates the request by the token itself.
+ */
+export async function revokeRefreshToken(
+  clientId: string,
+  refreshToken: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    const response = await fetchImpl(`${keycloakIssuer()}/protocol/openid-connect/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        token: refreshToken,
+        // Without the hint Keycloak guesses, and guesses wrong often enough
+        // that a revoke can silently no-op while returning 200.
+        token_type_hint: 'refresh_token',
+      }),
+    });
+    // RFC 7009: a revocation endpoint returns 200 even for an already-invalid
+    // token, on purpose — so a non-2xx here is a real failure, not "the token
+    // was already dead".
+    return response.ok;
+  } catch {
+    return false;
+  }
+}

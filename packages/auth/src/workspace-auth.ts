@@ -7,6 +7,7 @@ import { apiBaseUrl, authSecret, clientIdForWorkspace, keycloakIssuer } from './
 import {
   isExpired,
   refreshAccessToken,
+  revokeRefreshToken,
   RefreshFailedError,
   type KeycloakTokenSet,
 } from './tokens';
@@ -73,6 +74,22 @@ export interface WorkspaceAuth {
    * Callers must treat `null` as "unauthenticated" and fail closed.
    */
   getAccessToken: () => Promise<string | null>;
+  /**
+   * End the session for real: revoke the refresh token at Keycloak, then
+   * return the URL that ends the Keycloak SSO session.
+   *
+   * `signOut()` alone deletes this app's cookie and nothing else, so a refresh
+   * token captured beforehand stays valid and rotatable. CLAUDE.md §9 requires
+   * actual revocation, and on a shared workshop terminal that is the point of
+   * signing out at all.
+   *
+   * Call this BEFORE `signOut()` — it needs the cookie in order to read the
+   * refresh token out of it.
+   */
+  signOutCompletely: (postLogoutRedirect: string) => Promise<{
+    keycloakSignOutUrl: string;
+    refreshTokenRevoked: boolean;
+  }>;
 }
 
 /**
@@ -260,6 +277,35 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // receives null must behave as unauthenticated.
       if (isExpired(keycloak, Math.floor(Date.now() / 1000), 0)) return null;
       return keycloak.accessToken;
+    },
+
+    async signOutCompletely(postLogoutRedirect: string) {
+      // Reads the cookie the same way getAccessToken does, and for the same
+      // reason: the session object deliberately carries no tokens, so the JWT
+      // is the only place the refresh token exists.
+      const req = { headers: await headers() };
+      const secureCookie = process.env['NODE_ENV'] === 'production';
+
+      let refreshTokenRevoked = false;
+      let idToken: string | undefined;
+
+      const rawToken = await getToken({ req, secret: '', secureCookie, raw: true });
+      if (rawToken) {
+        const token = await getToken({ req, secret: authSecret(), secureCookie });
+        const keycloak = token?.keycloak;
+        idToken = keycloak?.idToken;
+        if (keycloak?.refreshToken) {
+          refreshTokenRevoked = await revokeRefreshToken(clientId, keycloak.refreshToken);
+        }
+      }
+
+      // Returned rather than thrown on failure: a user who cannot sign out
+      // because an upstream call failed is left MORE exposed than one whose
+      // token outlives the session. The caller audits the difference.
+      return {
+        keycloakSignOutUrl: keycloakSignOutUrl(idToken, postLogoutRedirect),
+        refreshTokenRevoked,
+      };
     },
   };
 }

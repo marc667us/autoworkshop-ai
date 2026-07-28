@@ -1,7 +1,13 @@
 export { createWorkspaceAuth, workspaceAuth, keycloakSignOutUrl } from './workspace-auth';
 export type { WorkspaceAuth } from './workspace-auth';
 export { apiBaseUrl, clientIdForWorkspace, keycloakIssuer, AuthConfigError } from './config';
-export { isExpired, refreshAccessToken, RefreshFailedError, REFRESH_SKEW_SECONDS } from './tokens';
+export {
+  isExpired,
+  refreshAccessToken,
+  revokeRefreshToken,
+  RefreshFailedError,
+  REFRESH_SKEW_SECONDS,
+} from './tokens';
 export type { KeycloakTokenSet } from './tokens';
 
 /**
