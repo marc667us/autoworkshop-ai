@@ -6,7 +6,7 @@
 | T-0002 | Keycloak realm + client + docker wiring | 2 | **done** — realm as configuration-as-code |
 | T-0003 | Users, organizations, branches, memberships | 2 | **done 2026-07-27** — `BranchService`, `UserService`, `MembershipService` + controllers on the `OrganizationService` pattern. 8 routes live under `/api/v1`, all 401 unauthenticated. Role gates, role allow-list, audit, one-way withdrawal. **`viewerGrants()`/`viewerRole()` still demo — replacing them is T-0005 (session wiring), not more services** |
 | T-0004 | Roles, permissions, permission matrix | 2 | **partial 2026-07-27** — `apps/api/src/authz/permission-matrix.ts` maps all 13 grantable roles to the 3 permission keys the nav gates on, from 07 pt2 §50 + 01 §29/§32. Fails closed on an unknown role. Deliberately small: new keys arrive with the modules that gate on them |
-| T-0005 | Tenant context resolution from validated claims | 2 | **code complete 2026-07-27, GATES PENDING** (`0b678b5`) — `packages/auth` (Auth.js v5 + Keycloak, one factory x7), session-backed `viewerGrants()`/`viewerRole()` via `GET /api/v1/me`, all 7 apps wired with async layouts + middleware + route handler. Codex and Supervisor have NOT reviewed. Playwright NOT re-run. Earlier API side: `KeycloakJwtService`, `TenantGuard`, and now **`GET /api/v1/me`** returning userId/tenant/org/branch/activeRole/permissions/memberships, all derived server-side. **REMAINING: the Next apps have no session at all** — no Auth.js, so `viewerGrants()`/`viewerRole()` are still demo data |
+| T-0005 | Tenant context resolution from validated claims | 2 | **finding 5 CLOSED + BOTH GATES PASSED 2026-07-28** (`6725b14`) — sign-out now revokes for real, proven by an A/B refresh grant (200 without sign-out, 400 `invalid_grant` with). Codex found 2 MEDIUM, Supervisor found 3 MORE that Codex missed — incl. logout sending no `client_id`, which would have left the SSO session alive after any refresh that dropped the id token. **Finding 4 (admin route protection) is still open.** Earlier: **code complete 2026-07-27** (`0b678b5`) — `packages/auth` (Auth.js v5 + Keycloak, one factory x7), session-backed `viewerGrants()`/`viewerRole()` via `GET /api/v1/me`, all 7 apps wired with async layouts + middleware + route handler. Codex and Supervisor have NOT reviewed. Playwright NOT re-run. Earlier API side: `KeycloakJwtService`, `TenantGuard`, and now **`GET /api/v1/me`** returning userId/tenant/org/branch/activeRole/permissions/memberships, all derived server-side. **REMAINING: the Next apps have no session at all** — no Auth.js, so `viewerGrants()`/`viewerRole()` are still demo data |
 | T-0032 | Production + staging deployment of `workshop-web` | 3 | **done 2026-07-27** — `autoworkshop.aiappinvent.com` LIVE. Render's builder is out of the critical path: CI builds a container, starts it, smoke-tests `/api/auth/*`, publishes to GHCR; Render pulls a prebuilt image (ADR-017). Two free image services — staging `srv-d9jun8m417fc73dore50`, production `srv-d9ju49id0e5s7389fjlg`. Production is unreachable unless the identical digest-tagged image already serves on staging. `autoDeploy` off on both. The old node service `srv-d9jsliu7r5hc73b1kncg` never deployed successfully and is retired, domain detached. **The 448 MB heap theory was reproduced in CI and REFUTED; the underlying Render build fault is still unexplained** |
 | T-0006 | RLS FORCE + tenant-isolation test suite | 2 | **partial** — RLS proven as non-superuser; full suite outstanding |
 | T-0007 | Audit framework (append-only) | 2 | **done** — `AuditService`, same transaction as the work it records |
@@ -37,9 +37,27 @@
 | T-0031 | ~~ThemeToggle radiogroup: arrows move focus but not selection~~ | 3 | **closed 2026-07-27 — NOT A DEFECT.** Same stale-server cause as T-0030: with no hydration `setPreference` never ran, so `aria-checked` never changed. The roving tabindex and arrow handling were already correct (shipped in the defect-4 fix). Both tests pass on a fresh build |
 | T-0024 | Review guardrails: RAG grounding, claim verification, scoped review, idiom lint | 2 | **done** — 4 layers in `scripts/guardrails/`, wired as Stage 0 of the quality gate |
 
-**Next up:** see `.claude/NEXT_SESSION_SCHEDULE.md`. Two threads: (1) the Render build fails
-silently — run the same build in GitHub Actions to get an error message; (2) run Codex +
-Supervisor + Playwright on T-0005, which is committed unreviewed.
+**Next up:** T-0005 finding 4 (admin route protection), then T-0016 switchers, then **PHASE 4 —
+Customer + Vehicle**, which is the owner's stated priority and the first phase with real screens.
+
+**T-0033 — three follow-ups from the 2026-07-28 Supervisor pass** (none blocking; production has
+no deployed identity yet, so it renders the signed-out shell):
+1. `AUTH_URL` is **absent from `render.yaml`**. Set it per service so neither the session-cookie
+   name nor the post-logout origin rests on a request header.
+2. **Confirm a realm/deployment origin mismatch:** `render.yaml` deploys `workshop-web` at
+   `autoworkshop.aiappinvent.com`, but `autoworkshop-workshop-web`'s `redirectUris` are
+   `http://localhost:3001/*` and `https://workshop.autoworkshop.aiappinvent.com/*`. If that is
+   what is live, the deployed origin is not in its own client's allow-list — sign-in AND sign-out
+   both fail the moment identity goes live.
+3. **No audit event on logout**, which CLAUDE.md §9/§16 require. The one outcome that leaves a
+   live credential behind currently exists in stdout only.
+
+**A defect worth remembering, found by running the app rather than reviewing it:** the session
+cookie NAME was chosen from `NODE_ENV` while Auth.js chooses it from the URL scheme. On the live
+https site the two coincide, so it works; under `next start` over http a genuinely signed-in user
+resolved to nobody — `/api/auth/session` named them while the server-side shell rendered "Not
+signed in" and `viewerGrants()` returned none. No local production build had ever resolved a
+viewer. Nothing logged an error.
 
 **Superseded:** T-0005 — tenant context from the Keycloak session inside the Next apps. It is now the single blocker for T-0016 (switchers) and is what actually replaces the demo bodies of `viewerGrants()` and `viewerRole()`. Then T-0023, then T-0017.
 
