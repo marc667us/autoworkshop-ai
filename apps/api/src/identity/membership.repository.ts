@@ -12,6 +12,18 @@ import type { ValidatedMembership } from '../tenancy/tenant-context';
  *
  * This is the one place a tenant boundary is crossed, which is exactly why it
  * is small, parameterised, and does not accept a tenant id from anywhere.
+ *
+ * IT MUST GO THROUGH `identity.memberships_for_subject()` (migration 003), NOT
+ * a plain SELECT. `identity.memberships` is under ENABLE + FORCE RLS, and with
+ * no tenant context its policy evaluates `tenant_id = NULL`, which hides every
+ * row. Measured on the live database as `autoworkshop_app`: 1 membership
+ * present, 0 visible, and the bootstrap query returning the user with a NULL
+ * tenant. That returned an empty membership list for every user alive —
+ * authorization failing closed for everyone, with the whole test suite green.
+ *
+ * The SECURITY DEFINER function is the tenant-boundary crossing, and it is
+ * about ten auditable lines. Reverting to a direct query reintroduces the
+ * outage silently, because nothing in unit tests connects as the app role.
  */
 @Injectable()
 export class MembershipRepository {
@@ -29,16 +41,8 @@ export class MembershipRepository {
       role_name: string;
       status: 'active' | 'suspended' | 'revoked';
     }>(
-      `SELECT u.id            AS user_id,
-              m.tenant_id     AS tenant_id,
-              m.organization_id,
-              m.branch_id,
-              m.role_name,
-              m.status
-         FROM identity.users u
-    LEFT JOIN identity.memberships m ON m.user_id = u.id
-        WHERE u.keycloak_subject = $1
-          AND u.status = 'active'`,
+      `SELECT user_id, tenant_id, organization_id, branch_id, role_name, status
+         FROM identity.memberships_for_subject($1)`,
       [subject],
     );
 
