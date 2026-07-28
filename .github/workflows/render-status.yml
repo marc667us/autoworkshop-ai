@@ -6,26 +6,45 @@
 # transcribing it — which is how several "facts" in earlier sessions turned out
 # to be wrong.
 #
-# SCOPED TO ONE SERVICE ID ON PURPOSE. The owner's Render account also hosts
-# the Solar production application, which is explicitly off-limits. This
-# workflow addresses `srv-d9jsliu7r5hc73b1kncg` directly and never enumerates
-# or touches anything else.
+# SCOPED TO A FIXED SET OF SERVICE IDS ON PURPOSE. The owner's Render account
+# also hosts the Solar production application, which is explicitly off-limits.
+# The id comes from a `choice` input, never free text, so no typo can address a
+# neighbouring service and nothing is ever enumerated.
+#
+# ⚠️ IT USED TO HARDCODE `srv-d9jsliu7r5hc73b1kncg` — the NODE service that was
+# retired when ADR-017 moved production to prebuilt images. So on 2026-07-28,
+# with production and staging both answering 503, this workflow cheerfully
+# reported a healthy service: the wrong one, and one that had never served
+# traffic. A probe pointed at a decommissioned resource is worse than no probe.
 #
 # READ-ONLY. GET requests only; it creates, updates and deletes nothing.
 name: Render status
 
 on:
   workflow_dispatch:
-
-env:
-  # The `autoworkshop` service. Hardcoded rather than an input so a typo cannot
-  # point this at a neighbouring service.
-  SERVICE_ID: srv-d9jsliu7r5hc73b1kncg
+    inputs:
+      service:
+        description: 'Which AutoWorkshop service to probe'
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - staging
+          - retired-node-service
 
 jobs:
   status:
     runs-on: ubuntu-latest
+    env:
+      # Resolved from the choice, so the id is never typed by hand.
+      SERVICE_ID: >-
+        ${{ inputs.service == 'production' && 'srv-d9ju49id0e5s7389fjlg'
+         || inputs.service == 'staging'    && 'srv-d9jun8m417fc73dore50'
+         || 'srv-d9jsliu7r5hc73b1kncg' }}
     steps:
+      - name: Which service
+        run: echo "probing ${{ inputs.service }} -> $SERVICE_ID"
       - name: Service definition
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
