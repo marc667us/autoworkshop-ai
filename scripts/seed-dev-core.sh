@@ -104,6 +104,57 @@ SELECT c.tenant_id, c.organization_id, c.id, v.registration_number, mk.id,
 COMMIT;
 SQL
 
+# ── link a customer record to a real platform account ───────────────────────
+#
+# `core.customers.user_id` is NULLABLE by design — a walk-in customer must be
+# recordable without an account. But it is also the predicate the ENTIRE
+# customer-facing side rests on: `CustomerService` and `VehicleService` narrow a
+# viewer whose role is `customer` to rows where `user_id` matches them
+# (`01 (1).txt` §19, "Vehicle owners shall see only vehicles they own").
+#
+# With every seeded row leaving `user_id` NULL, that predicate matched NOTHING
+# and the narrowing had never once been exercised against real data — a signed-in
+# customer would have seen an empty garage, and the isolation would have looked
+# like it worked for the wrong reason. So: if the customer dev identity exists,
+# link it to Kwame Mensah, who has two vehicles and is not the only customer.
+# That makes the garage a real test — 2 of the tenant's 4 vehicles.
+if psql_run -tAc "SELECT 1 FROM identity.users WHERE email = 'customer@autoworkshop.local'" | grep -q 1; then
+  echo "==> linking customer@autoworkshop.local to a customer record"
+  # Scoped through the account's OWN MEMBERSHIP, not by name alone.
+  #
+  # Codex P1, accepted: `display_name` is not unique. Matching on it would link
+  # the dev account to every customer row sharing that name — including rows in
+  # another tenant, which this script deliberately creates. Since `user_id` IS
+  # the ownership predicate the garage relies on, a sloppy link would silently
+  # widen what the customer sees and the isolation test would then be proving
+  # nothing. Joining through `identity.memberships` confines the update to the
+  # one tenant and organisation the account actually belongs to.
+  psql_run -q <<'SQL'
+UPDATE core.customers c
+   SET user_id = u.id
+  FROM identity.users u
+  JOIN identity.memberships m ON m.user_id = u.id AND m.status = 'active'
+ WHERE u.email = 'customer@autoworkshop.local'
+   AND c.tenant_id       = m.tenant_id
+   AND c.organization_id = m.organization_id
+   AND c.display_name    = 'Kwame Mensah'
+   AND c.user_id IS DISTINCT FROM u.id;
+SQL
+
+  # A link that matched more than one customer would make the garage look
+  # correct while proving nothing, so it is asserted rather than assumed.
+  linked="$(psql_run -tAc "SELECT count(*) FROM core.customers c JOIN identity.users u ON u.id = c.user_id WHERE u.email = 'customer@autoworkshop.local'" | tr -d '[:space:]')"
+  if [ "$linked" != "1" ]; then
+    echo "ERROR: expected exactly 1 customer linked to the dev account, found $linked." >&2
+    echo "       The garage's owner-scoping test is only meaningful with exactly one." >&2
+    exit 1
+  fi
+else
+  echo "==> no customer dev identity yet — run:"
+  echo "    DEV_USER_ROLE=customer DEV_USER_EMAIL=customer@autoworkshop.local \\"
+  echo "      bash scripts/seed-dev-identity.sh   # then re-run this script"
+fi
+
 echo "==> verifying"
 psql_run -c "
 SELECT t.name AS tenant, c.display_name AS customer, count(v.id) AS vehicles

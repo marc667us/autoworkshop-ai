@@ -60,7 +60,7 @@ GATED_APPS=("admin-web:admin:platform.admin")
 # role-filtered, grant-filtered tree. THE PATH MUST BE THE PAGE'S OWN: a call
 # naming a different route gates a different screen and must not pass, which is
 # the same strictness the permission form already has.
-ROUTE_GATED_APPS=("workshop-web:workshop")
+ROUTE_GATED_APPS=("workshop-web:workshop" "customer-web:customer")
 
 # Strip line and block comments so a mention in prose cannot satisfy the check.
 strip_comments() {
