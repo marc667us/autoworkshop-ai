@@ -21,6 +21,12 @@ import {
   requireUuid,
 } from './validate';
 
+/** A row of the shared make taxonomy, for form pickers. */
+export interface VehicleMake {
+  id: string;
+  name: string;
+}
+
 export interface Vehicle {
   id: string;
   customerId: string;
@@ -151,6 +157,33 @@ export class VehicleService {
         [ctx.tenantId, ctx.organizationId, optionalCustomerId ?? null, scopeToSelf ? ctx.userId : null],
       );
       return res.rows.map(this.toDomain);
+    });
+  }
+
+  /**
+   * The vehicle-make taxonomy, for the "register a vehicle" form's picker.
+   *
+   * Shared reference data with no tenant dimension (migration 004), so there is
+   * nothing to isolate — but it is still gated, because the make list is only
+   * useful to someone registering or reading a vehicle and an ungated endpoint
+   * is one more thing to reason about later.
+   *
+   * Anyone who may CREATE a vehicle can read it, not only those who may read the
+   * register: `2.txt` §537 has the vehicle OWNER registering their own vehicles,
+   * and a customer must be able to say what they drive.
+   */
+  async listMakes(ctx: TenantContext): Promise<VehicleMake[]> {
+    if (!CAN_READ_VEHICLES.has(ctx.activeRole) && !CAN_CREATE_VEHICLE.has(ctx.activeRole)) {
+      throw new ForbiddenException(
+        `role '${ctx.activeRole}' may not read vehicle makes`,
+      );
+    }
+    return this.db.withTenant(ctx, async (client) => {
+      const res = await client.query(
+        `SELECT id, name FROM core.vehicle_makes ORDER BY name`,
+        [],
+      );
+      return res.rows.map((r: { id: string; name: string }) => ({ id: r.id, name: r.name }));
     });
   }
 

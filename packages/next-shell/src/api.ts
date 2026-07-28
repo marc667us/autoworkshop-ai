@@ -37,10 +37,17 @@ export type ApiResult<T> =
        * `unauthenticated` — no session, or the access token expired.
        * `forbidden`       — a valid identity that may not have this.
        * `notFound`        — the record does not exist for this tenant.
+       * `invalid`         — the request was rejected on its CONTENT (400/409).
+       *                     Writes only, and it is the one failure the USER can
+       *                     fix, so it carries the API's own message: "a vehicle
+       *                     with this registration already exists" tells them
+       *                     what to change, and "something went wrong" does not.
        * `unavailable`     — the API is down, unreachable, or answered garbage.
        */
-      reason: 'unauthenticated' | 'forbidden' | 'notFound' | 'unavailable';
+      reason: 'unauthenticated' | 'forbidden' | 'notFound' | 'invalid' | 'unavailable';
       status?: number;
+      /** Only set for `invalid`. Safe to show: it describes the input, not the system. */
+      message?: string;
     };
 
 /**
@@ -96,6 +103,80 @@ export async function apiGet<T>(
 }
 
 /**
+ * POST a resource as the current viewer.
+ *
+ * Same discipline as `apiGet` and for the same reasons — server only, so the
+ * access token never reaches the browser, and IT NEVER THROWS, because a form
+ * that throws on a rejected submission destroys the page the user was filling
+ * in along with everything they typed.
+ *
+ * The one difference is `invalid`. A write can fail on its CONTENT — a duplicate
+ * registration number, a malformed field — and that is the only failure the
+ * person at the keyboard can actually do something about, so the API's message
+ * is carried back rather than replaced with a generic apology. Those messages
+ * are written to describe the INPUT ("a vehicle with this registration number or
+ * VIN already exists"), never the system, so passing them through leaks nothing.
+ *
+ * `cache` is not set: Next does not cache POSTs. `no-store` is on `apiGet`
+ * because a cached tenant-scoped GET is one tenant's data served to the next
+ * viewer; that hazard does not exist here.
+ */
+export async function apiPost<T>(
+  workspaceId: WorkspaceId | string,
+  path: string,
+  body: unknown,
+): Promise<ApiResult<T>> {
+  const accessToken = await workspaceAuth(workspaceId).getAccessToken();
+  if (!accessToken) return { ok: false, reason: 'unauthenticated' };
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}/api/v1${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, reason: 'unavailable' };
+  }
+
+  if (!response.ok) {
+    // Read the body BEFORE branching: a 400 carries the reason the form needs,
+    // and the response can only be consumed once.
+    const detail = await response
+      .json()
+      .then((b: { message?: string | string[] }) =>
+        Array.isArray(b?.message) ? b.message.join('; ') : b?.message,
+      )
+      .catch(() => undefined);
+
+    switch (response.status) {
+      case 401:
+        return { ok: false, reason: 'unauthenticated', status: 401 };
+      case 403:
+        return { ok: false, reason: 'forbidden', status: 403 };
+      case 404:
+        return { ok: false, reason: 'notFound', status: 404 };
+      case 400:
+      case 409:
+      case 422:
+        return { ok: false, reason: 'invalid', status: response.status, message: detail };
+      default:
+        return { ok: false, reason: 'unavailable', status: response.status };
+    }
+  }
+
+  try {
+    return { ok: true, data: (await response.json()) as T };
+  } catch {
+    return { ok: false, reason: 'unavailable', status: response.status };
+  }
+}
+
+/**
  * The human-readable half of a failure, kept beside the codes so the two cannot
  * drift, and deliberately vague about authorization.
  *
@@ -124,6 +205,12 @@ export function describeApiFailure(reason: Exclude<ApiResult<unknown>, { ok: tru
       return {
         title: 'Not found',
         description: 'This record does not exist, or it belongs to another organisation.',
+      };
+    case 'invalid':
+      return {
+        title: 'That could not be saved',
+        description:
+          'Some of the details were not accepted. Check the highlighted fields and try again.',
       };
     case 'unavailable':
     default:

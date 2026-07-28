@@ -117,6 +117,32 @@ export function optionalText(value: unknown, field: string, max = 200): string |
   return text;
 }
 
+/**
+ * An email address, or null.
+ *
+ * ⚠️ SERVER-SIDE ON PURPOSE, and it was missing (Codex review of slice 2, P2).
+ * The form marks the field `type="email"`, but `FormShell` sets `noValidate` so
+ * that its own submit handler controls the submission — which switched the
+ * browser's native check off. Nothing on the server checked either, so
+ * `not-an-email` was accepted and persisted. A client-side constraint is a
+ * convenience for the user, never the rule: anything calling `POST /customers`
+ * directly, including an MCP tool, bypasses it entirely.
+ *
+ * Deliberately PERMISSIVE — one `@`, a dot in the domain, no whitespace. Email
+ * syntax is far broader than the patterns usually written for it, and a strict
+ * regex here would reject valid addresses (`+` tags, long TLDs, unicode local
+ * parts) which is a worse failure than accepting an odd one. Deliverability is
+ * proven by sending mail, not by a regex.
+ */
+export function optionalEmail(value: unknown, field: string): string | null {
+  const text = optionalText(value, field, 320);
+  if (text === null) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+    throw new BadRequestException(`${field} must be a valid email address`);
+  }
+  return text;
+}
+
 /** The CHECK-constrained vocabularies from migration 004. */
 export const CUSTOMER_TYPES = ['individual', 'business'] as const;
 export const CONTACT_METHODS = ['phone', 'email', 'sms', 'in_app'] as const;

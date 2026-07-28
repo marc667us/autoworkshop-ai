@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
-import { CustomerController, VehicleController } from './core.controllers';
+import {
+  CustomerController,
+  VehicleController,
+  VehicleMakeController,
+} from './core.controllers';
 import { CustomerService } from './customer.service';
 import { VehicleService } from './vehicle.service';
 
@@ -30,7 +34,7 @@ import { VehicleService } from './vehicle.service';
   // STARTING the app finds it. That is the third defect in this project caught
   // by running the thing rather than reviewing it.
   imports: [IdentityModule],
-  controllers: [CustomerController, VehicleController],
+  controllers: [CustomerController, VehicleController, VehicleMakeController],
   providers: [CustomerService, VehicleService],
   exports: [CustomerService, VehicleService],
 })

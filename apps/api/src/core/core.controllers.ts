@@ -79,6 +79,25 @@ export class CustomerController {
   }
 }
 
+/**
+ * The shared make taxonomy — its own controller because it is NOT a vehicle.
+ *
+ * `core.vehicle_makes` has no tenant dimension and is not owned by anyone; the
+ * register-a-vehicle form needs it to offer a picker. Nesting it under
+ * `/vehicles` would have implied it is scoped the way vehicles are, which is the
+ * kind of small mislabelling that later gets read as a guarantee.
+ */
+@Controller('vehicle-makes')
+@UseGuards(TenantGuard)
+export class VehicleMakeController {
+  constructor(private readonly vehicles: VehicleService) {}
+
+  @Get()
+  list(@Req() req: AuthenticatedRequest) {
+    return this.vehicles.listMakes(req.tenantContext);
+  }
+}
+
 @Controller('vehicles')
 @UseGuards(TenantGuard)
 export class VehicleController {

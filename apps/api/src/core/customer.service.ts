@@ -10,6 +10,7 @@ import type { TenantContext } from '../tenancy/tenant-context';
 import {
   CONTACT_METHODS,
   CUSTOMER_TYPES,
+  optionalEmail,
   optionalOneOf,
   optionalText,
   requireText,
@@ -234,7 +235,7 @@ export class CustomerService {
     const name = requireText(displayName, 'displayName', 200);
     const customerType = optionalOneOf(input.customerType, CUSTOMER_TYPES, 'customerType') ?? 'individual';
     const preferredContact = optionalOneOf(input.preferredContact, CONTACT_METHODS, 'preferredContact') ?? 'phone';
-    const email = optionalText(input.email, 'email', 320);
+    const email = optionalEmail(input.email, 'email');
     const phone = optionalText(input.phone, 'phone', 40);
     const location = optionalText(input.location, 'location', 200);
     const notes = optionalText(input.notes, 'notes', 4000);

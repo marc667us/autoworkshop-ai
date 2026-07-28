@@ -1,3 +1,27 @@
+## ✅ CAUSE CONFIRMED BY THE OWNER (2026-07-28)
+
+**The free-tier limit of 750 instance-hours was reached. The service reactivates
+on 1 August.** Nothing in the code caused it and nothing in the code fixes it.
+
+This closes the question the rest of this document left open. The API could not
+answer it — `GET /v1/owners/{id}` returns 200 with an empty object, so instance
+hours were an INFERENCE that the note below was careful not to state as fact.
+The owner has now confirmed it from the dashboard, which is the only place that
+distinguishes an hours exhaustion from a payment problem.
+
+Consequences worth carrying forward:
+
+- Deleting staging was still the right call — it stops two services drawing on
+  one 750-hour allowance — but it could not restore hours already consumed.
+- Two always-on free services cannot both run a full month on one allowance.
+  A month is ~730 hours, so ONE always-on service already sits at the limit.
+  Any future second environment has to be part-time or the allowance is gone
+  again. This is a design constraint, not a one-off.
+- Re-run the Release workflow once the service is serving again; the deploy
+  step failed only because its target was suspended.
+
+---
+
 # Live outage — 2026-07-28
 
 `autoworkshop.aiappinvent.com` is **DOWN**. Every request returns 503.

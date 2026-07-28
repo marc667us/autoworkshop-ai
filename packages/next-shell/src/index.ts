@@ -18,6 +18,6 @@ export { viewerHasSession } from './viewer';
 export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
 export { requireWorkspaceAccess } from './require-access';
 export { requireNavRoute } from './require-route';
-export { apiGet, describeApiFailure } from './api';
+export { apiGet, apiPost, describeApiFailure } from './api';
 export type { ApiResult } from './api';
 export type { ViewerDescription, ViewerLabels } from './viewer-contract';

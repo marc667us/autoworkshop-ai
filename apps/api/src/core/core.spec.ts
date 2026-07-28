@@ -209,6 +209,34 @@ describe('CustomerService', () => {
       expect(insert?.values?.[1]).toBe('org-1');
     });
 
+    /**
+     * Codex slice-2 P2, accepted and fixed. The form marks the field
+     * `type="email"`, but `FormShell` sets `noValidate` so its own handler owns
+     * submission — which switched the browser check off, and nothing on the
+     * server checked either. `not-an-email` was accepted and persisted.
+     *
+     * The client now also calls `checkValidity()`, but THIS is the rule: an MCP
+     * tool calling the service directly never touches a browser.
+     */
+    it('rejects a malformed email server-side, where the rule belongs', async () => {
+      const { db, queries } = fakeDb([customerRow]);
+      const svc = new CustomerService(db, fakeAudit());
+      await expect(
+        svc.create(ctx(), { displayName: 'Kwame Mensah', email: 'not-an-email' }),
+      ).rejects.toThrow(/valid email/);
+      expect(queries).toHaveLength(0);
+    });
+
+    it('still accepts the awkward-but-valid addresses a strict regex would reject', async () => {
+      const { db } = fakeDb([customerRow]);
+      const svc = new CustomerService(db, fakeAudit());
+      // A `+` tag and a long TLD are both legal, and rejecting them would be a
+      // worse defect than accepting an odd address.
+      await expect(
+        svc.create(ctx(), { displayName: 'X', email: 'kwame+workshop@example.technology' }),
+      ).resolves.toBeDefined();
+    });
+
     it('keeps personal contact details OUT of the audit detail', async () => {
       const { db } = fakeDb([customerRow]);
       const audit = fakeAudit();
