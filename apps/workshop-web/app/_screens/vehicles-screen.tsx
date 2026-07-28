@@ -51,13 +51,13 @@ export async function VehiclesScreen({ route }: { route: string }) {
         description="Every vehicle registered to this workshop's customers, newest first."
       />
       <Suspense fallback={<LoadingState label="Loading vehicles…" />}>
-        <VehiclesTable />
+        <VehiclesTable route={route} />
       </Suspense>
     </>
   );
 }
 
-async function VehiclesTable() {
+async function VehiclesTable({ route }: { route: string }) {
   const result = await apiGet<Vehicle[]>('workshop', '/vehicles');
 
   if (!result.ok) {
@@ -118,7 +118,9 @@ async function VehiclesTable() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {v.registrationNumber}
+                <a href={`${route}/${v.id}`} style={{ color: themeVar.textPrimary }}>
+                  {v.registrationNumber}
+                </a>
               </th>
               <td style={{ padding: primitive.space[3], color: themeVar.textPrimary }}>
                 {/* Model is optional by design — a make is always known at the

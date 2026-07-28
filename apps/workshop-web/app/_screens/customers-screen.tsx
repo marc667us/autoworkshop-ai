@@ -58,13 +58,16 @@ export async function CustomersScreen({ route }: { route: string }) {
       {/* Streams the shell immediately and the table when the API answers, so a
           slow API delays the data and not the navigation around it. */}
       <Suspense fallback={<LoadingState label="Loading customers…" />}>
-        <CustomersTable />
+        {/* `route` is passed through so each row links under the SAME tree the
+            viewer is browsing — reception's rows go to their own detail path,
+            an owner's to theirs. */}
+        <CustomersTable route={route} />
       </Suspense>
     </>
   );
 }
 
-async function CustomersTable() {
+async function CustomersTable({ route }: { route: string }) {
   const result = await apiGet<Customer[]>('workshop', '/customers');
 
   if (!result.ok) {
@@ -119,8 +122,14 @@ async function CustomersTable() {
         <tbody>
           {result.data.map((c) => (
             <tr key={c.id} style={{ borderBottom: `1px solid ${themeVar.borderDefault}` }}>
-              <th scope="row" style={{ textAlign: 'left', padding: primitive.space[3], fontWeight: 500, color: themeVar.textPrimary }}>
-                {c.displayName}
+              <th scope="row" style={{ textAlign: 'left', padding: primitive.space[3], fontWeight: 500 }}>
+                {/* A real link, so it is middle-clickable, openable in a new
+                    tab and announced as a link. The whole row is not clickable
+                    on purpose: a row-level handler steals text selection and
+                    gives assistive technology nothing to announce. */}
+                <a href={`${route}/${c.id}`} style={{ color: themeVar.textPrimary }}>
+                  {c.displayName}
+                </a>
               </th>
               <td style={{ padding: primitive.space[3], color: themeVar.textSecondary }}>
                 {c.customerType === 'business' ? 'Business' : 'Individual'}

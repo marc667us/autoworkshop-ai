@@ -140,6 +140,33 @@ check_page_route() {
   route="${route%/page.*}"
   route="${route%/default.*}"
 
+  # A DETAIL page gates on its PARENT LIST route, so trailing dynamic segments
+  # are stripped:
+  #   /customers/customer-search/[id]  ->  /customers/customer-search
+  #
+  # WHY THAT IS THE RIGHT RULE AND NOT A LOOPHOLE. `requireNavRoute` asks
+  # whether the viewer's own navigation advertises a path, and a detail route is
+  # never advertised — no menu lists one entry per customer. The honest question
+  # for `/customers/customer-search/<id>` is "may this viewer see the customer
+  # list at all", which is exactly the parent. A viewer refused the list is
+  # refused every record reachable from it.
+  #
+  # It also keeps the gate WHERE THE ROLE DIFFERENCE LIVES: reception reaches
+  # customers at `/customers/customer-search` and an owner at
+  # `/customers-and-vehicles/customers`, so each detail page sits under its own
+  # tree's list and inherits the right answer without a second rule.
+  #
+  # The record-level check is NOT this. `CustomerService.findById` re-checks the
+  # role, the tenant and the organization, and answers 404 for a record in
+  # another organisation — so a viewer who guesses an id gets nothing (§8).
+  while :; do
+    case "${route##*/}" in
+      \[*\]) route="${route%/*}" ;;
+      *) break ;;
+    esac
+    [ -n "$route" ] || break
+  done
+
   if ! grep -Eq "requireNavRoute\(\s*['\"]${workspace}['\"]\s*,\s*['\"]${route}['\"]\s*\)" <<<"$body"; then
     echo "FAIL: $page"
     echo "      no call to requireNavRoute('${workspace}', '${route}')"
@@ -344,10 +371,47 @@ async function describeNavigation(){ const v = await currentViewer('workshop'); 
 export default async function P(){ await requireNavRoute('workshop', '/customer-reception/customers'); const n = await describeNavigation(); return n }
 FIXTURE
 
+  # ---- DYNAMIC detail routes ----------------------------------------------
+  # A detail page gates on its PARENT list route, because no navigation lists
+  # one entry per record. These pin that rule in both directions.
+  run_detail_case() { # run_detail_case <want> <label>   (fixture on stdin)
+    local want="$1" label="$2" tmp got
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/apps/workshop-web/app/customers/customer-search/[id]"
+    cat > "$tmp/apps/workshop-web/app/customers/customer-search/[id]/page.tsx"
+    if scan "$tmp" >/dev/null 2>&1; then got=pass; else got=fail; fi
+    rm -rf "$tmp"
+    if [ "$got" = "$want" ]; then
+      echo "  ok   - $label ($got)"
+    else
+      echo "  FAIL - $label: wanted $want, got $got"
+      fails=$((fails + 1))
+    fi
+  }
+
+  run_detail_case pass "detail: gated on the PARENT list route" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('workshop', '/customers/customer-search'); return null }
+FIXTURE
+
+  # The shape that would look right and check nothing: `/…/[id]` is never in any
+  # nav tree, so this gate can only ever 404 — including for viewers who are
+  # entitled. It must not pass as "gated".
+  run_detail_case fail "detail: gated on its own literal [id] path" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('workshop', '/customers/customer-search/[id]'); return null }
+FIXTURE
+
+  run_detail_case fail "detail: gated on a DIFFERENT tree's list route" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('workshop', '/customers-and-vehicles/customers'); return null }
+FIXTURE
+
+  run_detail_case fail "detail: no gate at all" <<'FIXTURE'
+export default async function P(){ const d = await load(); return d }
+FIXTURE
+
   if [ "$fails" -gt 0 ]; then
     echo "check-page-gates --self-test: $fails case(s) wrong"; exit 1
   fi
-  echo "check-page-gates --self-test: OK (19/19)"
+  echo "check-page-gates --self-test: OK (23/23)"
   exit 0
 fi
 
