@@ -15,6 +15,9 @@ echo ""
 PYTHONIOENCODING=utf-8 python scripts/guardrails/verify_claims.py || GUARDRAIL_RC=1
 # A concrete page.tsx is resolved ahead of the catch-all and so carries no gate
 # of its own. T-0005 finding 4 was exactly that hole.
+# The guardrail proves ITSELF first — Codex found the original was satisfied by
+# an import line alone, so the negative cases are part of the gate, not a doc.
+./scripts/guardrails/check-page-gates.sh --self-test || GUARDRAIL_RC=1
 ./scripts/guardrails/check-page-gates.sh || GUARDRAIL_RC=1
 if [ "$GUARDRAIL_RC" -ne 0 ]; then
   echo ""
