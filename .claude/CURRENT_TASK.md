@@ -1,117 +1,84 @@
 # Current task
 
-Two threads are open. **Read both before starting** — the second one is the reason the
-first is unreviewed.
+**▶ PHASE 4 — Customer + Vehicle (Release 0.3). Not started.**
+
+Tip `9b29ebd` on `master`, pushed, tree clean. Read
+`.claude/SESSION_HANDOVER.md` (2026-07-28 section) for the full picture and the
+exact start-up commands; this file is the short version.
 
 ---
 
-## 1. T-0005 — Keycloak session in the 7 Next apps · CODE DONE, GATES PENDING
+## Where the previous session stopped
 
-Committed as `0b678b5`. **The four-gate bar is UNMET**: Codex and the Supervisor have not
-run on this diff. Green so far: typecheck 15/15 · lint 15/15 · unit **122** · build 10/10.
-Playwright has **not** been re-run since the change.
+Everything on the schedule ahead of Phase 4 is done:
 
-**Do this before building anything on top of it.**
+| | |
+|---|---|
+| T-0005 finding 5 — sign-out revocation | ✅ closed, Codex + Supervisor passed |
+| T-0005 finding 4 — admin route protection | ✅ closed, Codex passed, build-gated |
+| First screen that reads real data | ✅ shipped and verified signed-in |
 
-### What landed
+**The last thing built** was `apps/admin-web/app/directory/organizations/page.tsx`
+— the first screen in this product that reads the database. Before it, eight
+endpoints existed under `/api/v1` and the front end called exactly one (`/me`),
+only to work out who the viewer was. The owner's words were *"no front end to
+access the back end"* and *"no feature"*, and both were accurate.
 
-`packages/auth` (was an empty directory) — one Auth.js v5 factory consumed by all seven
-apps. Keycloak provider, public client + PKCE, JWT session, refresh owned by the `jwt`
-callback alone, `getAccessToken()` server-side only.
+## Start by re-proving that screen
 
-`viewerGrants()` / `viewerRole()` no longer return hardcoded arrays. They resolve from
-`GET /api/v1/me` using the session's access token, memoised per request with React
-`cache()` so the shell and the catch-all router cannot land on different identities.
+Do not begin Phase 4 on an unverified base. Bring the stack up per the handover,
+then open `http://localhost:3006/directory/organizations` signed in as
+`admin@autoworkshop.local` / `Change_me_locally1!`.
 
-The viewer is split in two on purpose:
-- `packages/next-shell/src/viewer-contract.ts` — PURE. Role and permission mapping.
-  Importable by Playwright, Storybook and unit tests.
-- `packages/next-shell/src/viewer.ts` — SERVER. Needs `next/headers`.
+**Expected: `Alpha Motors` only, caption "1 organisation".** Postgres holds two
+organisations; `Beta Auto` belongs to Tenant B. **If both appear, tenant
+isolation has regressed — stop and fix that before anything else.**
 
-Merging them breaks the e2e suite at module load, and the usual repair is to hardcode
-the expected values, at which point the test stops testing the model.
+## Then Phase 4
 
-### Three environment faults fixed on the way, each load-bearing for T-0005
+`COMBINED_PLAN_v2.md` line 299 and `PLAN_EXTENSION_v1.md` §2:
 
-1. **Keycloak had been dead for ~30 hours.** Postgres restarted underneath it at
-   12:25:24 on 07-26; the Agroal pool's first failure was 12:25:54, thirty seconds
-   later, and it never recovered. `docker ps` said "Up 41 hours" the whole time.
-   Compose now probes the realm discovery document. **Not** `/health/ready` — Keycloak
-   ships with the datasource health check disabled, so that endpoint answers
-   `{"status":"UP","checks":[]}` with a dead database and would have reported healthy
-   throughout. `restart: unless-stopped` did not help either: the process never exited,
-   it hung. The healthcheck makes the failure VISIBLE; it does not self-heal.
-2. **Nobody could sign in.** The realm had zero users and `identity.users` zero rows.
-   `scripts/seed-dev-identity.sh` creates both halves, which must agree on the Keycloak
-   subject — hence one script rather than a realm fixture plus a SQL seed.
-3. **`.env.example` was wrong twice.** `DATABASE_URL` named the bootstrap superuser,
-   which `DatabaseService` refuses to boot with by design; `KEYCLOAK_CLIENT_ID` named a
-   client that does not exist in the realm.
+> Registration, profile, vehicle garage, documents, service history, maintenance
+> schedule, complaint submission, appointment request, workshop search, dashboard
+> — plus the personal vehicle workspace, My Repair Dashboard, service request and
+> approve/reject/modify from `07.txt` part 1.
 
-### The lesson worth carrying
+Build it as vertical slices, each complete before the next. The order that works,
+and the pattern to copy from the organizations screen:
 
-**Two real defects survived every gate and were found by starting the app:**
-`UntrustedHost` (Auth.js v5 rejects an unrecognised Host, auto-detecting Vercel only) and
-a Keycloak provider with **no `issuer`**, so it had no endpoints at all. Both made every
-`/api/auth/*` route return 500 **while ordinary pages returned 200**. A check that only
-loads a page cannot see either. Verify auth by calling `/api/auth/session` and
-`/api/auth/providers`, not by building.
+1. **Migration** — `infrastructure/migrations/004_*.sql`.
+2. **Domain service** on the `OrganizationService` shape. Rules live in the
+   service, never the controller, so an MCP tool gets the same rules.
+3. **Controller** under `/api/v1`, thin, `@UseGuards(TenantGuard)`.
+4. **Page** — `requireWorkspaceAccess()` as the FIRST statement (the build gate
+   enforces it), then `apiGet()`, then all four states.
+5. **Verify by signing in and looking.** Every serious defect this project has
+   had was green on typecheck, lint and the unit suite first.
 
-Also: the audience mapper I was about to add **already existed** as the
-`autoworkshop-audience` client scope, attached to all seven web clients. Verified against
-a real token (`aud: ["autoworkshop-api","account"]`) rather than assumed. Search before
-adding — the reverted commit is not in history because the check happened first.
+### 🔴 The owner's schema rule is binding here
 
-### What T-0005 deliberately did NOT do
+**Real relationships — foreign keys, joins, normalised tables.** And the
+qualifier that matters: **a foreign key cannot carry a tenant predicate.**
+Relationships give integrity; RLS gives isolation; **both are required.** Every
+tenant-owned table still gets `tenant_id`, `ENABLE` + `FORCE ROW LEVEL
+SECURITY`, an explicit `WHERE tenant_id = $1`, and the tenant index baseline.
+`infrastructure/migrations/001_tenancy_foundation.sql` is the worked example.
 
-- **No redirect-to-sign-in.** Unauthenticated visitors get the signed-out shell: no
-  grants, no role, the workspace default tree. Forcing auth would couple all 137
-  Playwright tests to a running Keycloak, API and seeded database — a separate,
-  reviewable change.
-- **No signed-in browser journey.** `SUITE_VIEWER` in `shell-journey.spec.ts` is `null`,
-  which is what the suite's browser actually has. The §46–§49 role trees are covered by
-  unit tests against fixture viewers, but no browser test drives a real session yet.
+### Definition of complete (`05.txt` §6)
 
-### A consequence you will see immediately
-
-**The admin app renders a blank sidebar when signed out.** Every group in that tree is
-gated behind `platform.admin`, so an unauthenticated viewer correctly sees nothing. This
-was invisible before, because the demo viewer held that grant. It is correct — nothing
-leaks — but it looks broken, and it is the strongest argument for redirect-to-sign-in on
-that app specifically. Pinned by `a signed-out viewer is shown NOTHING in the
-platform-admin workspace`.
+Migration runs · backend rule exists · API works · page renders with
+loading/empty/error/permission states · permissions enforced · tests pass ·
+lint + typecheck pass · Playwright journey passes · responsive checked · docs
+updated · **no paid dependency** · committed.
 
 ---
 
-## 2. Render deploy — BLOCKED on a silent `next build` failure
+## Two things that are NOT blockers but must not be forgotten
 
-`autoworkshop.aiappinvent.com` is **not live**. See `.claude/SESSION_HANDOVER.md` for the
-full diagnostic trail and the ranked plan. Short version:
+**Production is down** — Render suspended it, `suspenders: ['billing']`, and it
+cannot be resumed through the API. Owner action. Phase 4 does not need it: the
+whole stack runs locally. Detail in `docs/13-operations/LIVE-OUTAGE-2026-07-28.md`.
 
-Everything except the build works. DNS is correct, the service exists with the right
-config, the custom domain is attached. **Six deploys failed identically**: `next build`
-exits **1** immediately after "Skipping linting", with **completely empty stderr**.
-
-Ruled out by measurement, not by guesswork:
-- **Not memory** — the builder reports 48 CPUs, 95 GB RAM, an 8 GB cgroup limit, and the
-  exit code is 1, not 137.
-- **Not the worker pool** — `experimental.cpus: 1` changed nothing.
-- **Not lint or type-checking** — skipping both moved the failure without fixing it.
-- **Not sharp** — `require('sharp')` was tested directly on the builder.
-- **Not the code** — a fresh clone of `master` built cleanly with Render's exact install
-  and build commands.
-
-Two of those six attempts were fixes for wrong diagnoses. The heap cap was removed;
-`experimental.cpus: 1` is **still in all seven `next.config.mjs` and should come out**
-once the real cause is known.
-
-**Next move: run the identical build in GitHub Actions on Ubuntu.** Free for public
-repos, Linux like Render, and Actions does not swallow stderr. It either succeeds —
-proving the fault is Render-specific — or finally prints the error.
-
-## Definition of complete (`05.txt` §6)
-
-Migration runs · backend rule exists · API works · page renders with loading/empty/error/
-permission states · permissions enforced · tests pass · lint + typecheck pass · Playwright
-journey passes · responsive checked · docs updated · **no paid dependency introduced** ·
-committed.
+**Playwright's full suite has not run** since these changes — only the identity
+journey (2/2). The other six apps have stale `.next` builds on disk, so rebuild
+before trusting any run of it.

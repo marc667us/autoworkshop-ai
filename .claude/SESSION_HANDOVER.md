@@ -1,5 +1,167 @@
 # Session handover
 
+## 2026-07-28 — findings 5 + 4 closed and gated · THE FIRST DATA-BACKED SCREEN · production suspended
+
+**Tip `9b29ebd` on `master`, pushed, tree clean.**
+Read this, then `.claude/TASK_QUEUE.md`, then `docs/13-operations/LIVE-OUTAGE-2026-07-28.md`.
+
+---
+
+### ▶ YOU ARE HERE — the next session starts at this exact point
+
+**T-0005 findings 5 and 4 are CLOSED and fully gated. The first screen that
+reads real data has SHIPPED. The next task is PHASE 4 — Customer + Vehicle
+(Release 0.3).** Nothing is blocked by the production outage: Phase 4 is built
+and tested entirely against the local stack.
+
+#### 1. Confirm where you are
+
+```bash
+cd /c/Users/USER/Documents/autoworkshop-ai
+git log --oneline -3                            # expect 9b29ebd at the tip
+docker ps --format "{{.Names}}\t{{.Status}}"    # aw-keycloak must say (healthy)
+```
+
+Keycloak hangs rather than exits when it dies, so `docker restart aw-keycloak`
+IS the repair. If Postgres was restarted at any point, restart Keycloak after it.
+
+#### 2. Bring the stack up and re-prove the screen that already works
+
+Build on something proven, not assumed. **Rebuild both — a stale `dist` cost an
+hour this session.**
+
+```bash
+# dev identities (idempotent; both already exist)
+bash scripts/seed-dev-identity.sh                                   # technician
+DEV_USER_ROLE=platform_administrator DEV_USER_EMAIL=admin@autoworkshop.local \
+  bash scripts/seed-dev-identity.sh                                 # platform admin
+
+# API
+cd apps/api && rm -rf dist && ./node_modules/.bin/nest build && cd ../..
+set -a && . ./.env && set +a && (cd apps/api && node dist/main.js &)
+
+# admin-web
+cd apps/admin-web && rm -rf .next && ./node_modules/.bin/next build
+AUTH_SECRET='local_dev_only_2SbQ8vJmK4pR7wZxN1cT6yH9gL0aE3dU' \
+AUTH_URL='http://localhost:3006' API_BASE_URL='http://localhost:4000' \
+KEYCLOAK_URL='http://localhost:8080' KEYCLOAK_REALM='autoworkshop' \
+  ./node_modules/.bin/next start -p 3006
+```
+
+Open `http://localhost:3006/directory/organizations`, sign in as
+`admin@autoworkshop.local` / `Change_me_locally1!`.
+
+**Expected: `Alpha Motors` ONLY, caption "1 organisation".** Postgres holds two
+organisations; `Beta Auto` is Tenant B and must not appear. **If both appear,
+tenant isolation has regressed — stop everything, that is Severity-1.**
+
+#### 3. Then build Phase 4
+
+Copy `apps/admin-web/app/directory/organizations/page.tsx` and
+`packages/next-shell/src/api.ts`. The order that works:
+
+1. **Migration first** — `infrastructure/migrations/004_*.sql`, customer + vehicle.
+2. **Domain service** on the `OrganizationService` shape — rules in the service,
+   never the controller, so an MCP tool gets the same rules.
+3. **Controller** under `/api/v1`, thin, `@UseGuards(TenantGuard)`.
+4. **Page** — `requireWorkspaceAccess()` as the FIRST statement, all four states.
+5. **Verify by signing in and looking**, not by the unit suite alone.
+
+##### 🔴 OWNER RULE, BINDING ON THIS SCHEMA (2026-07-27, restated 07-28)
+
+**Use real relationships: foreign keys, joins, normalised tables.** With the
+qualifier that matters — **a foreign key cannot carry a tenant predicate.**
+Relationships give integrity, RLS gives isolation, **both are required**. So
+every tenant-owned table still gets `tenant_id`, `ENABLE` + `FORCE ROW LEVEL
+SECURITY`, an explicit `WHERE tenant_id = $1` in the query, and the tenant index
+baseline. Migration 001 and `identity.organizations` are the worked examples.
+
+---
+
+### 🔴 Production is DOWN — owner action, not a code problem
+
+| | |
+|---|---|
+| `autoworkshop.aiappinvent.com` | **503**, in <0.5 s — NOT a cold start |
+| `srv-d9ju49id0e5s7389fjlg` | `suspended`, **`suspenders: ['billing']`** |
+| Resume | `POST /resume` → **400** `"only services suspended by a user can be resumed"` |
+| Staging `srv-d9jun8m417fc73dore50` | **DELETED** on owner approval — `DELETE 204`, `GET` after → 404 |
+
+**A billing suspension cannot be lifted through the API.** Deleting staging
+stopped future consumption of the free allowance; it cannot restore a consumed
+one, and production stayed 503 across ten checks 20 s apart.
+
+**The reason is UNKNOWN and I could not obtain it.** `GET /v1/owners/{id}`
+returns **200 with an empty object** — the key reads services and exposes no
+billing detail. ⚠️ **Do not state free-instance-hour exhaustion as fact.** That
+is inference; the account also carries Solar's *paid* Postgres, so a payment
+issue fits the same evidence. Only the Render dashboard distinguishes them.
+
+**Not caused by any 07-28 commit** — `checks` and `image` pass on all of them.
+The Release failure is the deploy step hitting a suspended target; it clears
+itself with no code change. Re-run Release once production serves.
+
+Offered but NOT done: delete the retired node service `srv-d9jsliu7r5hc73b1kncg`
+— never deployed, never served, domain detached.
+
+---
+
+### The session, in order
+
+| # | What happened | Commit |
+|---|---|---|
+| 1 | Read the resume pointer. Schedule: finding 5 → finding 4 → T-0016/17 → Phase 4 | — |
+| 2 | **Finding 5** — `1d10bd5` left `revokeRefreshToken()` typechecking, untested, **called by nothing**. Wired `performSignOut()` (revoke → clear cookie → end SSO session; the ORDER is load-bearing), 7 per-app server actions, `AccountControl` in the top bar. Proved by A/B refresh grant: **200 without sign-out, 400 `invalid_grant` with** | `32e5f50` |
+| 3 | Found while proving it: the session cookie name came from `NODE_ENV` but Auth.js picks it from the URL **scheme** — over http a signed-in user resolved to **nobody**, silently. And `viewerLabels(null).userLabel` was the string `Sign in`, so the control offered **Sign out to anonymous visitors** | — |
+| 4 | **Codex gate** — 2 MEDIUM, both real: non-secure cookie name first = session fixation on https; sign-out must not depend on `/me` | `39396ef` |
+| 5 | **Supervisor gate, run independently** — 3 MORE that Codex missed. Worst: logout sent no `client_id`, so after any refresh dropping the id token, sign-out clears the cookie, reports success and **leaves the Keycloak session alive** | `6725b14` |
+| 6 | **Finding 4** — gated in the layout, then **probed my own fix and found it wrong**: signed out, the DOM showed only the denial but the page's server component **EXECUTED** and its output shipped in the **RSC flight payload**. So: layout gate for chrome/enumeration + `requireWorkspaceAccess()` per page for data + `check-page-gates.sh` as a build gate | `a7d2fa5` |
+| 7 | **Codex on the guardrail** — it was satisfied by an *import line*. Made strict, 9/9 self-test | `9560c7a` |
+| 8 | *"Run full test on the live site"* → production **and** staging 503. `render-status.yml` had been probing the **retired** service and reported healthy | `aba2f7b`, `44100e3` |
+| 9 | Owner: *"yes drop"* → deleted staging behind a dry-run gate with a name assertion; removed the staging gate from `release.yml` and wrote down what protection that costs. Resume attempted; Render refused | `a22fd5f`, `cd3e610`, `f617d4d` |
+| 10 | Owner: *"no front end to access the back end"* / *"no feature"* → measured: 8 endpoints, front end called **one**. Built `apiGet()` + the Organizations screen. Verified signed-in: **2 orgs in Postgres, 1 rendered** | `9b29ebd` |
+
+Gates: `typecheck 15/15 · lint 15/15 · unit 149 · identity journey 2/2 · page-gate guardrail 9/9`.
+
+---
+
+### Traps this session paid for — do not relearn them
+
+- **Stale build artifacts, three times.** `apps/api/dist` predating a security
+  fix made `/me` 500 then 401 and read like an auth bug. `rm -rf` `.next`/`dist`
+  and kill old servers **before** verifying anything.
+- **Do NOT kill `wslrelay.exe`.** I did; it severed Docker's host port
+  forwarding, so Keycloak and Postgres became unreachable from the host while
+  perfectly healthy inside their containers. Repair is `docker restart` per
+  container. A Postgres restart also kills Keycloak — restart it after.
+- **An indented heredoc terminator inside a YAML `run:` block never closes.**
+  The step printed nothing and read like an empty API response.
+- **`trap ... EXIT` fires inside a process-substitution subshell** — it deleted a
+  fixture directory mid-run and surfaced as "No such file or directory" pointing
+  at a line that was correct.
+- **`packages/ui` is framework-free on purpose.** Anything needing `next/*`,
+  `react-dom` or a server action belongs in `packages/next-shell`.
+- **React is pinned to 18.3.1 with Next 15** — a form action works at runtime but
+  has no React 18 type. The cast in `AccountControl.tsx` is deliberate; delete it
+  if React goes to 19.
+- **Vitest cannot resolve `next/server`** in `packages/auth`, so anything
+  importing `next-auth` cannot be imported from `tokens.test.ts`. That is why
+  `origin.ts` and `logout-url.ts` are separate modules.
+
+### Also open
+
+- **T-0016** switchers, **T-0017** panels — both visible to the owner.
+- **T-0033** — `AUTH_URL` absent from `render.yaml`; a probable `workshop-web`
+  realm/origin mismatch (`render.yaml` deploys it at
+  `autoworkshop.aiappinvent.com` while that client's allow-list has
+  `workshop.autoworkshop.aiappinvent.com`); no audit event on logout, which
+  CLAUDE.md §9/§16 require.
+- **`RENDER_API_KEY` still unrotated** from the transcript leak.
+- **Playwright full suite not re-run** since these changes — only the identity
+  journey (2/2). The other six apps have stale `.next` builds on disk.
+
+---
+
 ## 2026-07-27 (pt2) — T-0005 sessions + Render deploy blocked
 
 **Tip `0b678b5` on `master`, pushed, tree clean.** Read `.claude/NEXT_SESSION_SCHEDULE.md`

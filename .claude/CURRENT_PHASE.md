@@ -1,6 +1,14 @@
 # Current phase
 
-**Phase 3 — Application shell and navigation** · Release **0.2** · ✅ COMPLETE (2026-07-27)
+**▶ PHASE 4 — Customer + Vehicle · Release 0.3 · STARTING (not yet begun)**
+as of 2026-07-28. Phase 3 closed; T-0005 findings 5 and 4 are shut and gated,
+and the first screen that reads real data shipped
+() — copy that pattern.
+Read  first.
+
+---
+
+## Previous — Phase 3 — Application shell and navigation · Release **0.2** · ✅ COMPLETE (2026-07-27)
 (Phase 1 / Release 0.1 ✅ complete and tagged `v0.1.0`; Phase 2 identity partially complete —
 see `TASK_QUEUE.md` for exactly which parts.)
 
