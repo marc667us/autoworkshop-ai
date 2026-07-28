@@ -121,3 +121,35 @@ jobs:
               print(f\" - {d.get('id')}  {d.get('status'):<12} commit={c or 'n/a'}  finished={d.get('finishedAt')}\")
               if d.get('status') not in ('live','build_in_progress','update_in_progress'):
                   print(f\"     trigger={d.get('trigger')}\")"
+
+      # WHY is the service suspended? The service object says only
+      # `suspenders: ['billing']`, which does not distinguish "the account's free
+      # instance-hour allowance is spent" from "a payment failed". The remedies
+      # differ completely and the 503 is identical, so the account object is
+      # asked directly rather than inferred from arithmetic.
+      #
+      # READ-ONLY, and scoped to the OWNER of the AutoWorkshop service — it reads
+      # no other service and cannot reach the Solar application (ADR-011).
+      - name: Account state (read-only)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          OWNER="$(python3 -c "import json;print(json.load(open('svc.json'))['ownerId'])")"
+          echo "ownerId: $OWNER"
+          code="$(curl -s -o owner.json -w '%{http_code}'             -H "Authorization: Bearer $RENDER_API_KEY"             "https://api.render.com/v1/owners/${OWNER}")"
+          echo "GET /owners/$OWNER -> $code"
+          if [ "$code" = "200" ]; then
+            python3 - <<'PY2'
+          import json
+          d = json.load(open('owner.json'))
+          o = d.get('owner', d)
+          for k in sorted(o.keys()):
+              if k in ('email',):
+                  continue  # not printed: it is the owner's address, not a fact about the outage
+              print(f"{k:24}: {o[k]}")
+          PY2
+          else
+            head -c 300 owner.json || true; echo ""
+            echo "::warning::owner endpoint not readable with this key — the account reason cannot be fetched here"
+          fi
