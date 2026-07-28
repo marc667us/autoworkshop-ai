@@ -13,6 +13,9 @@ GUARDRAIL_RC=0
 ./scripts/guardrails/lint-shell-idioms.sh || GUARDRAIL_RC=1
 echo ""
 PYTHONIOENCODING=utf-8 python scripts/guardrails/verify_claims.py || GUARDRAIL_RC=1
+# A concrete page.tsx is resolved ahead of the catch-all and so carries no gate
+# of its own. T-0005 finding 4 was exactly that hole.
+./scripts/guardrails/check-page-gates.sh || GUARDRAIL_RC=1
 if [ "$GUARDRAIL_RC" -ne 0 ]; then
   echo ""
   echo "GUARDRAILS FAILED — stopping before the Codex pipeline."

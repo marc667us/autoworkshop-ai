@@ -15,4 +15,6 @@ export { currentViewer, viewerGrants, viewerRole } from './viewer';
  */
 export { grantsFor, navRoleFor, viewerLabels, NO_GRANTS } from './viewer-contract';
 export { viewerHasSession } from './viewer';
+export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
+export { requireWorkspaceAccess } from './require-access';
 export type { ViewerDescription, ViewerLabels } from './viewer-contract';

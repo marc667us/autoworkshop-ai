@@ -11,10 +11,26 @@ import { auth } from './auth';
  * null a few minutes into every session, with the shell quietly degrading to
  * its signed-out state.
  *
- * It does NOT gate access. An unauthenticated visitor still reaches the shell
- * and sees the ungated navigation; the API and Postgres RLS are what deny.
- * Redirect-to-sign-in is a deliberate later step (see the handover): forcing it
- * here would couple the whole Playwright suite to a running Keycloak and API.
+ * IT DOES NOT GATE ACCESS, AND DELIBERATELY SO — but read the next paragraph
+ * before concluding that nothing does. Gating here would mean resolving the
+ * viewer's grants inside middleware, which runs on the Edge runtime and would
+ * put a `/me` round trip in front of every request including static-ish ones.
+ *
+ * THE GATE FOR THIS WORKSPACE IS IN `app/layout.tsx` (T-0005 finding 4). It
+ * calls `workspaceGate(viewer, 'platform.admin')` and, when that fails, renders
+ * a denial in place of `children` — so the page's server component never
+ * executes. A layout wraps every route in the segment, so unlike the previous
+ * arrangement (route-tree filtering inside `renderModulePage`) a concrete
+ * `app/<group>/<item>/page.tsx` cannot slip past it by Next's route precedence.
+ * That bypass is what finding 4 was.
+ *
+ * Neither is the real control: the API's `TenantGuard` and Postgres RLS deny
+ * independently, and must (CLAUDE.md §8, "Hidden ≠ secure").
+ *
+ * Redirect-to-sign-in remains a deliberate later step (see the handover):
+ * forcing it here would couple the whole Playwright suite to a running Keycloak
+ * and API. The layout gate needs neither — signed out, it renders a "Sign in to
+ * continue" state and nothing else.
  *
  * The matcher is written out rather than imported because Next requires
  * `config` to be statically analysable — an imported constant is not. It is the

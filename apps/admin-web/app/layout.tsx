@@ -6,6 +6,8 @@ import {
   navRoleFor,
   viewerLabels,
   viewerHasSession,
+  hasWorkspaceAccess,
+  WorkspaceAccessDenied,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction } from './sign-out-action';
@@ -38,6 +40,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     viewerHasSession('admin'),
   ]);
 
+  // T-0005 finding 4 — THE GATE, and it is here rather than in a page because a
+  // layout wraps every route in the segment and a concrete `page.tsx` cannot
+  // escape it by Next's route precedence. `02.txt` §32: the whole platform
+  // administration workspace is "visible only to" platform administrators, and
+  // every group in its navigation is gated on `platform.admin`.
+  //
+  // A DISPLAY gate — measured, not assumed: Next still renders the matched page
+  // segment and ships it in the RSC payload even when this layout does not put
+  // `children` in its output. So it stops enumeration in the DOM; each concrete
+  // page protects its own data with `requireWorkspaceAccess()`. Neither is the
+  // control — the API and RLS deny independently (CLAUDE.md §8).
+  const mayEnter = hasWorkspaceAccess(viewer, 'platform.admin');
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -67,7 +82,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             { id: 'help', label: 'Help and support', icon: 'help' },
           ]}
         >
-          {children}
+          {mayEnter ? children : <WorkspaceAccessDenied signedIn={signedIn} />}
         </WorkspaceShell>
       </body>
     </html>
