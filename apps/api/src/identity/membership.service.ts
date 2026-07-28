@@ -84,8 +84,13 @@ export class MembershipService {
 
   async list(ctx: TenantContext, filter: { userId?: string; organizationId?: string } = {}) {
     return this.db.withTenant(ctx, async (client) => {
-      const where: string[] = [];
-      const values: unknown[] = [];
+      // CLAUDE.md §6: the application filters AND RLS backstops it. Seeded
+      // rather than appended, so the tenant predicate cannot go missing when
+      // no other filter is supplied -- and so a platform administrator, whom
+      // the RLS policy permits across tenants, still gets the ONE tenant this
+      // request resolved to.
+      const values: unknown[] = [ctx.tenantId];
+      const where: string[] = ['tenant_id = $1'];
       if (filter.userId) {
         values.push(filter.userId);
         where.push(`user_id = $${values.length}`);
@@ -150,8 +155,8 @@ export class MembershipService {
       // Both lookups work because those tables are under FORCE RLS: a row in
       // another tenant is simply invisible here and returns nothing.
       const org = await client.query(
-        `SELECT 1 FROM identity.organizations WHERE id = $1`,
-        [input.organizationId],
+        `SELECT 1 FROM identity.organizations WHERE id = $1 AND tenant_id = $2`,
+        [input.organizationId, ctx.tenantId],
       );
       if (org.rows.length === 0) throw new NotFoundException('organization not found');
 
@@ -161,8 +166,9 @@ export class MembershipService {
         // existence check while scoping the membership to the wrong site,
         // which §50's "approved role and branch" rule forbids.
         const branch = await client.query(
-          `SELECT 1 FROM identity.branches WHERE id = $1 AND organization_id = $2`,
-          [input.branchId, input.organizationId],
+          `SELECT 1 FROM identity.branches
+              WHERE id = $1 AND organization_id = $2 AND tenant_id = $3`,
+          [input.branchId, input.organizationId, ctx.tenantId],
         );
         if (branch.rows.length === 0) throw new NotFoundException('branch not found');
       }
@@ -250,8 +256,9 @@ export class MembershipService {
             SET status = $2, updated_at = now(), updated_by = $3
           WHERE id = $1
             AND status = 'active'
+            AND tenant_id = $4
         RETURNING id, organization_id, branch_id, user_id, role_name, status, created_at`,
-        [id, status, ctx.userId],
+        [id, status, ctx.userId, ctx.tenantId],
       );
       const row = res.rows[0];
       if (!row) {

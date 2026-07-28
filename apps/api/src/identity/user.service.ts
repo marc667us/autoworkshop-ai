@@ -63,8 +63,10 @@ export class UserService {
            FROM identity.memberships m
            JOIN identity.users u ON u.id = m.user_id
           WHERE m.status = 'active'
+            AND m.tenant_id = $1
           GROUP BY u.id, u.email, u.display_name, u.phone, u.preferred_locale, u.status
           ORDER BY u.display_name`,
+        [ctx.tenantId],
       );
       return res.rows.map(this.toDomain);
     });
@@ -92,8 +94,9 @@ export class UserService {
            JOIN identity.users u ON u.id = m.user_id
           WHERE u.id = $1
             AND m.status = 'active'
+            AND m.tenant_id = $2
           GROUP BY u.id, u.email, u.display_name, u.phone, u.preferred_locale, u.status`,
-        [id],
+        [id, ctx.tenantId],
       );
       const row = res.rows[0];
       if (!row) throw new NotFoundException('user not found');

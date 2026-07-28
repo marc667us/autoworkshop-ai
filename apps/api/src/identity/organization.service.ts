@@ -31,14 +31,22 @@ export class OrganizationService {
 
   async list(ctx: TenantContext): Promise<Organization[]> {
     return this.db.withTenant(ctx, async (client) => {
-      // No explicit tenant filter is written here — RLS applies it. The
-      // application filter is still enforced at the repository layer for
-      // defence in depth; this query is deliberately left bare to prove the
-      // database backstop works (see tests/tenant-isolation/rls_proof.sql).
+      // CLAUDE.md §6 requires BOTH layers: the application filters, and RLS is
+      // the backstop. This query used to be left bare with a comment claiming
+      // the repository layer filtered it — there is no such layer, so RLS was
+      // the only control.
+      //
+      // That was not merely a policy breach. The RLS policy reads
+      // `is_platform_admin() OR tenant_id = current_tenant_id()`, so for a
+      // platform administrator a bare query returns EVERY tenant's
+      // organizations from an endpoint scoped to one. The explicit predicate is
+      // what makes this endpoint mean the same thing for every role.
       const res = await client.query(
         `SELECT id, name, org_type, status, created_at
            FROM identity.organizations
+          WHERE tenant_id = $1
           ORDER BY name`,
+        [ctx.tenantId],
       );
       return res.rows.map(this.toDomain);
     });
@@ -48,8 +56,8 @@ export class OrganizationService {
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT id, name, org_type, status, created_at
-           FROM identity.organizations WHERE id = $1`,
-        [id],
+           FROM identity.organizations WHERE id = $1 AND tenant_id = $2`,
+        [id, ctx.tenantId],
       );
       const row = res.rows[0];
       if (!row) {

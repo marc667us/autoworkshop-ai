@@ -58,8 +58,9 @@ export class MeService {
            FROM identity.memberships m
            JOIN identity.users u ON u.id = m.user_id
           WHERE u.id = $1
+            AND m.tenant_id = $2
           LIMIT 1`,
-        [ctx.userId],
+        [ctx.userId, ctx.tenantId],
       );
 
       // Memberships visible in the ACTIVE tenant, with the names the switchers
@@ -77,8 +78,9 @@ export class MeService {
       LEFT JOIN identity.branches b      ON b.id = m.branch_id
           WHERE m.user_id = $1
             AND m.status = 'active'
+            AND m.tenant_id = $2
           ORDER BY o.name, b.name NULLS FIRST`,
-        [ctx.userId],
+        [ctx.userId, ctx.tenantId],
       );
 
       const row = profile.rows[0];

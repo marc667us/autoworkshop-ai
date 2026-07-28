@@ -56,14 +56,16 @@ export class BranchService {
         ? await client.query(
             `SELECT id, organization_id, name, location, operating_hours, status, created_at
                FROM identity.branches
-              WHERE organization_id = $1
+              WHERE organization_id = $1 AND tenant_id = $2
               ORDER BY name`,
-            [organizationId],
+            [organizationId, ctx.tenantId],
           )
         : await client.query(
             `SELECT id, organization_id, name, location, operating_hours, status, created_at
                FROM identity.branches
+              WHERE tenant_id = $1
               ORDER BY name`,
+            [ctx.tenantId],
           );
       return res.rows.map(this.toDomain);
     });
@@ -73,8 +75,8 @@ export class BranchService {
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT id, organization_id, name, location, operating_hours, status, created_at
-           FROM identity.branches WHERE id = $1`,
-        [id],
+           FROM identity.branches WHERE id = $1 AND tenant_id = $2`,
+        [id, ctx.tenantId],
       );
       const row = res.rows[0];
       if (!row) {
@@ -117,8 +119,8 @@ export class BranchService {
       // here, so it returns no row. The check is the join, not a comparison we
       // could get wrong.
       const parent = await client.query(
-        `SELECT 1 FROM identity.organizations WHERE id = $1`,
-        [input.organizationId],
+        `SELECT 1 FROM identity.organizations WHERE id = $1 AND tenant_id = $2`,
+        [input.organizationId, ctx.tenantId],
       );
       if (parent.rows.length === 0) {
         // 404, not 403 — same non-oracle reasoning as findById.
