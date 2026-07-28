@@ -38,7 +38,22 @@ import { themeVar, primitive } from '@autoworkshop/design-tokens';
  */
 
 export interface AccountControlProps {
-  /** The signed-in user's display name. Absent means nobody is signed in. */
+  /**
+   * Whether a SESSION exists — the only input that decides Sign in vs Sign out.
+   *
+   * ⚠️ NOT derived from `userLabel`, and that separation is Codex finding M2.
+   * The label comes from `GET /api/v1/me`; the session comes from the cookie.
+   * When the API is down the first is absent and the second is still live, and
+   * an earlier revision read the missing label as "signed out" — showing Sign IN
+   * to someone who held a valid Keycloak session and giving them no way to end
+   * it. A display value must never stand in for an authentication fact.
+   */
+  signedIn?: boolean;
+  /**
+   * The signed-in user's display name, for the accessible name only. It may be
+   * absent while `signedIn` is true — that is an API outage, not a signed-out
+   * viewer, and sign-out must still work.
+   */
   userLabel?: string;
   /**
    * Server action that revokes the refresh token, clears the cookie and ends
@@ -66,7 +81,7 @@ const CONTROL_STYLE: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-export function AccountControl({ userLabel, signOutAction, signInHref }: AccountControlProps) {
+export function AccountControl({ signedIn, userLabel, signOutAction, signInHref }: AccountControlProps) {
   // Sign-out is a redirect chain through Keycloak, so it is slow enough to be
   // double-clicked. A second submit would post after the cookie is already
   // gone, find no refresh token, and log "not revoked" for a failure that did
@@ -74,7 +89,7 @@ export function AccountControl({ userLabel, signOutAction, signInHref }: Account
   // matters. `useFormStatus` would be the React 19 way; this is the React 18 one.
   const [submitting, setSubmitting] = React.useState(false);
 
-  if (userLabel && signOutAction) {
+  if (signedIn && signOutAction) {
     return (
       <form
         // See the header note on why this cast exists and when to remove it.
@@ -85,11 +100,11 @@ export function AccountControl({ userLabel, signOutAction, signInHref }: Account
         <button
           type="submit"
           disabled={submitting}
-          // The accessible name says WHO is being signed out. On a shared
-          // workshop terminal the whole risk is signing out of the wrong
-          // session, and the user chip that would otherwise say so is hidden
-          // below 768px.
-          aria-label={`Sign out of ${userLabel}`}
+          // Names WHO is being signed out — on a shared workshop terminal the
+          // whole risk is ending the wrong session, and the user chip that
+          // would otherwise say so is hidden below 768px. Falls back to a bare
+          // "Sign out" when `/me` is unreachable rather than inventing a name.
+          aria-label={userLabel ? `Sign out of ${userLabel}` : 'Sign out'}
           style={{
             ...CONTROL_STYLE,
             opacity: submitting ? 0.6 : 1,
@@ -102,11 +117,10 @@ export function AccountControl({ userLabel, signOutAction, signInHref }: Account
     );
   }
 
-  // No `userLabel` means no session. A sign-in link is rendered only when the
-  // caller says where to go — the shell must not invent an auth route, and an
-  // unfinished control is rendered as nothing rather than as a dead button
-  // (TopNav's rule).
-  if (!userLabel && signInHref) {
+  // No session. The sign-in link is rendered only when the caller says where to
+  // go — the shell must not invent an auth route, and an unfinished control
+  // renders as nothing rather than as a dead button (TopNav's rule).
+  if (!signedIn && signInHref) {
     return (
       <a href={signInHref} style={CONTROL_STYLE}>
         Sign in

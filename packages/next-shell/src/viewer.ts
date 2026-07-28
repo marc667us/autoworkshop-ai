@@ -65,6 +65,22 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
   }
 });
 
+/**
+ * Is anyone signed in? Answered from the SESSION COOKIE, not from `/me`.
+ *
+ * Kept separate from `currentViewer()` on purpose (Codex finding M2). The
+ * viewer is what the API says about a person; the session is whether there is a
+ * person at all. When the API is unreachable `currentViewer()` correctly
+ * degrades to null — but treating that as "signed out" removed the Sign out
+ * button from someone holding a live Keycloak session, during exactly the
+ * incident when ending a session matters most.
+ *
+ * Costs nothing extra: no network call, just the cookie already on the request.
+ */
+export async function viewerHasSession(workspaceId: WorkspaceId | string): Promise<boolean> {
+  return workspaceAuth(workspaceId).hasSession();
+}
+
 /** The viewer, or `null` when nobody is signed in. */
 export async function currentViewer(
   workspaceId: WorkspaceId | string,

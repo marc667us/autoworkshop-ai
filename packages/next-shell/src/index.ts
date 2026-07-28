@@ -14,4 +14,5 @@ export { currentViewer, viewerGrants, viewerRole } from './viewer';
  * model it is meant to guard.
  */
 export { grantsFor, navRoleFor, viewerLabels, NO_GRANTS } from './viewer-contract';
+export { viewerHasSession } from './viewer';
 export type { ViewerDescription, ViewerLabels } from './viewer-contract';

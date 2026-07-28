@@ -75,6 +75,21 @@ export interface WorkspaceAuth {
    */
   getAccessToken: () => Promise<string | null>;
   /**
+   * Is there a decryptable session cookie for this workspace?
+   *
+   * Distinct from `getAccessToken()` in two ways that matter: it does NOT care
+   * whether the access token has expired, and it makes no network call.
+   *
+   * It exists because "can this viewer sign out" and "can this viewer be
+   * described" are different questions, and conflating them stranded users
+   * (Codex finding M2). The shell's labels come from `GET /api/v1/me`; when the
+   * API is down that returns nothing, the viewer resolves to null, and a viewer
+   * with a perfectly live Keycloak session was shown a Sign IN button and no way
+   * out. An API outage must not remove the ability to end a session — that is
+   * exactly when someone is most likely to want to.
+   */
+  hasSession: () => Promise<boolean>;
+  /**
    * End the session for real: revoke the refresh token at Keycloak, then
    * return the URL that ends the Keycloak SSO session.
    *
@@ -265,6 +280,14 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       return keycloak.accessToken;
     },
 
+    async hasSession() {
+      // Deliberately does NOT check expiry. An expired access token still has a
+      // refresh token to revoke and a Keycloak SSO session to end, so sign-out
+      // is still the right offer — and still does real work.
+      const token = await readSessionToken({ headers: await headers() });
+      return token?.keycloak !== undefined;
+    },
+
     async signOutCompletely(postLogoutRedirect: string) {
       // Reads the cookie the same way getAccessToken does, and for the same
       // reason: the session object deliberately carries no tokens, so the JWT
@@ -297,45 +320,72 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
 }
 
 /**
- * Read and decrypt the session JWT, trying BOTH cookie names.
+ * Is this request being served over https?
  *
- * WHY THIS IS NOT A GUESS ANY MORE. Auth.js picks the cookie name from the
- * SCHEME of the resolved URL: `authjs.session-token` over http,
- * `__Secure-authjs.session-token` over https. The previous implementation
- * derived it from `NODE_ENV === 'production'` instead, and those two agree only
- * by coincidence — on the deployed site, where production and https happen to
- * coincide.
+ * The same question Auth.js asks to decide the session cookie's name, answered
+ * the same way: `AUTH_URL` when it is set (it is, per service), otherwise the
+ * proxy's `x-forwarded-proto`. Nothing here consults `NODE_ENV` — see below.
+ */
+function isSecureRequest(req: { headers: Headers }): boolean {
+  const configured = process.env['AUTH_URL'];
+  if (configured) return configured.startsWith('https://');
+  // Render and every reverse proxy set this. It may be a comma-separated list
+  // when several proxies are chained; the FIRST entry is the client's scheme.
+  const proto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  return proto === 'https';
+}
+
+/**
+ * Read and decrypt the session JWT under the cookie name this request's SCHEME
+ * implies — falling back to the other name ONLY on plain http.
+ *
+ * WHY THE SCHEME AND NOT `NODE_ENV`. Auth.js names the cookie
+ * `authjs.session-token` over http and `__Secure-authjs.session-token` over
+ * https. The previous implementation derived it from `NODE_ENV === 'production'`
+ * instead, and those two agree only by coincidence — on the deployed site, where
+ * production and https happen to coincide.
  *
  * THEY DISAGREE ON EVERY PRODUCTION BUILD SERVED OVER HTTP, which is what
- * `next start` is locally and what any http deployment would be. Measured: a
- * genuine Keycloak login set `authjs.session-token.0/.1`, `/api/auth/session`
- * reported the signed-in user, and `getAccessToken()` returned null the whole
- * time because it was looking for `__Secure-…`. The shell rendered "Not signed
- * in" to a signed-in user, `viewerGrants()` returned none, and nothing anywhere
- * logged an error. This is the failure mode where a check reads correct while
- * the mechanism is inert.
+ * `next start` is locally. Measured: a genuine Keycloak login set
+ * `authjs.session-token.0/.1`, `/api/auth/session` reported the signed-in user,
+ * and `getAccessToken()` returned null the whole time because it was looking for
+ * `__Secure-…`. The shell rendered "Not signed in" to a signed-in user,
+ * `viewerGrants()` returned none, and nothing logged an error — a check reading
+ * correct while the mechanism is inert.
  *
- * TRYING BOTH IS SAFE, and safer than deriving the right one. The cookie name is
- * the decryption SALT, so the wrong name cannot yield a valid token — it yields
- * null. There is no path where this reads one user's session as another's; the
- * only outcomes are "the real session" and "nothing".
+ * ⚠️ WHY HTTPS NEVER FALLS BACK — Codex finding M1, and it is a real attack, not
+ * a tidiness point. An earlier revision of this function tried the NON-secure
+ * name first and accepted whichever decrypted. The `__Secure-` prefix exists
+ * precisely because a plain-http origin (a sibling subdomain, a hostile network
+ * on first contact) can write a cookie that an https origin will then send. So
+ * on https, preferring — or even falling back to — the unprefixed name lets an
+ * attacker plant their OWN valid session under `authjs.session-token` and have
+ * the victim's browser adopt it: session fixation, and the victim never sees a
+ * login screen. On https the prefixed cookie is therefore the ONLY one honoured.
  *
- * Chunked cookies (`.0`, `.1`) are handled by `getToken` itself. They are not
- * exotic here: a Keycloak access + refresh + id token set reliably exceeds the
- * 4096-byte cookie limit, so the session is ALWAYS chunked in practice.
+ * The fallback survives on http alone, where no `__Secure-` cookie can exist and
+ * the prefix guarantees nothing anyway. That keeps local development working
+ * without weakening any deployment.
+ *
+ * Chunked cookies (`.0`, `.1`) are reassembled by `getToken` itself — verified,
+ * not assumed. They are not exotic here: a Keycloak access + refresh + id token
+ * set reliably exceeds the 4096-byte cookie limit, so in practice the session is
+ * ALWAYS chunked.
  */
 async function readSessionToken(req: { headers: Headers }) {
+  const secure = isSecureRequest(req);
+  const names = secure ? [true] : [false, true];
+
   // Ask without the secret first — see the note in `getAccessToken`. `getToken`
   // checks for the cookie before it checks for a secret, so a visitor with no
   // session never forces `AUTH_SECRET` to be present.
-  const present = await Promise.all([
-    getToken({ req, secret: '', secureCookie: false, raw: true }),
-    getToken({ req, secret: '', secureCookie: true, raw: true }),
-  ]);
-  if (!present[0] && !present[1]) return null;
+  const present = await Promise.all(
+    names.map((secureCookie) => getToken({ req, secret: '', secureCookie, raw: true })),
+  );
+  if (!present.some(Boolean)) return null;
 
   const secret = authSecret();
-  for (const secureCookie of [false, true]) {
+  for (const secureCookie of names) {
     const token = await getToken({ req, secret, secureCookie });
     if (token) return token;
   }

@@ -78,6 +78,11 @@ export interface WorkspaceShellProps {
   signOutAction?: () => Promise<void>;
   /** Where a signed-out viewer goes to sign in. */
   signInHref?: string;
+  /**
+   * Whether a session cookie exists. Supplied by the layout from
+   * `viewerHasSession()`, NOT inferred from `userLabel` — see AccountControl.
+   */
+  signedIn?: boolean;
   drawer?: React.ReactNode;
 }
 
@@ -94,6 +99,7 @@ export function WorkspaceShell({
   topNavActions,
   signOutAction,
   signInHref,
+  signedIn,
   drawer,
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
@@ -131,7 +137,12 @@ export function WorkspaceShell({
       warnings={warnings}
       topNavActions={topNavActions}
       accountControl={
-        <AccountControl userLabel={userLabel} signOutAction={signOutAction} signInHref={signInHref} />
+        <AccountControl
+          signedIn={signedIn}
+          userLabel={userLabel}
+          signOutAction={signOutAction}
+          signInHref={signInHref}
+        />
       }
       drawer={drawer}
       renderLink={({ href, children: linkChildren, active, title }) => (

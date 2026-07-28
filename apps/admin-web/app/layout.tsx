@@ -5,6 +5,7 @@ import {
   grantsFor,
   navRoleFor,
   viewerLabels,
+  viewerHasSession,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction } from './sign-out-action';
@@ -29,7 +30,13 @@ export const metadata: Metadata = {
  * The API's tenant guard and Postgres RLS deny independently (CLAUDE.md §8).
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const viewer = await currentViewer('admin');
+  // Resolved together: the viewer DESCRIBES the person, the session says whether
+  // there is one. They are separate calls because `/me` can fail while the
+  // session is live, and sign-out must survive that (Codex finding M2).
+  const [viewer, signedIn] = await Promise.all([
+    currentViewer('admin'),
+    viewerHasSession('admin'),
+  ]);
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -50,6 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // client shell that renders the button.
           signOutAction={signOutAction}
           signInHref="/api/auth/signin"
+          signedIn={signedIn}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
             { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
