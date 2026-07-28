@@ -33,12 +33,54 @@ export async function postLogoutOrigin(): Promise<string> {
   const configured = process.env['AUTH_URL'];
   if (configured) return configured.replace(/\/$/, '');
 
+  // ⚠️ AUTH_URL IS NOT ALWAYS SET — `render.yaml` does not set it — so this
+  // fallback is a live code path, not a theoretical one. An earlier version of
+  // this comment asserted the opposite and used that to justify trusting `Host`
+  // without inspection. (Supervisor review, 2026-07-28.)
   const requestHeaders = await headers();
-  const host = requestHeaders.get('host') ?? 'localhost:3000';
+  const host = sanitiseHost(requestHeaders.get('host'));
   // `x-forwarded-proto` is what Render and any reverse proxy set; without it a
   // production sign-out would post back an `http://` URL that is not in the
   // allow-list, and Keycloak would refuse the redirect after already having
   // ended the session — leaving the user on a Keycloak error page, signed out.
-  const proto = requestHeaders.get('x-forwarded-proto') ?? (host.startsWith('localhost') ? 'http' : 'https');
+  const forwarded = requestHeaders.get('x-forwarded-proto');
+  // The LAST entry when proxies chain — the one the terminating proxy added.
+  // The first is the one nearest the client, and therefore the untrusted one.
+  const proto = forwarded
+    ? (forwarded.split(',').pop()?.trim() ?? 'https')
+    : host.startsWith('localhost') || host.startsWith('127.0.0.1')
+      ? 'http'
+      : 'https';
   return `${proto}://${host}`;
+}
+
+/**
+ * Reduce a `Host` header to a bare host[:port], or fail.
+ *
+ * DEFENCE IN DEPTH, because the Keycloak allow-list is currently the ONLY
+ * control on this value and a single control on an attacker-supplied string is
+ * one revision away from being none. `Host: good.example.com:@evil.com` parses
+ * as authority `evil.com` while string-matching a check written against the
+ * prefix — the class of trick that turns "validated elsewhere" into an open
+ * redirect off a post-authentication endpoint.
+ *
+ * `new URL()` does the parsing, so the result is whatever a browser and Keycloak
+ * would actually resolve, not what a regex hopes they resolve. Anything that
+ * will not parse as a plain authority is rejected outright rather than
+ * normalised into something plausible.
+ */
+function sanitiseHost(rawHost: string | null): string {
+  const fallback = 'localhost:3000';
+  if (!rawHost) return fallback;
+  let parsed: URL;
+  try {
+    parsed = new URL(`https://${rawHost}`);
+  } catch {
+    return fallback;
+  }
+  // Credentials, a path, a query or a fragment in a Host header are not a host.
+  if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    return fallback;
+  }
+  return parsed.host;
 }

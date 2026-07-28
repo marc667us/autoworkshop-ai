@@ -81,6 +81,11 @@ export async function refreshAccessToken(
   clientId: string,
   refreshToken: string,
   fetchImpl: typeof fetch = fetch,
+  /**
+   * The id token currently held, kept if the refresh response omits one. See
+   * the note at the return statement — losing it silently breaks sign-out.
+   */
+  previousIdToken?: string,
 ): Promise<KeycloakTokenSet> {
   const response = await fetchImpl(`${keycloakIssuer()}/protocol/openid-connect/token`, {
     method: 'POST',
@@ -110,7 +115,15 @@ export async function refreshAccessToken(
     // undefined on a realm configured differently.
     refreshToken: payload.refresh_token ?? refreshToken,
     expiresAt: Math.floor(Date.now() / 1000) + (payload.expires_in ?? 300),
-    idToken: payload.id_token,
+    // CARRIED FORWARD, like the refresh token above, and for a sharper reason.
+    // The id token is what `id_token_hint` on Keycloak's end-session endpoint is
+    // built from. A refresh response that omits `id_token` would otherwise strip
+    // it from the session PERMANENTLY, and every later sign-out would ask
+    // Keycloak to end a session it can no longer identify. The symptom is a
+    // sign-out that clears the local cookie, reports success, and leaves the SSO
+    // session alive — the shared-terminal takeover this whole change exists to
+    // prevent, arriving minutes after login rather than never.
+    idToken: payload.id_token ?? previousIdToken,
   };
 }
 

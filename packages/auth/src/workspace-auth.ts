@@ -4,6 +4,7 @@ import { getToken } from 'next-auth/jwt';
 import { headers } from 'next/headers';
 import type { WorkspaceId } from '@autoworkshop/navigation';
 import { apiBaseUrl, authSecret, clientIdForWorkspace, keycloakIssuer } from './config';
+import { keycloakSignOutUrl } from './logout-url';
 import {
   isExpired,
   refreshAccessToken,
@@ -226,7 +227,15 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
         }
 
         try {
-          token.keycloak = await refreshAccessToken(clientId, current.refreshToken);
+          token.keycloak = await refreshAccessToken(
+            clientId,
+            current.refreshToken,
+            undefined,
+            // Keep the id token when the realm's refresh response omits one —
+            // without it `id_token_hint` disappears and sign-out stops being
+            // able to end the Keycloak session.
+            current.idToken,
+          );
           delete token.error;
         } catch (err) {
           // Do NOT rethrow: an exception here fails the whole request, taking
@@ -312,7 +321,7 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // because an upstream call failed is left MORE exposed than one whose
       // token outlives the session. The caller audits the difference.
       return {
-        keycloakSignOutUrl: keycloakSignOutUrl(idToken, postLogoutRedirect),
+        keycloakSignOutUrl: keycloakSignOutUrl(idToken, postLogoutRedirect, clientId),
         refreshTokenRevoked,
       };
     },
@@ -327,12 +336,33 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
  * proxy's `x-forwarded-proto`. Nothing here consults `NODE_ENV` — see below.
  */
 function isSecureRequest(req: { headers: Headers }): boolean {
+  // Authoritative when present: configuration, not a header.
   const configured = process.env['AUTH_URL'];
   if (configured) return configured.startsWith('https://');
-  // Render and every reverse proxy set this. It may be a comma-separated list
-  // when several proxies are chained; the FIRST entry is the client's scheme.
-  const proto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
-  return proto === 'https';
+
+  // ⚠️ AUTH_URL IS NOT ALWAYS SET. `render.yaml` does not set it, so treating it
+  // as guaranteed — as an earlier comment here did — put the whole decision on a
+  // header without saying so.
+  //
+  // When several proxies chain, `x-forwarded-proto` becomes a list and the
+  // LAST entry is the one the terminating proxy added; the FIRST is the one
+  // nearest the client, i.e. the untrusted one. Reading `[0]` (as this did) lets
+  // a client-supplied `http` win on a genuine https deployment and downgrade the
+  // cookie name back to the unprefixed one — reinstating the exact session
+  // fixation the scheme check exists to prevent.
+  const forwarded = req.headers.get('x-forwarded-proto');
+  if (forwarded) {
+    const parts = forwarded.split(',');
+    return parts[parts.length - 1]?.trim() === 'https';
+  }
+
+  // No configuration and no proxy header: FAIL SECURE. Only a loopback host is
+  // assumed to be plain http, because that is local development and nothing else
+  // is. Anything else is treated as https, so a missing header can only ever
+  // make the check stricter — never weaker.
+  const host = req.headers.get('host') ?? '';
+  const hostname = host.split(':')[0];
+  return !(hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1');
 }
 
 /**
@@ -412,23 +442,5 @@ export function workspaceAuth(workspaceId: WorkspaceId | string): WorkspaceAuth 
   return existing;
 }
 
-/**
- * The URL that ends the KEYCLOAK session, not just the local cookie.
- *
- * `signOut()` clears this app's cookie and nothing else. The Keycloak SSO
- * session outlives it, so the next sign-in completes silently and the viewer
- * appears never to have been signed out — which on a shared workshop terminal
- * is the whole point of signing out.
- *
- * `id_token_hint` is what lets Keycloak end the session without an interstitial
- * "do you want to log out?" confirmation.
- */
-export function keycloakSignOutUrl(idToken: string | undefined, postLogoutRedirect: string): string {
-  const url = new URL(`${keycloakIssuer()}/protocol/openid-connect/logout`);
-  if (idToken) url.searchParams.set('id_token_hint', idToken);
-  url.searchParams.set('post_logout_redirect_uri', postLogoutRedirect);
-  return url.toString();
-}
-
 /** Re-exported so callers need one import to reach the API. */
-export { apiBaseUrl };
+export { apiBaseUrl, keycloakSignOutUrl };

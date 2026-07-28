@@ -7,6 +7,7 @@ import {
   REFRESH_SKEW_SECONDS,
 } from './tokens';
 import { postLogoutOrigin } from './origin';
+import { keycloakSignOutUrl } from './logout-url';
 
 const NOW = 1_800_000_000;
 
@@ -199,5 +200,54 @@ describe('postLogoutOrigin', () => {
   it('strips a trailing slash so the URL is not built with a double one', async () => {
     process.env['AUTH_URL'] = 'https://autoworkshop.aiappinvent.com/';
     expect(await postLogoutOrigin()).toBe('https://autoworkshop.aiappinvent.com');
+  });
+});
+
+/**
+ * Supervisor review 2026-07-28. Each of these pins a way sign-out could go back
+ * to LOOKING successful while leaving the Keycloak session alive.
+ */
+describe('the id token survives a refresh', () => {
+  it('is carried forward when the realm returns none', async () => {
+    // Without this the id token vanishes on the first refresh that omits it,
+    // `id_token_hint` disappears from the end-session URL, and Keycloak can no
+    // longer identify the session to end. The local cookie still clears, so the
+    // sign-out reports success — and the next person at a shared terminal signs
+    // in silently as the previous one.
+    const impl = (async () =>
+      ({ ok: true, status: 200, json: async () => ({ access_token: 'a', expires_in: 300 }) }) as unknown as Response) as unknown as typeof fetch;
+
+    const result = await refreshAccessToken('c', 'r', impl, 'the-original-id-token');
+    expect(result.idToken).toBe('the-original-id-token');
+  });
+
+  it('prefers a freshly issued id token over the carried one', async () => {
+    const impl = (async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'a', expires_in: 300, id_token: 'fresh' }),
+      }) as unknown as Response) as unknown as typeof fetch;
+
+    const result = await refreshAccessToken('c', 'r', impl, 'stale');
+    expect(result.idToken).toBe('fresh');
+  });
+});
+
+describe('keycloakSignOutUrl', () => {
+  it('always identifies the client, so logout validates without an id token', async () => {
+    // Keycloak resolves the client for post_logout_redirect_uri validation from
+    // `id_token_hint` OR `client_id`. With NEITHER it refuses the request and
+    // does not end the session.
+    const url = new URL(keycloakSignOutUrl(undefined, 'http://localhost:3000', 'autoworkshop-customer-web'));
+    expect(url.searchParams.get('client_id')).toBe('autoworkshop-customer-web');
+    expect(url.searchParams.get('post_logout_redirect_uri')).toBe('http://localhost:3000');
+    expect(url.searchParams.has('id_token_hint')).toBe(false);
+  });
+
+  it('sends both when the id token is present', async () => {
+    const url = new URL(keycloakSignOutUrl('an-id-token', 'http://localhost:3000', 'autoworkshop-fleet-web'));
+    expect(url.searchParams.get('id_token_hint')).toBe('an-id-token');
+    expect(url.searchParams.get('client_id')).toBe('autoworkshop-fleet-web');
   });
 });

@@ -1,4 +1,5 @@
-export { createWorkspaceAuth, workspaceAuth, keycloakSignOutUrl } from './workspace-auth';
+export { createWorkspaceAuth, workspaceAuth } from './workspace-auth';
+export { keycloakSignOutUrl } from './logout-url';
 export type { WorkspaceAuth } from './workspace-auth';
 export { apiBaseUrl, clientIdForWorkspace, keycloakIssuer, AuthConfigError } from './config';
 export {
