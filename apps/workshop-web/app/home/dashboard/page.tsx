@@ -1,6 +1,6 @@
 import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
-import { currentViewer, grantsFor, navRoleFor } from '@autoworkshop/next-shell';
+import { currentViewer, grantsFor, navRoleFor, requireNavRoute } from '@autoworkshop/next-shell';
 import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
 
 /**
@@ -95,6 +95,21 @@ function Tile({ label, value, kind, hint }: (typeof tiles)[number]) {
 }
 
 export default async function Dashboard() {
+  // FIRST STATEMENT. Behaviour-neutral TODAY — `/home/dashboard` appears in the
+  // workspace default tree and in all four role trees, so nobody who can reach
+  // this app is refused by it. It is here because this is a CONCRETE page, which
+  // Next resolves ahead of the catch-all, so it carries no route check of its
+  // own unless it makes one (T-0005 finding 4). The day a role tree drops the
+  // dashboard, this page would otherwise stay reachable by URL and nothing would
+  // have said so.
+  //
+  // The route is written as a LITERAL rather than `THIS_ROUTE`, which is less
+  // DRY on purpose: `check-page-gates.sh` derives the expected path from the
+  // file's own location and matches it in the source, so that a page copied into
+  // a new folder cannot keep the old gate. A constant would be opaque to that
+  // check and would quietly turn the guardrail into a no-op for this file.
+  await requireNavRoute('workshop', '/home/dashboard');
+
   const nav = await describeNavigation();
 
   return (

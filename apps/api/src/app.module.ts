@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { CoreModule } from './core/core.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { IdentityModule } from './identity/identity.module';
@@ -21,6 +22,7 @@ import { IdentityModule } from './identity/identity.module';
     AuditModule,
     IdentityModule,
     AuthModule,
+    CoreModule,
   ],
   controllers: [HealthController],
 })

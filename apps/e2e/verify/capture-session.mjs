@@ -26,19 +26,33 @@ import { writeFileSync } from 'node:fs';
 const SEAM = new URL('../../../.verify-session-cookies.json', import.meta.url);
 
 
-const APP = process.env['CUSTOMER_WEB_URL'] ?? 'http://localhost:3000';
+function arg(name, fallback) {
+  const i = process.argv.indexOf(`--${name}`);
+  return i === -1 ? fallback : process.argv[i + 1];
+}
+
+// `--url` and `--user` added 2026-07-28 (Phase 4): the same capture is now used
+// to prove what the API hands a TECHNICIAN, which needs a workshop-web session
+// rather than a customer-web one. Defaults unchanged, so the finding-5
+// revocation proof above still runs exactly as written.
+const APP = arg('url', process.env['CUSTOMER_WEB_URL'] ?? 'http://localhost:3000');
+const USER = arg('user', 'technician@autoworkshop.local');
+const LANDING = arg('landing', '/home/dashboard');
 const SIGN_OUT = process.argv.includes('--sign-out');
 
 const browser = await chromium.launch();
 const ctx = await browser.newContext();
 const page = await ctx.newPage();
 
-await page.goto(`${APP}/home/dashboard`);
+await page.goto(`${APP}${LANDING}`);
 await page.getByRole('link', { name: 'Sign in' }).click();
 const p = page.getByRole('button', { name: /Keycloak/i });
-if (await p.count()) await p.first().click();
-await page.waitForURL(/openid-connect\/auth/, { timeout: 30000 });
-await page.fill('#username', 'technician@autoworkshop.local');
+// `noWaitAfter`: the button submits a form that redirects to Keycloak, and
+// Playwright's default post-click navigation wait times out on that hand-off.
+// `waitForURL` below is the real signal.
+if (await p.count()) await p.first().click({ noWaitAfter: true });
+await page.waitForURL(/openid-connect\/auth/, { timeout: 60000 });
+await page.fill('#username', USER);
 await page.fill('#password', process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!');
 await page.click('#kc-login');
 await page.waitForURL((u) => u.toString().startsWith(APP), { timeout: 30000 });

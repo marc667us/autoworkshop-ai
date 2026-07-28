@@ -25,4 +25,21 @@ export const primitive = {
   radius: { none: '0', sm: '0.25rem', md: '0.375rem', lg: '0.5rem', full: '9999px' },
   fontSize: { xs: '0.75rem', sm: '0.875rem', base: '1rem', lg: '1.125rem',
               xl: '1.25rem', '2xl': '1.5rem', '3xl': '1.875rem' },
+  /**
+   * `01 (1).txt` §2845: "One optional monospaced font for VINs, part numbers,
+   * fault codes and technical identifiers."
+   *
+   * Not decoration. These are values a human reads character by character off a
+   * number plate, a parts invoice or a scan tool, and in a proportional face
+   * `0`/`O` and `1`/`I`/`l` are genuinely ambiguous — a misread VIN orders the
+   * wrong part. The stack is system fonts only, so it costs no download and no
+   * paid licence (ADR-012).
+   *
+   * SYSTEM STACKS, no webfont: `sans` is here so the mono choice is not the only
+   * typographic value in the system and the pair stays visible together.
+   */
+  fontFamily: {
+    sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif',
+    mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+  },
 } as const;

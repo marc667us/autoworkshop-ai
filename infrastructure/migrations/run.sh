@@ -14,6 +14,25 @@ USER_NAME="${POSTGRES_USER:-autoworkshop}"
 
 psql_run() { docker exec -i "$CONTAINER" psql -v ON_ERROR_STOP=1 -U "$USER_NAME" -d "$DB" "$@"; }
 
+# Checksum LF-NORMALISED content, never the raw bytes on disk.
+#
+# This repo is developed on Windows with `core.autocrlf=true`, so git stores LF
+# and checks out CRLF. Hashing the raw file therefore produced a DIFFERENT
+# checksum for a byte-identical migration depending only on when it was last
+# checked out — and the drift guard below read that as "somebody edited an
+# applied migration", named the wrong cause, and blocked every later migration.
+# Verified 2026-07-28: `git show HEAD:...001` matched the ledger exactly while
+# the working copy did not.
+#
+# Normalising is backward-compatible by luck worth stating: 001 and 002 were
+# applied from LF working copies, so the checksums already in the ledger ARE the
+# normalised ones. No ledger rewrite is needed and none was done.
+#
+# `.gitattributes` now pins these files to LF, which removes the cause. This
+# stays as well, because a checksum that depends on a checkout setting is wrong
+# regardless of whether anything currently triggers it.
+checksum_of() { tr -d '\r' < "$1" | sha256sum | cut -d' ' -f1; }
+
 echo "==> ensuring migration ledger"
 psql_run -q <<'SQL'
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
@@ -28,7 +47,7 @@ skipped=0
 
 for file in "$DIR"/[0-9]*.sql; do
   version="$(basename "$file" .sql)"
-  checksum="$(sha256sum "$file" | cut -d' ' -f1)"
+  checksum="$(checksum_of "$file")"
 
   existing="$(psql_run -tAc "SELECT checksum FROM public.schema_migrations WHERE version = '$version'" || true)"
   existing="$(echo "$existing" | tr -d '[:space:]')"

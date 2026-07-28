@@ -1,84 +1,85 @@
 # Current task
 
-**▶ PHASE 4 — Customer + Vehicle (Release 0.3). Not started.**
+**▶ PHASE 4 slice 2 — customer + vehicle detail pages and the register forms.**
 
-Tip `9b29ebd` on `master`, pushed, tree clean. Read
-`.claude/SESSION_HANDOVER.md` (2026-07-28 section) for the full picture and the
-exact start-up commands; this file is the short version.
+Slice 1 is done, gated and proven live. Read `.claude/SESSION_HANDOVER.md`
+(2026-07-28 pt2) for the full picture; this file is the short version.
 
 ---
 
-## Where the previous session stopped
-
-Everything on the schedule ahead of Phase 4 is done:
+## What slice 1 shipped
 
 | | |
 |---|---|
-| T-0005 finding 5 — sign-out revocation | ✅ closed, Codex + Supervisor passed |
-| T-0005 finding 4 — admin route protection | ✅ closed, Codex passed, build-gated |
-| First screen that reads real data | ✅ shipped and verified signed-in |
+| Migration 004 | `core` schema: customers, vehicles, normalised makes/models. Real FKs, joins, `tenant_id` + ENABLE **and FORCE** RLS, tenant index baseline |
+| Migration 005 | vehicle uniqueness moved to ORGANIZATION scope — closes a cross-org existence oracle the Supervisor found |
+| API | `CustomerService`, `VehicleService`, 6 routes under `/api/v1`, role gates on read AND write |
+| Screens | Customers + Vehicles, live at all three role-tree paths, one implementation in `app/_screens/` |
 
-**The last thing built** was `apps/admin-web/app/directory/organizations/page.tsx`
-— the first screen in this product that reads the database. Before it, eight
-endpoints existed under `/api/v1` and the front end called exactly one (`/me`),
-only to work out who the viewer was. The owner's words were *"no front end to
-access the back end"* and *"no feature"*, and both were accurate.
+**Proven signed in through real Keycloak, in both directions** — that is the part
+that matters, not the green suite:
 
-## Start by re-proving that screen
+- `reception_staff` sees Alpha Motors' 3 customers and 3 vehicles; Tenant B's
+  `Yaw Darko` / `AS 3312-20` never appear.
+- `technician` gets **404 on the page AND 403 from the API**.
 
-Do not begin Phase 4 on an unverified base. Bring the stack up per the handover,
-then open `http://localhost:3006/directory/organizations` signed in as
-`admin@autoworkshop.local` / `Change_me_locally1!`.
+## Start by re-proving it
 
-**Expected: `Alpha Motors` only, caption "1 organisation".** Postgres holds two
-organisations; `Beta Auto` belongs to Tenant B. **If both appear, tenant
-isolation has regressed — stop and fix that before anything else.**
+```bash
+docker ps --format "{{.Names}}\t{{.Status}}"      # aw-keycloak must say (healthy)
+bash scripts/seed-dev-identity.sh                 # technician
+DEV_USER_ROLE=platform_administrator DEV_USER_EMAIL=admin@autoworkshop.local bash scripts/seed-dev-identity.sh
+DEV_USER_ROLE=reception_staff DEV_USER_EMAIL=reception@autoworkshop.local bash scripts/seed-dev-identity.sh
+bash scripts/seed-dev-core.sh                     # customers + vehicles in BOTH tenants
 
-## Then Phase 4
+cd apps/api && rm -rf dist && ./node_modules/.bin/nest build && cd ../..
+set -a && . ./.env && set +a && (cd apps/api && node dist/main.js &)
 
-`COMBINED_PLAN_v2.md` line 299 and `PLAN_EXTENSION_v1.md` §2:
+cd apps/workshop-web && rm -rf .next && ./node_modules/.bin/next build
+AUTH_SECRET='local_dev_only_2SbQ8vJmK4pR7wZxN1cT6yH9gL0aE3dU' AUTH_URL='http://localhost:3001' \
+API_BASE_URL='http://localhost:4000' KEYCLOAK_URL='http://localhost:8080' \
+KEYCLOAK_REALM='autoworkshop' ./node_modules/.bin/next start -p 3001
 
-> Registration, profile, vehicle garage, documents, service history, maintenance
-> schedule, complaint submission, appointment request, workshop search, dashboard
-> — plus the personal vehicle workspace, My Repair Dashboard, service request and
-> approve/reject/modify from `07.txt` part 1.
+# the acceptance check — BOTH directions
+cd apps/e2e
+node verify/read-page-signed-in.mjs --url http://localhost:3001/customers/customer-search \
+  --user reception@autoworkshop.local --expect "Kwame Mensah" --reject "Yaw Darko"
+node verify/read-page-signed-in.mjs --url http://localhost:3001/customers/customer-search \
+  --user technician@autoworkshop.local --reject "Kwame Mensah"
+```
 
-Build it as vertical slices, each complete before the next. The order that works,
-and the pattern to copy from the organizations screen:
+`Yaw Darko` appearing is a **Severity-1 tenant-isolation regression** — he is
+Tenant B. A technician seeing customer data is a Severity-1 authorization
+regression.
 
-1. **Migration** — `infrastructure/migrations/004_*.sql`.
-2. **Domain service** on the `OrganizationService` shape. Rules live in the
-   service, never the controller, so an MCP tool gets the same rules.
-3. **Controller** under `/api/v1`, thin, `@UseGuards(TenantGuard)`.
-4. **Page** — `requireWorkspaceAccess()` as the FIRST statement (the build gate
-   enforces it), then `apiGet()`, then all four states.
-5. **Verify by signing in and looking.** Every serious defect this project has
-   had was green on typecheck, lint and the unit suite first.
+## Then slice 2
 
-### 🔴 The owner's schema rule is binding here
+1. **Detail pages** — `/…/customers/<id>` and `/…/vehicles/<id>`. `findById` and
+   `GET /customers/:id/vehicles` already exist, gated and org-scoped; nothing
+   calls them.
+2. **Register forms** — the nav advertises `Register Customer` and
+   `Register Vehicle` (§48). `POST /customers` and `POST /vehicles` exist,
+   role-gated and fully validated, and **no screen calls either**. That is the
+   same "endpoints with no front end" gap the owner objected to, one level down.
+3. **The customer-workspace garage** (`/my-vehicles/garage`, customer-web:3000).
+   This is where the `customer` role's self-scoping finally gets exercised on a
+   screen — the service enforces it and no screen has ever hit that path.
 
-**Real relationships — foreign keys, joins, normalised tables.** And the
-qualifier that matters: **a foreign key cannot carry a tenant predicate.**
-Relationships give integrity; RLS gives isolation; **both are required.** Every
-tenant-owned table still gets `tenant_id`, `ENABLE` + `FORCE ROW LEVEL
-SECURITY`, an explicit `WHERE tenant_id = $1`, and the tenant index baseline.
-`infrastructure/migrations/001_tenancy_foundation.sql` is the worked example.
+### 🔴 Two rules that are binding here
 
-### Definition of complete (`05.txt` §6)
+**Real relationships** — FKs, joins, normalised. And the qualifier: **a foreign
+key cannot carry a tenant predicate.** Relationships give integrity, RLS gives
+isolation, both required. Migration 004 is the worked example.
 
-Migration runs · backend rule exists · API works · page renders with
-loading/empty/error/permission states · permissions enforced · tests pass ·
-lint + typecheck pass · Playwright journey passes · responsive checked · docs
-updated · **no paid dependency** · committed.
+**A page gate is not a control.** Prove every new endpoint with
+`packages/auth/verify/call-api-as.mjs`, not by looking at the screen. That is how
+slice 1's worst defect was found — the page 404'd a technician while the API
+handed the same technician the entire customer book.
 
----
+## Not blockers, not forgotten
 
-## Two things that are NOT blockers but must not be forgotten
-
-**Production is down** — Render suspended it, `suspenders: ['billing']`, and it
-cannot be resumed through the API. Owner action. Phase 4 does not need it: the
-whole stack runs locally. Detail in `docs/13-operations/LIVE-OUTAGE-2026-07-28.md`.
-
-**Playwright's full suite has not run** since these changes — only the identity
-journey (2/2). The other six apps have stale `.next` builds on disk, so rebuild
-before trusting any run of it.
+- **Production is still DOWN** — Render `suspenders: ['billing']`, not resumable
+  via the API. Owner action. Phase 4 does not need it.
+- `RENDER_API_KEY` still unrotated from the 2026-07-27 transcript leak.
+- Playwright's full suite has not been re-run since these changes; the other five
+  apps have stale `.next` builds on disk.

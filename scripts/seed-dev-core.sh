@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Seed development customers and vehicles into BOTH tenants (Phase 4).
+#
+# WHY BOTH TENANTS, AND WHY THAT IS THE POINT
+#
+# Seeding only the tenant you sign in as produces a screen that looks correct
+# and proves nothing: with one tenant's data in the database, a total isolation
+# failure and perfect isolation render identically. The organizations screen is
+# trustworthy precisely because Postgres holds two organisations and the page
+# shows one — the exclusion is visible.
+#
+# So this seeds Tenant A (Alpha Motors) AND Tenant B (Beta Auto). Signed in as a
+# member of Tenant A, the customers and vehicles screens must show ONLY the
+# Alpha rows. A Beta row appearing on either screen is a Severity-1 tenant
+# isolation regression, not test noise.
+#
+# It also seeds a customer with NO vehicles and a vehicle with NO model, because
+# both are legal states in migration 004 and both are places a LEFT JOIN written
+# as an INNER JOIN would silently drop a row.
+#
+# DEV ONLY — refuses to run against anything but the local Postgres container.
+# Idempotent: re-running reconciles rather than duplicating.
+set -euo pipefail
+
+PG_CONTAINER="${PG_CONTAINER:-aw-postgres}"
+DB="${POSTGRES_DB:-autoworkshop}"
+DB_USER="${POSTGRES_USER:-autoworkshop}"
+
+# ── dev-only guard ──────────────────────────────────────────────────────────
+# This writes business records. It must never be pointed at a deployed database,
+# where it would invent customers a real workshop would then have to explain.
+if [ -n "${DATABASE_URL:-}" ] && ! printf '%s' "$DATABASE_URL" | grep -qE '(localhost|127\.0\.0\.1|@aw-postgres)'; then
+  echo "refusing to seed: DATABASE_URL does not look local" >&2
+  exit 2
+fi
+
+psql_run() { docker exec -i "$PG_CONTAINER" psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB" "$@"; }
+
+echo "==> seeding core.customers and core.vehicles"
+
+# Runs as the table OWNER, which is exempt from RLS even under FORCE. That is
+# correct HERE and only here: a seed has to write into two tenants at once,
+# which is exactly what the policy forbids the application from doing. The
+# application itself connects as autoworkshop_app and gets no such exemption.
+psql_run -q <<'SQL'
+BEGIN;
+
+-- Resolve the organisations by name rather than hardcoding uuids, so this keeps
+-- working after a database reset regenerates them.
+WITH orgs AS (
+    SELECT o.id AS org_id, o.tenant_id, o.name
+      FROM identity.organizations o
+     WHERE o.name IN ('Alpha Motors', 'Beta Auto')
+),
+seeded AS (
+    SELECT * FROM (VALUES
+        -- (organisation, name, type, email, phone, location)
+        ('Alpha Motors', 'Kwame Mensah',        'individual', 'kwame.mensah@example.test',  '+233 24 111 2233', 'Accra'),
+        ('Alpha Motors', 'Adjoa Boateng',       'individual', 'adjoa.boateng@example.test', '+233 20 444 5566', 'Tema'),
+        -- A business customer, and deliberately one with NO vehicle: the
+        -- customers list uses a LEFT JOIN to count vehicles, and this row is
+        -- what fails if that ever becomes an INNER JOIN.
+        ('Alpha Motors', 'Sunrise Logistics Ltd','business',  'fleet@sunrise.example.test', '+233 30 222 7788', 'Accra'),
+        -- Tenant B. Must NEVER appear on a Tenant A screen.
+        ('Beta Auto',    'Yaw Darko',           'individual', 'yaw.darko@example.test',     '+233 27 888 9900', 'Kumasi')
+    ) AS s(org_name, display_name, customer_type, email, phone, location)
+)
+INSERT INTO core.customers
+    (tenant_id, organization_id, display_name, customer_type, email, phone, location)
+SELECT o.tenant_id, o.org_id, s.display_name, s.customer_type, s.email, s.phone, s.location
+  FROM seeded s
+  JOIN orgs   o ON o.name = s.org_name
+ WHERE NOT EXISTS (
+     SELECT 1 FROM core.customers c
+      WHERE c.organization_id = o.org_id AND c.display_name = s.display_name
+ );
+
+-- Vehicles. `make` is resolved to its id by name — the whole reason migration
+-- 004 normalised it — and `model` is left NULL here, which is legal and is the
+-- case a LEFT JOIN on vehicle_models must survive.
+WITH v AS (
+    SELECT * FROM (VALUES
+        ('Kwame Mensah',  'GR 4821-22', 'Toyota',        2018, 'petrol', 'automatic',  84500, 'Silver', 'JHMCM56557C404453'),
+        ('Kwame Mensah',  'GT 1190-19', 'Nissan',        2015, 'diesel', 'manual',    162300, 'White',  NULL),
+        ('Adjoa Boateng', 'GW 7745-21', 'Hyundai',       2020, 'petrol', 'automatic',  41200, 'Blue',   'KMHD35LE8EU123456'),
+        -- Tenant B's vehicle. Must NEVER appear on a Tenant A screen.
+        ('Yaw Darko',     'AS 3312-20', 'Mercedes-Benz', 2019, 'diesel', 'automatic',  73900, 'Black',  NULL)
+    ) AS s(customer_name, registration_number, make_name, model_year, fuel_type, transmission_type, mileage, colour, vin)
+)
+INSERT INTO core.vehicles
+    (tenant_id, organization_id, customer_id, registration_number, make_id,
+     model_year, fuel_type, transmission_type, current_mileage_km, colour, vin)
+SELECT c.tenant_id, c.organization_id, c.id, v.registration_number, mk.id,
+       v.model_year, v.fuel_type, v.transmission_type, v.mileage, v.colour, v.vin
+  FROM v
+  JOIN core.customers    c  ON c.display_name = v.customer_name
+  JOIN core.vehicle_makes mk ON lower(mk.name) = lower(v.make_name)
+ WHERE NOT EXISTS (
+     SELECT 1 FROM core.vehicles ev
+      WHERE ev.tenant_id = c.tenant_id
+        AND upper(ev.registration_number) = upper(v.registration_number)
+ );
+
+COMMIT;
+SQL
+
+echo "==> verifying"
+psql_run -c "
+SELECT t.name AS tenant, c.display_name AS customer, count(v.id) AS vehicles
+  FROM core.customers c
+  JOIN identity.tenants t ON t.id = c.tenant_id
+  LEFT JOIN core.vehicles v ON v.customer_id = c.id
+ GROUP BY t.name, c.display_name
+ ORDER BY t.name, c.display_name;"
+
+echo "==> done. Signed in to Tenant A, the screens must show ONLY the Tenant A rows."

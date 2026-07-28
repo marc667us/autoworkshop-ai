@@ -1,0 +1,43 @@
+# Line endings.
+#
+# This repository is developed on Windows, where git is configured with
+# `core.autocrlf=true`: it stores LF in the object database and checks out CRLF
+# on disk. For most files that is invisible and harmless. For these two kinds it
+# is not, and it produced a real defect.
+#
+# ── WHAT IT BROKE (2026-07-28) ─────────────────────────────────────────────
+#
+# `infrastructure/migrations/run.sh` records a sha256 of each migration in
+# `public.schema_migrations` and refuses to proceed if an applied migration's
+# checksum has changed — the guard that stops the live schema drifting from the
+# migration history. It hashed the file on disk.
+#
+# 001 and 002 were applied while their working-tree copies still had LF, so the
+# LF hash went into the ledger. A later checkout rewrote them as CRLF. From that
+# moment the guard compared a CRLF hash against an LF one, failed, and reported:
+#
+#     ERROR: 001_tenancy_foundation already applied but its checksum changed.
+#            Write a NEW migration instead of editing an applied one.
+#
+# Nobody had edited it — `git show HEAD:...` matched the ledger exactly. The
+# guard was accusing the wrong thing, and because it exits non-zero on the FIRST
+# migration, it blocked every subsequent one. Migration 003 was consequently
+# applied by hand and never recorded in the ledger, which is precisely the drift
+# the guard exists to prevent: the check meant to stop drift caused it.
+#
+# `run.sh` now hashes LF-normalised content so the ledger is stable whichever way
+# a file is checked out. This file removes the cause rather than only the symptom.
+#
+# ── SHELL SCRIPTS ──────────────────────────────────────────────────────────
+#
+# A CRLF `.sh` is a latent trap of its own: a heredoc terminator carrying a
+# trailing \r does not match its opening token, so the heredoc never closes and
+# the step silently produces nothing. This project has already lost time to that
+# exact failure once.
+#
+# Scoped deliberately to the file types where line endings change behaviour,
+# rather than a repo-wide `* text=auto`, which would rewrite every tracked file
+# on a Windows checkout for no benefit.
+
+*.sql text eol=lf
+*.sh  text eol=lf

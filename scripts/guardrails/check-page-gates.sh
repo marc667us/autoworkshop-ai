@@ -29,7 +29,9 @@
 #
 #   · comments are stripped before matching, so a mention cannot satisfy it;
 #   · the call must carry THIS app's workspace id and required permission;
-#   · it must be the FIRST `await` in the file, so data cannot be fetched first.
+#   · it must be the FIRST `await` inside the route component, so data cannot be
+#     fetched first (the component's body, not the file — see
+#     `default_export_body` for why that distinction is load-bearing).
 #
 # Run `--self-test` to prove it still fails on each of those shapes.
 set -euo pipefail
@@ -43,9 +45,47 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # per-group gate is the page's own business.
 GATED_APPS=("admin-web:admin:platform.admin")
 
+# app-dir : workspace id — apps gated per ROUTE rather than by one permission.
+#
+# The workshop workspace cannot be covered by the list above, and that is not an
+# omission. `07.txt` pt2 §46-§49 give it four role trees that differ in WHICH
+# SCREENS they contain, not in a permission key: §46 owner, §47 manager and §48
+# reception all carry Customer Reception, and §49 TECHNICIAN DOES NOT — while
+# `technician` and `reception_staff` hold NONE of the three keys in the
+# permission matrix. So no `requireWorkspaceAccess(...)` argument distinguishes
+# them, and a page written against it would admit the technician.
+#
+# These pages must instead call `requireNavRoute('<workspace>', '<own path>')`,
+# which re-applies the exact resolution `renderModulePage` does — against the
+# role-filtered, grant-filtered tree. THE PATH MUST BE THE PAGE'S OWN: a call
+# naming a different route gates a different screen and must not pass, which is
+# the same strictness the permission form already has.
+ROUTE_GATED_APPS=("workshop-web:workshop")
+
 # Strip line and block comments so a mention in prose cannot satisfy the check.
 strip_comments() {
   sed -e 's://.*::g' "$1" | tr '\n' '\001' | sed -e 's:/\*[^\*]*\*/::g' | tr '\001' '\n'
+}
+
+# The "first await" test must look at the body of the ROUTE COMPONENT, not at
+# the whole file.
+#
+# WHY (found 2026-07-28, and it was a FALSE POSITIVE this guardrail produced
+# against correct code). The check originally took the first `await` anywhere in
+# the file. But a module may DECLARE a helper containing an await ABOVE the
+# component — `workshop-web/app/home/dashboard/page.tsx` declares
+# `describeNavigation()` first — and a declaration is not an execution: that
+# helper is only CALLED after the gate. The guardrail reported the page ungated
+# and the "fix" it implied was to shuffle function declarations around to satisfy
+# a lexical scan, which changes nothing about what runs when.
+#
+# Slicing from `export default` to end of file keeps the property that matters —
+# nothing inside the component may be awaited before the gate — while ignoring
+# declarations that precede it. A false alarm is not harmless here: it trains the
+# reader to work around the guardrail, and a guardrail people route around stops
+# being one.
+default_export_body() {
+  sed -n '/export default/,$p' <<<"$1"
 }
 
 # Returns 0 when the page is properly gated.
@@ -74,7 +114,7 @@ check_page() {
 
   # And it must be the FIRST await in the file, so nothing is loaded before the
   # viewer has been checked. This is the "call it after fetching the data" shape.
-  first_await="$(grep -Eo 'await\s+[A-Za-z_$][A-Za-z0-9_$.]*' <<<"$body" | head -1 || true)"
+  first_await="$(grep -Eo 'await\s+[A-Za-z_$][A-Za-z0-9_$.]*' <<<"$(default_export_body "$body")" | head -1 || true)"
   if ! grep -Eq 'await\s+requireWorkspaceAccess' <<<"$first_await"; then
     echo "FAIL: $page"
     echo "      the first await is '${first_await}', not requireWorkspaceAccess."
@@ -85,8 +125,73 @@ check_page() {
   return 0
 }
 
+# The route-gated form. Same three properties as check_page — called with THIS
+# page's arguments, awaited, and first — but the second argument is the route
+# rather than a permission, and it is DERIVED FROM THE FILE'S LOCATION so a page
+# cannot satisfy the gate by naming a route it does not serve.
+check_page_route() {
+  local page="$1" workspace="$2" app_dir="$3"
+  local body route first_await
+  body="$(strip_comments "$page")"
+
+  # apps/workshop-web/app/customer-reception/customers/page.tsx
+  #   -> /customer-reception/customers
+  route="${page#"$app_dir"}"
+  route="${route%/page.*}"
+  route="${route%/default.*}"
+
+  if ! grep -Eq "requireNavRoute\(\s*['\"]${workspace}['\"]\s*,\s*['\"]${route}['\"]\s*\)" <<<"$body"; then
+    echo "FAIL: $page"
+    echo "      no call to requireNavRoute('${workspace}', '${route}')"
+    echo "      (an import, a comment, or a call naming another route is not a gate)"
+    return 1
+  fi
+
+  if ! grep -Eq "await\s+requireNavRoute\(" <<<"$body"; then
+    echo "FAIL: $page"
+    echo "      requireNavRoute() is called but not awaited — execution continues past it"
+    return 1
+  fi
+
+  first_await="$(grep -Eo 'await\s+[A-Za-z_$][A-Za-z0-9_$.]*' <<<"$(default_export_body "$body")" | head -1 || true)"
+  if ! grep -Eq 'await\s+requireNavRoute' <<<"$first_await"; then
+    echo "FAIL: $page"
+    echo "      the first await is '${first_await}', not requireNavRoute."
+    echo "      Gate BEFORE any data access."
+    return 1
+  fi
+  return 0
+}
+
+# Shared by both scans: the route entry points that are deliberately exempt.
+is_exempt_page() { # is_exempt_page <page> <app_dir>
+  case "$1" in
+    # The catch-all: already gated by renderModulePage resolving against the
+    # grant-FILTERED tree, which is sufficient for it specifically.
+    *'[...slug]'*) return 0 ;;
+    # Route handlers, not pages; they authenticate per request.
+    */api/*) return 0 ;;
+    # The root page is a bare redirect() to the dashboard — it renders nothing
+    # and reads nothing, so a gate there would only make the redirect fail
+    # differently. The dashboard it lands on is itself a page and IS checked.
+    "$2/page.tsx") return 0 ;;
+  esac
+  return 1
+}
+
 scan() {
   local root="$1" failures=0
+
+  for entry in "${ROUTE_GATED_APPS[@]}"; do
+    local app="${entry%%:*}" workspace="${entry##*:}"
+    local app_dir="${root}/apps/${app}/app"
+    [ -d "$app_dir" ] || continue
+    while IFS= read -r page; do
+      is_exempt_page "$page" "$app_dir" && continue
+      check_page_route "$page" "$workspace" "$app_dir" || failures=$((failures + 1))
+    done < <(find "$app_dir" \( -name 'page.tsx' -o -name 'page.jsx' -o -name 'page.js' -o -name 'page.mjs' -o -name 'default.tsx' \) -type f)
+  done
+
   for entry in "${GATED_APPS[@]}"; do
     local app="${entry%%:*}" rest="${entry#*:}"
     local workspace="${rest%%:*}" permission="${rest##*:}"
@@ -94,18 +199,7 @@ scan() {
     [ -d "$app_dir" ] || continue
 
     while IFS= read -r page; do
-      case "$page" in
-        # The catch-all: already gated by renderModulePage resolving against the
-        # grant-FILTERED tree, which is sufficient for it specifically.
-        *'[...slug]'*) continue ;;
-        # Route handlers, not pages; they authenticate per request.
-        */api/*) continue ;;
-        # The root page is a bare redirect() to the dashboard — it renders
-        # nothing and reads nothing, so a gate there would only make the
-        # redirect fail differently. The dashboard it lands on is itself a page
-        # and IS checked.
-        "$app_dir/page.tsx") continue ;;
-      esac
+      is_exempt_page "$page" "$app_dir" && continue
       check_page "$page" "$workspace" "$permission" || failures=$((failures + 1))
       # Next also resolves default/template as route entry points.
     done < <(find "$app_dir" \( -name 'page.tsx' -o -name 'page.jsx' -o -name 'page.js' -o -name 'page.mjs' -o -name 'default.tsx' \) -type f)
@@ -183,10 +277,77 @@ FIXTURE
   fi
   rm -rf "$empty"
 
+  # ---- the ROUTE-gated form (workshop-web) --------------------------------
+  # Same negative cases, because the same bypasses apply — plus the one that is
+  # unique to this form: gating the right workspace but the WRONG ROUTE, which
+  # is how a page could be copied to a new folder and keep the old gate.
+  run_route_case() { # run_route_case <want> <label>   (fixture on stdin)
+    local want="$1" label="$2" tmp got
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/apps/workshop-web/app/customer-reception/customers"
+    cat > "$tmp/apps/workshop-web/app/customer-reception/customers/page.tsx"
+    if scan "$tmp" >/dev/null 2>&1; then got=pass; else got=fail; fi
+    rm -rf "$tmp"
+    if [ "$got" = "$want" ]; then
+      echo "  ok   - $label ($got)"
+    else
+      echo "  FAIL - $label: wanted $want, got $got"
+      fails=$((fails + 1))
+    fi
+  }
+
+  run_route_case fail "route: no gate at all" <<'FIXTURE'
+export default function P(){return null}
+FIXTURE
+
+  run_route_case fail "route: import only, never called" <<'FIXTURE'
+import { requireNavRoute } from '@autoworkshop/next-shell';
+export default function P(){return null}
+FIXTURE
+
+  run_route_case fail "route: mentioned only in a comment" <<'FIXTURE'
+// await requireNavRoute('workshop', '/customer-reception/customers')
+export default function P(){return null}
+FIXTURE
+
+  run_route_case fail "route: gates a DIFFERENT route" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('workshop', '/customer-reception/vehicles'); return null }
+FIXTURE
+
+  run_route_case fail "route: wrong workspace id" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('admin', '/customer-reception/customers'); return null }
+FIXTURE
+
+  run_route_case fail "route: called but not awaited" <<'FIXTURE'
+export default async function P(){ requireNavRoute('workshop', '/customer-reception/customers'); return null }
+FIXTURE
+
+  run_route_case fail "route: gated only AFTER loading data" <<'FIXTURE'
+export default async function P(){ const d = await loadCustomers(); await requireNavRoute('workshop', '/customer-reception/customers'); return d }
+FIXTURE
+
+  run_route_case fail "route: permission form does not satisfy the route form" <<'FIXTURE'
+export default async function P(){ await requireWorkspaceAccess('workshop', 'platform.admin'); return null }
+FIXTURE
+
+  run_route_case pass "route: correctly gated before any data access" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('workshop', '/customer-reception/customers'); const d = await loadCustomers(); return d }
+FIXTURE
+
+  # The FALSE POSITIVE this guardrail produced on 2026-07-28, pinned so it
+  # cannot return. A helper DECLARED above the component may contain an await;
+  # it does not RUN until the component calls it, which happens after the gate.
+  # The old whole-file scan saw `await currentViewer` first and failed correct
+  # code — which is how a guardrail teaches people to work around it.
+  run_route_case pass "route: await in a helper DECLARED above the component" <<'FIXTURE'
+async function describeNavigation(){ const v = await currentViewer('workshop'); return v }
+export default async function P(){ await requireNavRoute('workshop', '/customer-reception/customers'); const n = await describeNavigation(); return n }
+FIXTURE
+
   if [ "$fails" -gt 0 ]; then
     echo "check-page-gates --self-test: $fails case(s) wrong"; exit 1
   fi
-  echo "check-page-gates --self-test: OK (9/9)"
+  echo "check-page-gates --self-test: OK (19/19)"
   exit 0
 fi
 
