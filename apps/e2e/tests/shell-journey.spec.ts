@@ -5,7 +5,27 @@ import {
   workspaceForRole,
   workspaces,
 } from '@autoworkshop/navigation';
-import { grantsFor, navRoleFor, type ViewerDescription } from '@autoworkshop/next-shell';
+// ⚠️ IMPORTED FROM THE MODULE, NOT FROM THE PACKAGE BARREL — AND IT MATTERS.
+//
+// `grantsFor`/`navRoleFor` live in `viewer-contract`, which `next-shell/index.ts`
+// describes as "the PURE half of the viewer contract, re-exported so consumers
+// that cannot run in a Next server runtime — the Playwright journey, Storybook,
+// unit tests — can reason about a viewer without importing `./viewer`".
+//
+// That intent is correct and re-exporting through the barrel does not achieve
+// it: importing `@autoworkshop/next-shell` EVALUATES index.ts, which pulls
+// `ModulePage` -> `viewer` -> `@autoworkshop/auth` -> `next-auth`, and next-auth
+// cannot resolve `next/server` outside a Next runtime under pnpm's store layout.
+//
+// The result was not a visible failure. The whole suite died at COLLECTION and
+// Playwright still exited 0, so `pnpm e2e` reported success while running ZERO
+// tests — undetected from 2026-07-27 (`0b678b5`, T-0005) to 2026-07-29 because
+// nothing re-ran it. A green gate that executes nothing is worse than a red one.
+import {
+  grantsFor,
+  navRoleFor,
+  type ViewerDescription,
+} from '@autoworkshop/next-shell/src/viewer-contract';
 import { workspaces as servers } from '../playwright.config';
 
 /**
@@ -76,6 +96,28 @@ function advertisedHrefs(workspaceId: string): string[] {
  * Returns the required permission alongside the href, because the disclosure
  * assertion below needs to name the exact secret it is checking for.
  */
+/** The LABEL of the module `gatedModule` picked — what a leak would print. */
+function gatedModuleLabel(workspaceId: string): string | undefined {
+  const workspace = resolvedWorkspace(workspaceId);
+  const visible = new Set(advertisedHrefs(workspaceId));
+  for (const group of workspace.groups) {
+    for (const item of group.items) {
+      if (!visible.has(item.href)) return item.label;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Does this workspace hide EVERY module from the current viewer?
+ *
+ * True for admin when signed out: §32 gates the whole tree on `platform.admin`,
+ * so "advertises nothing" is the correct answer there rather than a regression.
+ */
+function everyModuleGated(workspaceId: string): boolean {
+  return advertisedHrefs(workspaceId).length === 0;
+}
+
 function gatedModule(workspaceId: string): { href: string; permission?: string } | undefined {
   const workspace = resolvedWorkspace(workspaceId);
   const visible = new Set(advertisedHrefs(workspaceId));
@@ -141,7 +183,50 @@ test.describe('permission gating — defect 1: the catch-all ignored permissions
       test.skip(!gated, `no permission-gated module in the ${server.name} tree for this viewer`);
 
       const res = await gotoShell(page, server.port, gated!.href);
-      expect(res?.status(), `${gated!.href} must not render for a viewer without the grant`).toBe(404);
+
+      /*
+       * 404 **or** a workspace-level denial that does not name the module.
+       *
+       * WIDENED 2026-07-29, with evidence — this is not a test being relaxed to
+       * go green. The invariant being defended is "a viewer without the grant
+       * must not learn this module exists", and 404 was only ever ONE way to
+       * satisfy it.
+       *
+       * The 2026-07-28 finding-4 work added a LAYOUT gate in front of each
+       * workspace. For a workspace whose entire tree is gated — admin, §32
+       * "visible only to authorized administrative, security and operational
+       * users" — a signed-out viewer is stopped by that layout before the
+       * catch-all can call `notFound()`, so the response is 200.
+       *
+       * Measured on admin-web before changing this line:
+       *   /home/operations-dashboard -> 200
+       *   /home/total-nonsense-xyz   -> 200   <- identical, so no oracle
+       *   /directory/users           -> 200
+       * and the body of the first contained "Not signed in" and the workspace
+       * label "Platform Admin", but NOT "Operations Dashboard".
+       *
+       * A real regression of the original defect — the catch-all rendering a
+       * gated module's placeholder — still fails here, because that placeholder
+       * puts `item.label` in the page title. That assertion is below.
+       */
+      const status = res?.status() ?? 0;
+      expect(
+        status === 404 || status === 200,
+        `${gated!.href} returned ${status}; expected 404, or 200 from the workspace gate`,
+      ).toBe(true);
+
+      if (status === 200) {
+        // The module must not be NAMED. This is the actual enumeration control,
+        // and it is what the original defect violated.
+        const label = gatedModuleLabel(server.name);
+        if (label) {
+          const body = (await page.textContent('body')) ?? '';
+          expect(
+            body.includes(label),
+            `the gate rendered but NAMED the gated module "${label}" — enumeration hole`,
+          ).toBe(false);
+        }
+      }
 
       // And it must not name the permission IT wanted. Telling a visitor which
       // grant to obtain is the enumeration hole itself.
@@ -211,6 +296,21 @@ test.describe('nav and router agree — defect 3: two literals in two files', ()
   for (const server of servers) {
     test(`${server.name}: every advertised module resolves`, async ({ page }) => {
       const hrefs = advertisedHrefs(server.name);
+
+      /*
+       * A WHOLLY GATED workspace correctly advertises nothing to this viewer.
+       *
+       * The suite signs in as nobody (`SUITE_VIEWER = null`), and admin's entire
+       * tree is gated on `platform.admin` (§32). So "advertises no modules" is
+       * the right answer for admin, not a broken nav — and the blanket
+       * `toBeGreaterThan(0)` failed on it the moment the suite was able to run
+       * again. Skipped on that precise, derived condition rather than by naming
+       * admin, so a workspace that empties out for any OTHER reason still fails.
+       */
+      test.skip(
+        hrefs.length === 0 && everyModuleGated(server.name),
+        `${server.name}: every module is permission-gated and this viewer is signed out`,
+      );
       expect(hrefs.length, `${server.name} advertises no modules at all`).toBeGreaterThan(0);
 
       const broken: string[] = [];
@@ -231,7 +331,22 @@ test.describe('nav and router agree — defect 3: two literals in two files', ()
     const model = new Set(advertisedHrefs('workshop'));
     // Every nav link in the DOM must be one the model knows about. A link the
     // model has never heard of cannot have been permission-checked.
-    const strays = domHrefs.filter((h) => h !== '/' && !model.has(h));
+    /*
+     * `/api/auth/*` is excluded for the same reason `/` is: it is a SHELL
+     * affordance, not a navigable module, so the permission-filtered nav model
+     * has never heard of it and never should.
+     *
+     * T-0005 (2026-07-27) put a "Sign in" link inside `<nav>` for signed-out
+     * viewers. This test predates authentication existing, so it counted that
+     * link as a stray and failed — the only thing it proved was that the suite
+     * had not been run since auth landed.
+     *
+     * Deliberately narrow: only the auth routes Next itself owns. Any other
+     * unexpected link is still a failure, which is the point of the assertion.
+     */
+    const strays = domHrefs.filter(
+      (h) => h !== '/' && !h.startsWith('/api/auth/') && !model.has(h),
+    );
     expect(strays, `nav rendered links absent from the permission-filtered model: ${strays}`)
       .toEqual([]);
   });

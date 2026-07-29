@@ -105,6 +105,16 @@ or skip it.
 
 ## 5. Traps this session paid for
 
+- **A GREEN GATE THAT RUNS NOTHING.** `pnpm e2e` exited **0 while executing ZERO
+  tests** for two days: one spec failed to *collect* and Playwright still
+  reported success. Always read the count, never the exit code. Fixed — the
+  suite is now 138 passed / 2 skipped, and `pnpm e2e` is worth trusting again.
+- **Importing `@autoworkshop/next-shell` in a Node context pulls in `next-auth`**
+  and dies on `next/server`. From tests, import the pure module directly
+  (`next-shell/src/viewer-contract`) — the barrel evaluates the server half.
+- **Kill every app server before running the suite.** The build-guard failed
+  first time on stale customer-web and admin-web servers; killing them turned
+  2 failures into 91 passes. Nothing was wrong with the code.
 - **`className="sr-only"` DOES NOTHING IN THIS REPO** — nothing defines that
   class, so the text renders visibly. Use `visuallyHidden` from
   `@autoworkshop/ui`. It cost three stray labels and counts reading "11 job card".
