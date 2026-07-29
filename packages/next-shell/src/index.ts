@@ -19,6 +19,7 @@ export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
 export { requireWorkspaceAccess } from './require-access';
 export { requireNavRoute } from './require-route';
 export { apiGet, apiPost, describeApiFailure } from './api';
+export { ApiFailure } from './ApiFailure';
 export { OrganizationSwitcher } from './OrganizationSwitcher';
 export type { OrganizationOption } from './OrganizationSwitcher';
 export { setActiveOrganizationAction } from './set-organization-action';

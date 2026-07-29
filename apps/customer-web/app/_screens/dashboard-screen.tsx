@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
@@ -67,11 +67,11 @@ export async function CustomerDashboardScreen() {
   const vehicles = await apiGet<Vehicle[]>('customer', '/vehicles');
 
   if (!vehicles.ok) {
-    const { title, description } = describeApiFailure(vehicles.reason);
+    const __reason = vehicles.reason;
     return (
       <>
         <PageHeader title="Dashboard" description="Your vehicles and anything needing attention." />
-        <ErrorState title={title} message={description} />
+        <ApiFailure reason={__reason} workspaceId="customer" />
       </>
     );
   }

@@ -1,7 +1,6 @@
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import {
   PageHeader,
-  ErrorState,
   EmptyState,
   Field,
   FormShell,
@@ -55,11 +54,11 @@ export async function AddVehicleScreen() {
 
   if (!me.ok || !makes.ok) {
     const failed = !me.ok ? me : (makes as Extract<typeof makes, { ok: false }>);
-    const { title, description } = describeApiFailure(failed.reason);
+    const __reason = failed.reason;
     return (
       <>
         {header}
-        <ErrorState title={title} message={description} />
+        <ApiFailure reason={__reason} workspaceId="customer" />
       </>
     );
   }

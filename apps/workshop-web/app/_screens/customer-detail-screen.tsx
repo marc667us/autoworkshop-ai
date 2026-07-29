@@ -1,4 +1,4 @@
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet, describeApiFailure } from '@autoworkshop/next-shell';
 import { PageHeader, ErrorState, EmptyState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { DefinitionList, DetailSection, BackLink, mileage } from './detail-parts';
@@ -66,11 +66,11 @@ export async function CustomerDetailScreen({
   ]);
 
   if (!customer.ok) {
-    const { title, description } = describeApiFailure(customer.reason);
+    const __reason = customer.reason;
     return (
       <>
         <BackLink href={listHref} label="Back to the customer list" />
-        <ErrorState title={title} message={description} />
+        <ApiFailure reason={__reason} workspaceId="workshop" />
       </>
     );
   }

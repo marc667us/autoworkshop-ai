@@ -30,8 +30,7 @@ export function BackLink({ href, label }: { href: string; label: string }) {
         display: 'inline-block',
         marginBottom: primitive.space[4],
         color: themeVar.textSecondary,
-        fontSize: primitive.fontSize.sm,
-      }}
+        fontSize: primitive.fontSize.sm }}
     >
       ← {label}
     </a>

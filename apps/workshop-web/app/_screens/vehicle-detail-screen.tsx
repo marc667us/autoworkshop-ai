@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
-import { PageHeader, ErrorState, StatusBadge } from '@autoworkshop/ui';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { DefinitionList, DetailSection, BackLink, mileage } from './detail-parts';
 
@@ -85,11 +85,11 @@ export async function VehicleDetailScreen({
   const result = await apiGet<Vehicle>('workshop', `/vehicles/${id}`);
 
   if (!result.ok) {
-    const { title, description } = describeApiFailure(result.reason);
+    const __reason = result.reason;
     return (
       <>
         <BackLink href={listHref} label="Back to the vehicle list" />
-        <ErrorState title={title} message={description} />
+        <ApiFailure reason={__reason} workspaceId="workshop" />
       </>
     );
   }

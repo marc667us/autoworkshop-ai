@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
@@ -61,8 +61,7 @@ async function VehiclesTable({ route }: { route: string }) {
   const result = await apiGet<Vehicle[]>('workshop', '/vehicles');
 
   if (!result.ok) {
-    const { title, description } = describeApiFailure(result.reason);
-    return <ErrorState title={title} message={description} />;
+    return <ApiFailure reason={result.reason} workspaceId="workshop" />;
   }
 
   if (result.data.length === 0) {

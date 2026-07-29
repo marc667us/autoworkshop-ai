@@ -1,6 +1,6 @@
 import { Suspense } from 'react';
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+import { PageHeader, LoadingState, EmptyState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
 
@@ -71,14 +71,7 @@ async function CustomersTable({ route }: { route: string }) {
   const result = await apiGet<Customer[]>('workshop', '/customers');
 
   if (!result.ok) {
-    const { title, description } = describeApiFailure(result.reason);
-    // ErrorState, not a thrown error: the shell, the navigation and the
-    // sign-out control must survive an API that is having a bad day.
-    //
-    // `forbidden` is a REAL case on this screen, not a theoretical one — the
-    // API refuses a technician, a storekeeper and a QC inspector outright, and
-    // this is what they would see if they reached the route another way.
-    return <ErrorState title={title} message={description} />;
+    return <ApiFailure reason={result.reason} workspaceId="workshop" />;
   }
 
   if (result.data.length === 0) {

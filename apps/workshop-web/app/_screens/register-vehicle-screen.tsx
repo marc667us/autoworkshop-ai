@@ -1,4 +1,4 @@
-import { apiGet, describeApiFailure } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import {
   PageHeader,
   ErrorState,
@@ -58,15 +58,13 @@ export async function RegisterVehicleScreen({ route }: { route: string }) {
   );
 
   if (!customers.ok || !makes.ok) {
-    const { title: t, message } = (() => {
-      const failed = !customers.ok ? customers : (makes as Extract<typeof makes, { ok: false }>);
-      const d = describeApiFailure(failed.reason);
-      return { title: d.title, message: d.description };
-    })();
+    // Whichever failed first. Both feed the same form, so there is one failure
+    // to report rather than two stacked messages saying the same thing.
+    const failed = !customers.ok ? customers : (makes as Extract<typeof makes, { ok: false }>);
     return (
       <>
         {header}
-        <ErrorState title={t} message={message} />
+        <ApiFailure reason={failed.reason} workspaceId="workshop" />
       </>
     );
   }

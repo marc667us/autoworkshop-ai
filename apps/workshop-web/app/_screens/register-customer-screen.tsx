@@ -4,8 +4,7 @@ import {
   FormShell,
   Select,
   SubmitButton,
-  TextInput,
-} from '@autoworkshop/ui';
+  TextInput } from '@autoworkshop/ui';
 import { navLabelFor } from './nav-label';
 import { registerCustomerAction } from './register-actions';
 
