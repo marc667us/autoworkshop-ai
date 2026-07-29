@@ -1,50 +1,51 @@
 # Current task
 
-**▶ PHASE 5 slice 2 — Repair Staging Board + stage transitions.**
+**▶ PHASE 5 slice 3 — inspection and diagnosis records.**
 
 **Read `.claude/NEXT_SESSION_START_HERE.md` first** — start-up commands, sign-in
 steps, acceptance checks, traps.
-
-Tip `e4efc81` on `master`, pushed, tree clean.
 
 ---
 
 ## Where the last session stopped
 
-Phase 4 is largely built and Phase 5 has begun. Nine commits. The product now
-has, all reading and writing real data and each proven by signing in and looking:
+Phase 5 slice 2 is done. A job card can now **move**, and the Repair Staging
+Board (`02.txt` §29) exists at both role-tree routes with the columns the spec
+names, live time-in-stage, and a stalled marker.
 
-- customers and vehicles (list, detail, register) at every role tree's path
-- the customer's garage, Add Vehicle, dashboard, and Report a Problem
-- an organisation switcher in the top bar
-- **job cards** - opened by reception or by a customer's complaint
+The rule set is the deliverable, not the screen. `1.txt` §394 —*"a technician
+must not manually bypass required approval, payment, parts or quality-control
+states without an authorized, logged override"* — is enforced as **two
+independent checks**:
 
-## The gap to close
+1. **`ROLE_TARGET_STAGES`** — which stages a role may produce (`07.txt` pt2 §50).
+2. **`STAGE_TRANSITIONS`** — where a card may go from where it is.
 
-**A job card can be opened but cannot leave `complaint_received`.**
+An override relaxes (2) and **never** (1), requires a reason, and is written to
+the append-only `repair.job_card_stage_events`.
 
-`02.txt` §29 gives the staging board's columns and they are already the CHECK
-constraint on `repair.job_cards.stage`. Migration 007 added `stage_changed_at`
-so the board can show how long a card has sat in a stage - the question a
-manager actually asks looking at it.
+## The gap to close next
 
-Needs `PATCH /job-cards/:id/stage` with a role→allowed-stage matrix grounded in
-`07.txt` pt2 §50: a technician may reach inspection / diagnosis / testing, but
-not quality control or release.
+A card can move through the lifecycle but **records nothing about the work**.
+`initial_inspection` and `diagnosis_in_progress` are stages with no content
+behind them — no findings, no fault codes, no evidence.
+
+`1.txt` §322-§360 and `07.txt` pt2 §50 give the technician "assigned-job
+inspection, diagnosis". That is slice 3: inspection and diagnosis records
+attached to a job card, written by the assigned technician only.
 
 ## Rules that keep applying
 
-**Real relationships** - FKs, joins, normalised. And the qualifier: a foreign key
-cannot carry a tenant predicate. Relationships give integrity, RLS gives
-isolation, both required.
+**Prove endpoints with `packages/auth/verify/call-api-as.mjs`, not with the
+screen.** It now takes `--method` and `--body`, so writes can be probed too. A
+board that declines to *offer* a move proves nothing about what the API accepts.
 
-**A page gate is not a control.** Prove every new endpoint with
-`packages/auth/verify/call-api-as.mjs`, not by looking at the screen. That is how
-the worst defect of the last session was found - the page 404'd a technician
-while the API handed the same technician the entire customer book.
+**Seed both sides of every boundary.** A screen showing one tenant's data proves
+nothing unless another tenant's data exists to be excluded.
 
-**Seed both sides of every boundary.** A screen showing only one tenant's data
-proves nothing unless another tenant's data exists to be excluded.
+**Real relationships** — FKs, joins, normalised. And the qualifier that keeps
+being earned: a foreign key cannot carry a tenant predicate. Where it must,
+make it **composite** — migration 009 does exactly that.
 
 ## Definition of complete (`05.txt` §6)
 

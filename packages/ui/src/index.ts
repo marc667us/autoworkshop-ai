@@ -1,3 +1,4 @@
+export { visuallyHidden } from './a11y';
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
 

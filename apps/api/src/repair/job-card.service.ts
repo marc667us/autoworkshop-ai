@@ -7,7 +7,25 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
-import { optionalDate, optionalInt, optionalOneOf, optionalUuid, requireText, requireUuid } from '../core/validate';
+import {
+  optionalDate,
+  optionalInt,
+  optionalOneOf,
+  optionalText,
+  optionalUuid,
+  requireOneOf,
+  requireText,
+  requireUuid,
+} from '../core/validate';
+import {
+  BOARD_COLUMNS,
+  CAN_OVERRIDE_STAGE,
+  ROLE_TARGET_STAGES,
+  STAGES,
+  permittedTargetsFrom,
+  stageOptionsFor,
+  type Stage,
+} from './job-card-stages';
 
 export interface JobCard {
   id: string;
@@ -25,7 +43,24 @@ export interface JobCard {
   expectedCompletionOn: string | null;
   mileageAtIntake: number | null;
   openedAt: string;
+  /**
+   * When the card last CHANGED STAGE — migration 007. The staging board's
+   * "elapsed time" (`02.txt` §29) is measured from here and not from
+   * `updated_at`, which any edit would reset, hiding a stalled job behind a
+   * corrected typo.
+   */
+  stageChangedAt: string;
   closedAt: string | null;
+  /**
+   * The stages THIS viewer may move THIS card to next — the lifecycle's options
+   * narrowed to the ones their role may produce.
+   *
+   * ⚠️ A UI CONVENIENCE, NEVER A CONTROL. It exists so the board offers only
+   * moves that will succeed. `changeStage` re-derives the whole judgement
+   * server-side on every call, because a `<select>` is a suggestion and anyone
+   * can send whatever they like (CLAUDE.md §8 — hidden is not secure).
+   */
+  allowedStages: string[];
 }
 
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const;
@@ -88,7 +123,8 @@ const SELECT_JOB = `
          mk.name AS make, md.name AS model, v.model_year,
          j.complaint, j.stage, j.priority,
          j.assigned_technician_id, t.display_name AS technician_name,
-         j.expected_completion_on, j.mileage_at_intake, j.opened_at, j.closed_at
+         j.expected_completion_on, j.mileage_at_intake, j.opened_at,
+         j.stage_changed_at, j.closed_at, prev.to_stage AS resume_stage
     FROM repair.job_cards j
     JOIN core.customers c ON c.id = j.customer_id AND c.tenant_id = j.tenant_id
     JOIN core.vehicles  v ON v.id = j.vehicle_id  AND v.tenant_id = j.tenant_id
@@ -96,7 +132,26 @@ const SELECT_JOB = `
     LEFT JOIN core.vehicle_models md ON md.id = v.model_id
     -- LEFT: an unassigned card is the normal state at intake, and an inner join
     -- would hide exactly the cards a manager is looking for.
-    LEFT JOIN identity.users t ON t.id = j.assigned_technician_id`;
+    LEFT JOIN identity.users t ON t.id = j.assigned_technician_id
+    -- The stage a HELD card was at before the hold, so the board can offer the
+    -- right resume options. A LATERAL rather than a lookup per card: the board
+    -- renders every open job at once, and a query per row is the N+1 that makes
+    -- a staging board slowest on the busiest day.
+    LEFT JOIN LATERAL (
+      SELECT e.to_stage
+        FROM repair.job_card_stage_events e
+       WHERE e.job_card_id = j.id
+         -- EXPLICIT, even though migration 009's composite foreign key now makes
+         -- a mismatch unstorable (Codex review of this slice). App code is the
+         -- first line of defence and the constraint is the last; this repo
+         -- requires both, and a predicate written down is what survives someone
+         -- later dropping a constraint they think is redundant.
+         AND e.tenant_id = j.tenant_id
+         AND e.organization_id = j.organization_id
+         AND e.to_stage <> 'on_hold'
+       ORDER BY e.changed_at DESC
+       LIMIT 1
+    ) prev ON true`;
 
 /**
  * Job card domain service — Phase 5, Release 0.4.
@@ -134,8 +189,55 @@ export class JobCardService {
           filter?.vehicleId ?? null,
         ],
       );
-      return res.rows.map(this.toDomain);
+      return res.rows.map((row) => this.toDomain(ctx, row as Parameters<JobCardService['toDomain']>[1]));
     });
+  }
+
+  /**
+   * The Repair Staging Board — `02.txt` §29.
+   *
+   * Returns the COLUMNS as well as the cards, deliberately. §29's column list is
+   * a business definition ("Recommended columns are: Received. Initial
+   * Inspection. ...") and several stages share one column, so a front end that
+   * held its own copy would be a second statement of the same rule — free to
+   * drift, and drifting silently, because a card mapped to a column that no
+   * longer exists simply disappears from the board while remaining live work.
+   *
+   * One request rather than two: the board is the screen a manager leaves open
+   * all day, and a column list that cannot change between renders should not
+   * cost a second round trip.
+   */
+  async board(ctx: TenantContext): Promise<{
+    columns: typeof BOARD_COLUMNS;
+    cards: JobCard[];
+    viewer: { canOverride: boolean; roleStages: string[] };
+  }> {
+    // Reuses `list`, so the board inherits the three scopes unchanged: staff see
+    // the organisation, a technician sees only cards assigned to them, a
+    // customer only their own. A separate query here would be a second place for
+    // that narrowing to be forgotten.
+    const cards = await this.list(ctx);
+
+    // ── why the viewer block exists ────────────────────────────────────────
+    //
+    // `allowedStages` on each card lists the ORDINARY moves. If the board
+    // offered only those, `1.txt` §394's override would exist in the API and be
+    // unreachable from the product — an owner could never actually authorise a
+    // bypass, which is the one thing §394 explicitly provides for.
+    //
+    // So the board also needs to know whether THIS viewer holds the authority,
+    // and which stages their role may produce at all. Both answers come from
+    // here rather than from a copy of the role tables in the front end: a
+    // second copy would drift, and the direction it drifts is a board offering
+    // a move the service refuses.
+    return {
+      columns: BOARD_COLUMNS,
+      cards,
+      viewer: {
+        canOverride: CAN_OVERRIDE_STAGE.has(ctx.activeRole),
+        roleStages: [...(ROLE_TARGET_STAGES[ctx.activeRole] ?? [])],
+      },
+    };
   }
 
   async findById(ctx: TenantContext, id: string): Promise<JobCard> {
@@ -159,7 +261,7 @@ export class JobCardService {
       // A technician probing an unassigned card gets what they would get for an
       // id that does not exist.
       if (!row) throw new NotFoundException('job card not found');
-      return this.toDomain(row);
+      return this.toDomain(ctx, row);
     });
   }
 
@@ -276,6 +378,19 @@ export class JobCardService {
         ],
       );
 
+      // THE OPENING EVENT. Migration 008 backfilled one for every card that
+      // existed; this is what keeps the invariant true for every card created
+      // afterwards, and it is not bookkeeping — the resume rule reads this
+      // table. Without it, a card put On Hold straight from intake would have a
+      // history containing only the hold, no stage to resume to, and would be
+      // stuck needing an owner's override to come back to life.
+      await client.query(
+        `INSERT INTO repair.job_card_stage_events
+           (tenant_id, organization_id, job_card_id, from_stage, to_stage, changed_by, changed_at)
+         VALUES ($1,$2,$3,NULL,'complaint_received',$4, now())`,
+        [ctx.tenantId, ctx.organizationId, inserted.rows[0].id, ctx.userId],
+      );
+
       await this.audit.write(client, ctx, {
         action: 'job_card.opened',
         resourceType: 'job_card',
@@ -291,6 +406,227 @@ export class JobCardService {
     });
   }
 
+  /**
+   * Move a job card to another stage — `02.txt` §29: "The backend shall
+   * validate every stage change."
+   *
+   * ── THE THREE CHECKS, IN THIS ORDER ────────────────────────────────────────
+   *
+   *   1. MAY THIS VIEWER TOUCH THIS CARD?  the scoped `SELECT ... FOR UPDATE`
+   *      below. A technician not assigned to it gets 404, exactly as `findById`
+   *      gives them, so this endpoint is not an existence oracle for the cards
+   *      they cannot see.
+   *   2. MAY THIS ROLE PRODUCE THIS STAGE?  `ROLE_TARGET_STAGES` (07 pt2 §50).
+   *      Checked BEFORE the lifecycle, and NOT relaxed by the override — a
+   *      technician with a signed override still may not pass their own work
+   *      through quality control.
+   *   3. MAY THE CARD GO THERE FROM WHERE IT IS?  `STAGE_TRANSITIONS`. This is
+   *      the one an authorized override may relax, and doing so is recorded.
+   *
+   * `1.txt` §394 is the whole of this method: "A technician must not manually
+   * bypass required approval, payment, parts or quality-control states without
+   * an authorized, logged override."
+   */
+  async changeStage(
+    ctx: TenantContext,
+    id: string,
+    input: { toStage: string; note?: string; overrideReason?: string },
+  ): Promise<JobCard> {
+    this.assertMayRead(ctx);
+
+    const cardId = requireUuid(id, 'id');
+    const toStage = requireOneOf(input.toStage, STAGES, 'toStage');
+    const note = optionalText(input.note, 'note', 2000);
+    const overrideReason = optionalText(input.overrideReason, 'overrideReason', 2000);
+
+    // A role with no entry may not change a stage at all. `customer` is the real
+    // case: `2.txt` §537 lets them REPORT a problem, which opens a card — it does
+    // not let them drive the workshop's workflow afterwards.
+    const roleStages = ROLE_TARGET_STAGES[ctx.activeRole];
+    if (!roleStages) {
+      throw new ForbiddenException(`role '${ctx.activeRole}' may not change a job card stage`);
+    }
+
+    return this.db.withTenant(ctx, async (client) => {
+      // FOR UPDATE, not a plain read. Two people moving the same card at once —
+      // a supervisor passing QC while a technician sends it back to the bench —
+      // would otherwise both read `testing`, both find their transition legal,
+      // and the second write would silently win with a history that records two
+      // departures from the same stage. The row lock serialises them, so the
+      // second caller re-reads the stage the first one set and is judged against
+      // it. `OF j` because the joined tables are read for scoping only.
+      const found = await client.query(
+        `SELECT j.id, j.stage, j.job_number
+           FROM repair.job_cards j
+           JOIN core.customers c ON c.id = j.customer_id AND c.tenant_id = j.tenant_id
+          WHERE j.id = $1 AND j.tenant_id = $2 AND j.organization_id = $3
+            AND ($4::uuid IS NULL OR j.assigned_technician_id = $4::uuid)
+            AND ($5::uuid IS NULL OR c.user_id = $5::uuid)
+          FOR UPDATE OF j`,
+        [
+          cardId,
+          ctx.tenantId,
+          ctx.organizationId,
+          ctx.activeRole === 'technician' ? ctx.userId : null,
+          ctx.activeRole === 'customer' ? ctx.userId : null,
+        ],
+      );
+      const card = found.rows[0] as { id: string; stage: Stage; job_number: string } | undefined;
+      if (!card) throw new NotFoundException('job card not found');
+
+      const fromStage = card.stage;
+
+      // A no-op is rejected rather than quietly accepted. Accepting it would
+      // append a history row saying the card moved when it did not, and reset
+      // `stage_changed_at` — resetting the very clock the board uses to show how
+      // long a job has been stuck, which is how a stalled card hides.
+      if (fromStage === toStage) {
+        throw new BadRequestException(`the job card is already at '${toStage}'`);
+      }
+
+      // ── check 2: the role's own stages ─────────────────────────────────────
+      if (!roleStages.includes(toStage)) {
+        throw new ForbiddenException(
+          `role '${ctx.activeRole}' may not move a job card to '${toStage}'`,
+        );
+      }
+
+      // ── check 3: the lifecycle ─────────────────────────────────────────────
+      const permitted = await this.permittedTargets(client, ctx, cardId, fromStage);
+      const isOverride = !permitted.includes(toStage);
+
+      if (isOverride) {
+        if (!CAN_OVERRIDE_STAGE.has(ctx.activeRole)) {
+          // Names what IS allowed, because the caller has already passed the
+          // role check — they may produce this stage, just not from here, and
+          // the useful answer is where the card can actually go.
+          throw new ForbiddenException(
+            `a job card at '${fromStage}' may not move to '${toStage}'. ` +
+              `Permitted: ${permitted.length ? permitted.join(', ') : 'none — this stage is final'}. ` +
+              `Only a workshop owner or manager may override this.`,
+          );
+        }
+        if (!overrideReason) {
+          throw new BadRequestException(
+            `moving a job card from '${fromStage}' to '${toStage}' skips the normal sequence ` +
+              `and requires 'overrideReason'.`,
+          );
+        }
+      }
+
+      await client.query(
+        `UPDATE repair.job_cards
+            SET stage = $1,
+                stage_changed_at = now(),
+                -- 1.txt S322's lifecycle ends at completion, so the card stops
+                -- being open work at that moment.
+                --
+                -- WARRANTY FOLLOW-UP KEEPS THE CLOSE (Supervisor pass on this
+                -- slice; Codex did not flag it). The first version cleared
+                -- closed_at for every stage except 'completed' — including
+                -- 'warranty_follow_up', which is the ONLY stage reachable FROM
+                -- completed. So the normal, expected next move silently wiped
+                -- the completion date and put the job back among the open work
+                -- for ever. A warranty call-back is follow-up ON a finished
+                -- repair; it does not un-finish it.
+                --
+                -- COALESCE so a re-completed card keeps the date it was first
+                -- closed rather than quietly restamping history. NULL for
+                -- anything else, which is the genuine re-open (only reachable by
+                -- an authorized override) — there the close SHOULD be withdrawn.
+                closed_at = CASE
+                              WHEN $1 = 'completed'          THEN COALESCE(closed_at, now())
+                              WHEN $1 = 'warranty_follow_up' THEN closed_at
+                              ELSE NULL
+                            END,
+                updated_at = now(),
+                updated_by = $2
+          WHERE id = $3 AND tenant_id = $4`,
+        [toStage, ctx.userId, cardId, ctx.tenantId],
+      );
+
+      // The LOG half of §394's "authorized, logged override" — append-only, and
+      // written in the SAME transaction as the move it records, so a stage can
+      // never change without its history row.
+      await client.query(
+        `INSERT INTO repair.job_card_stage_events
+           (tenant_id, organization_id, job_card_id, from_stage, to_stage,
+            is_override, override_reason, note, changed_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          ctx.tenantId,
+          ctx.organizationId,
+          cardId,
+          fromStage,
+          toStage,
+          isOverride,
+          isOverride ? overrideReason : null,
+          note,
+          ctx.userId,
+        ],
+      );
+
+      await this.audit.write(client, ctx, {
+        action: isOverride ? 'job_card.stage_overridden' : 'job_card.stage_changed',
+        resourceType: 'job_card',
+        resourceId: cardId,
+        // The job number and the two stages — never the note, which is free text
+        // a human typed and can contain anything, on the same reasoning as the
+        // complaint at intake (`1.txt` §1646).
+        detail: { jobNumber: card.job_number, fromStage, toStage, isOverride },
+      });
+
+      return this.findByIdInTransaction(client, ctx, cardId);
+    });
+  }
+
+  /**
+   * Where a card at `fromStage` may go next.
+   *
+   * Everything except `on_hold` is the static map. A HELD card is the exception
+   * and the reason `job_card_stage_events` exists: `02.txt` §29 makes On Hold a
+   * board column, but a held job has not progressed — it PAUSED, and it must
+   * resume the work it was doing. The only honest answer to "where does it
+   * resume" is the stage it held at, which the history records.
+   *
+   * Listing every stage as a valid exit from `on_hold` would be the simple
+   * alternative and would hand back exactly the bypass §394 forbids: park a job
+   * at On Hold, then resume it into `ready_for_collection`, skipping quality
+   * control without ever tripping the override.
+   */
+  private async permittedTargets(
+    client: { query: (t: string, v: unknown[]) => Promise<{ rows: unknown[] }> },
+    ctx: TenantContext,
+    cardId: string,
+    fromStage: Stage,
+  ): Promise<Stage[]> {
+    if (fromStage !== 'on_hold') return permittedTargetsFrom(fromStage);
+
+    // Read INSIDE the locked transaction rather than reusing the LATERAL join
+    // on the read path: by the time a move is judged, the history must be the
+    // one that exists now, not the one the board rendered from minutes ago.
+    const previous = await client.query(
+      `SELECT to_stage
+         FROM repair.job_card_stage_events
+        WHERE job_card_id = $1
+          -- Same explicit scoping as the read path. Without it, the stage a
+          -- held card resumes to is taken from whatever event row carries this
+          -- card id, and the resume target is an AUTHORIZATION input — it
+          -- decides which moves need an override.
+          AND tenant_id = $2
+          AND organization_id = $3
+          AND to_stage <> 'on_hold'
+        ORDER BY changed_at DESC
+        LIMIT 1`,
+      [cardId, ctx.tenantId, ctx.organizationId],
+    );
+    const resume = (previous.rows[0] as { to_stage: Stage } | undefined)?.to_stage;
+    // No history at all should be impossible — migration 008 backfills an
+    // opening event for every card. If it ever happens, the safe answer is
+    // "nowhere without an override", which is what the shared function returns.
+    return permittedTargetsFrom(fromStage, resume);
+  }
+
   /** Re-read through the same join the list uses, so one shape serves both. */
   private async findByIdInTransaction(
     client: { query: (t: string, v: unknown[]) => Promise<{ rows: unknown[] }> },
@@ -302,7 +638,7 @@ export class JobCardService {
       [id, ctx.tenantId],
     );
     if (!res.rows[0]) throw new NotFoundException('job card not found');
-    return this.toDomain(res.rows[0] as Parameters<JobCardService['toDomain']>[0]);
+    return this.toDomain(ctx, res.rows[0] as Parameters<JobCardService['toDomain']>[1]);
   }
 
   private assertMayRead(ctx: TenantContext): void {
@@ -311,7 +647,9 @@ export class JobCardService {
     }
   }
 
-  private toDomain = (row: {
+  private toDomain = (
+    ctx: TenantContext,
+    row: {
     id: string;
     job_number: string;
     customer_id: string;
@@ -329,8 +667,11 @@ export class JobCardService {
     expected_completion_on: Date | null;
     mileage_at_intake: number | null;
     opened_at: Date;
+    stage_changed_at: Date;
     closed_at: Date | null;
-  }): JobCard => ({
+    resume_stage: Stage | null;
+  },
+  ): JobCard => ({
     id: row.id,
     jobNumber: row.job_number,
     customerId: row.customer_id,
@@ -350,6 +691,8 @@ export class JobCardService {
       : null,
     mileageAtIntake: row.mileage_at_intake,
     openedAt: row.opened_at.toISOString(),
+    stageChangedAt: row.stage_changed_at.toISOString(),
     closedAt: row.closed_at ? row.closed_at.toISOString() : null,
+    allowedStages: stageOptionsFor(ctx.activeRole, row.stage as Stage, row.resume_stage),
   });
 }

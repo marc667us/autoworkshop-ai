@@ -1,7 +1,12 @@
 # ▶ START HERE — next session
 
-**Tip `e4efc81` on `master`, pushed, tree clean.**
-typecheck 15/15 · lint 15/15 · **208 unit tests** · page gates **23/23**.
+**Phase 5 slice 2 shipped 2026-07-29** — job cards can now MOVE, and the Repair
+Staging Board exists. typecheck 15/15 · lint 15/15 · **232 unit tests** ·
+page gates **23/23**. Migrations **008 + 009** applied locally — run
+`bash infrastructure/migrations/run.sh` before anything else.
+
+**Next: Phase 5 slice 3 — inspection and diagnosis records.** See
+`.claude/CURRENT_TASK.md`. The stages exist with no content behind them.
 
 Read this, then `.claude/SESSION_HANDOVER.md` (2026-07-28 pt2 section), then
 `.claude/TASK_QUEUE.md`.
@@ -100,6 +105,21 @@ or skip it.
 
 ## 5. Traps this session paid for
 
+- **`className="sr-only"` DOES NOTHING IN THIS REPO** — nothing defines that
+  class, so the text renders visibly. Use `visuallyHidden` from
+  `@autoworkshop/ui`. It cost three stray labels and counts reading "11 job card".
+- **A `visuallyHidden` element needs a POSITIONED ancestor.** It is
+  `position: absolute`; with none it lays out against the initial containing
+  block and can escape an `overflow-x` container. Signature to look for:
+  `documentElement.scrollWidth` huge while `body.scrollWidth` is normal.
+- **`overflow-x: auto` alone does not contain a wide child** inside a flex/grid
+  ancestor — it also needs `minWidth: 0`.
+- **Codex reviews a diff; it will not see what the page DOES.** Both front-end
+  defects above passed every gate and were found by measuring the rendered page.
+- **`capture-session.mjs` can fail once on a cold server** and succeed
+  immediately on retry. A first-run timeout is not proof of anything.
+- **A migration already applied is CHECKSUMMED — never edit it.** Fixes to 008
+  went into 009.
 - **Git Bash mangles `/path` arguments** — `export MSYS_NO_PATHCONV=1`.
 - **Keycloak login can exceed 30s here.** Verify scripts wait 90s and use
   `noWaitAfter` on the provider AND `#kc-login` clicks. **A timeout is not proof

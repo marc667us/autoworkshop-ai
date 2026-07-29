@@ -32,8 +32,28 @@ if (!SECRET) {
   process.exit(2);
 }
 
-const path = process.argv[2] ?? '/customers';
+const args = process.argv.slice(2);
+const flag = (name) => {
+  const i = args.indexOf(name);
+  return i === -1 ? undefined : args[i + 1];
+};
+
+// The first non-flag argument, so the original `call-api-as.mjs /customers`
+// form keeps working unchanged.
+const path = args.find((a) => a.startsWith('/')) ?? '/customers';
 const base = process.env['API_BASE_URL'] ?? 'http://localhost:4000';
+
+/**
+ * A WRITE can be probed too — added for the Phase 5 stage endpoint.
+ *
+ * `02.txt` §29 puts the entire stage rule set behind `PATCH
+ * /job-cards/:id/stage`, and a GET-only prober cannot ask the one question that
+ * matters there: does the API refuse a technician who skips quality control
+ * when nothing but the API is asked? A screen refusing to OFFER the move proves
+ * nothing (CLAUDE.md §8).
+ */
+const method = (flag('--method') ?? 'GET').toUpperCase();
+const rawBody = flag('--body');
 
 const cookies = JSON.parse(readFileSync(SEAM, 'utf-8'));
 const header = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
@@ -53,11 +73,16 @@ if (!accessToken) {
 }
 
 const res = await fetch(`${base}/api/v1${path}`, {
-  headers: { Authorization: `Bearer ${accessToken}` },
+  method,
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+    ...(rawBody ? { 'Content-Type': 'application/json' } : {}),
+  },
+  ...(rawBody ? { body: rawBody } : {}),
 });
 const body = await res.text();
 
-console.log(`GET /api/v1${path} -> HTTP ${res.status}`);
+console.log(`${method} /api/v1${path} -> HTTP ${res.status}`);
 // Truncated: the question is WHETHER rows come back and how many, not their
 // contents — and this output is pasted into review notes.
 let summary = body.slice(0, 400);

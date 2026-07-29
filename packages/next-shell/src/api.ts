@@ -132,13 +132,44 @@ export async function apiPost<T>(
   path: string,
   body: unknown,
 ): Promise<ApiResult<T>> {
+  return apiWrite<T>('POST', workspaceId, path, body);
+}
+
+/**
+ * PATCH a resource as the current viewer.
+ *
+ * Identical handling to `apiPost` — same auth, same never-throws contract, same
+ * `invalid` pass-through — and shares its implementation rather than copying it
+ * (Directive §3). The distinction is only the verb: a PATCH sends the fields
+ * being changed, so the caller does not have to hold a whole record it never
+ * read and cannot accidentally write back a stale copy of the rest of it.
+ *
+ * `1.txt` §394's refusals arrive here as `invalid` (a 400 — "requires
+ * overrideReason") or `forbidden` (a 403 — "role may not move a job card to
+ * ..."), and the board shows the API's own sentence for the first because it
+ * describes what the person can actually do about it.
+ */
+export async function apiPatch<T>(
+  workspaceId: WorkspaceId | string,
+  path: string,
+  body: unknown,
+): Promise<ApiResult<T>> {
+  return apiWrite<T>('PATCH', workspaceId, path, body);
+}
+
+async function apiWrite<T>(
+  method: 'POST' | 'PATCH',
+  workspaceId: WorkspaceId | string,
+  path: string,
+  body: unknown,
+): Promise<ApiResult<T>> {
   const accessToken = await workspaceAuth(workspaceId).getAccessToken();
   if (!accessToken) return { ok: false, reason: 'unauthenticated' };
 
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl()}/api/v1${path}`, {
-      method: 'POST',
+      method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',

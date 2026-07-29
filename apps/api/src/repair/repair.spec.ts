@@ -66,6 +66,7 @@ const jobRow = {
   expected_completion_on: null,
   mileage_at_intake: 84500,
   opened_at: new Date('2026-07-28T00:00:00Z'),
+  stage_changed_at: new Date('2026-07-28T00:00:00Z'),
   closed_at: null,
 };
 

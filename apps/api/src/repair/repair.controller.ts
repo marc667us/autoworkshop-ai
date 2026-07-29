@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -31,6 +32,17 @@ export class JobCardController {
     return this.jobCards.list(req.tenantContext, { vehicleId });
   }
 
+  /**
+   * ⚠️ DECLARED BEFORE `@Get(':id')` AND IT MUST STAY THERE. Nest matches routes
+   * in declaration order, so with these swapped `/job-cards/board` is captured
+   * by the `:id` route, fails `ParseUUIDPipe`, and the staging board 400s with a
+   * message about a malformed UUID.
+   */
+  @Get('board')
+  board(@Req() req: AuthenticatedRequest) {
+    return this.jobCards.board(req.tenantContext);
+  }
+
   @Get(':id')
   findOne(
     @Req() req: AuthenticatedRequest,
@@ -53,5 +65,24 @@ export class JobCardController {
     },
   ) {
     return this.jobCards.create(req.tenantContext, body);
+  }
+
+  /**
+   * PATCH, not PUT: this replaces ONE field of the card, and the caller does not
+   * hold the rest of it. A PUT would invite a client to send back a whole job
+   * card it read a minute ago and silently undo somebody else's edit.
+   *
+   * The rules live in `JobCardService.changeStage` — `02.txt` §29 requires the
+   * BACKEND to validate every stage change, and a board that drags cards around
+   * is only one of the callers. An MCP tool moving a job on an agent's behalf
+   * gets the identical checks because it calls the same service.
+   */
+  @Patch(':id/stage')
+  changeStage(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { toStage: string; note?: string; overrideReason?: string },
+  ) {
+    return this.jobCards.changeStage(req.tenantContext, id, body);
   }
 }
