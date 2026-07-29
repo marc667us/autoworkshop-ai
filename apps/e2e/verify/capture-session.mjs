@@ -54,8 +54,12 @@ if (await p.count()) await p.first().click({ noWaitAfter: true });
 await page.waitForURL(/openid-connect\/auth/, { timeout: 60000 });
 await page.fill('#username', USER);
 await page.fill('#password', process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!');
-await page.click('#kc-login');
-await page.waitForURL((u) => u.toString().startsWith(APP), { timeout: 30000 });
+// `noWaitAfter` for the same reason as the provider button: this submit
+    // hands off to the app's callback and Playwright's default post-click wait
+    // times out on that redirect chain rather than following it. `waitForURL`
+    // below is the real signal.
+    await page.click('#kc-login', { noWaitAfter: true });
+await page.waitForURL((u) => u.toString().startsWith(APP), { timeout: 90000 });
 
 // Captured BEFORE any sign-out — this is the credential an attacker would have.
 writeFileSync(SEAM, JSON.stringify(await ctx.cookies(), null, 2));

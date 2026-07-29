@@ -169,3 +169,28 @@ export function viewerLabels(viewer: ViewerDescription | null): ViewerLabels {
  * exists.
  */
 export const NO_GRANTS: readonly PermissionKey[] = Object.freeze([]);
+
+/**
+ * The DISTINCT organizations a viewer belongs to, for the §5 switcher.
+ *
+ * `/me` returns one membership row per organization AND BRANCH AND ROLE, so a
+ * user who is a service adviser at two branches of one workshop has two rows
+ * naming the same organization. Feeding those straight to a `<select>` renders
+ * the same option twice, which reads as a bug and — worse — makes the switcher
+ * look like it has choices it does not.
+ *
+ * Pure, so it can be asserted without a Next runtime. Order is preserved from
+ * the API, which already sorts by organization name.
+ */
+export function organizationsFromMemberships(
+  memberships: readonly { organizationId: string; organizationName: string }[],
+): Array<{ id: string; name: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ id: string; name: string }> = [];
+  for (const m of memberships) {
+    if (seen.has(m.organizationId)) continue;
+    seen.add(m.organizationId);
+    out.push({ id: m.organizationId, name: m.organizationName });
+  }
+  return out;
+}

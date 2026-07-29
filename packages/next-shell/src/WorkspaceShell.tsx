@@ -70,6 +70,8 @@ export interface WorkspaceShellProps {
   counters?: Record<string, number>;
   warnings?: Record<string, number>;
   topNavActions?: TopNavAction[];
+  /** §5 organization switcher (T-0016), rendered in the top bar. */
+  organizationSwitcher?: React.ReactNode;
   /**
    * Sign-out server action, supplied by the app (T-0005 finding 5). It is
    * per-app because the workspace decides which Keycloak client the refresh
@@ -97,6 +99,7 @@ export function WorkspaceShell({
   counters,
   warnings,
   topNavActions,
+  organizationSwitcher,
   signOutAction,
   signInHref,
   signedIn,
@@ -136,6 +139,7 @@ export function WorkspaceShell({
       counters={counters}
       warnings={warnings}
       topNavActions={topNavActions}
+      organizationSwitcher={organizationSwitcher}
       accountControl={
         <AccountControl
           signedIn={signedIn}

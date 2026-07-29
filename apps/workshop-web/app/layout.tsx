@@ -6,6 +6,9 @@ import {
   navRoleFor,
   viewerLabels,
   viewerHasSession,
+  OrganizationSwitcher,
+  setActiveOrganizationAction,
+  organizationsFromMemberships,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction } from './sign-out-action';
@@ -58,6 +61,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           signOutAction={signOutAction}
           signInHref="/api/auth/signin"
           signedIn={signedIn}
+          // T-0016. The options are the viewer's OWN memberships as the API
+          // reported them, so the list cannot offer an organisation they do not
+          // hold — and the API re-validates the choice regardless, refusing one
+          // that is not theirs rather than silently falling back. The switcher
+          // renders nothing when there is only one membership: a control that
+          // cannot change anything is worse than no control.
+          organizationSwitcher={
+            viewer ? (
+              <OrganizationSwitcher
+                organizations={organizationsFromMemberships(viewer.memberships)}
+                activeId={viewer.organizationId}
+                action={setActiveOrganizationAction}
+              />
+            ) : null
+          }
           counters={{
             'workshop.tasks.open': 7,
             'workshop.approvals.pending': 3,

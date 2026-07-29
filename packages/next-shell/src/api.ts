@@ -1,5 +1,6 @@
 import { apiBaseUrl, workspaceAuth } from '@autoworkshop/auth';
 import type { WorkspaceId } from '@autoworkshop/navigation';
+import { activeOrganizationHeader } from './viewer';
 
 /**
  * How a PAGE reads the API. The link that did not exist until now.
@@ -71,7 +72,12 @@ export async function apiGet<T>(
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl()}/api/v1${path}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        // The viewer's chosen organization (T-0016). Absent until they pick
+        // one, in which case the API takes its own deterministic default.
+        ...(await activeOrganizationHeader(workspaceId)),
+      },
       cache: 'no-store',
     });
   } catch {
@@ -136,6 +142,7 @@ export async function apiPost<T>(
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
+        ...(await activeOrganizationHeader(workspaceId)),
       },
       body: JSON.stringify(body),
     });

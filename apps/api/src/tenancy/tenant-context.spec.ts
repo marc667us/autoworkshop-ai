@@ -36,14 +36,51 @@ describe('resolveTenantContext', () => {
     ).toThrow(TenantResolutionError);
   });
 
-  it('refuses to guess when several memberships exist and none was selected', () => {
-    expect(() =>
-      resolveTenantContext({
-        userId: 'user-1',
-        memberships: [membership(), membership({ organizationId: 'org-2' })],
-        correlationId: 'c',
-      }),
-    ).toThrow(/multiple memberships/);
+  /**
+   * CHANGED 2026-07-28 (T-0016). This previously asserted a THROW, and the
+   * throw was a latent lockout: every request resolves context, `GET /me`
+   * included, so a user holding two memberships and no stored selection could
+   * not load the shell containing the switcher they needed to make one. It was
+   * invisible only because every seeded identity held exactly one membership.
+   *
+   * Defaulting grants nothing: each candidate is a membership the server has
+   * already proved. The confused-deputy case — a REQUESTED organization the
+   * user does not hold — still throws, and is asserted immediately below.
+   */
+  it('takes a deterministic default when several memberships exist and none was selected', () => {
+    const ctx = resolveTenantContext({
+      userId: 'user-1',
+      memberships: [membership({ organizationId: 'org-9' }), membership({ organizationId: 'org-2' })],
+      correlationId: 'c',
+    });
+    expect(ctx.organizationId).toBe('org-2');
+  });
+
+  it('the default is STABLE regardless of the order memberships arrive in', () => {
+    // Row order is not a contract. If the default tracked it, a viewer's tenant
+    // could change between two identical requests — far worse than an
+    // arbitrary-but-fixed choice.
+    const forwards = resolveTenantContext({
+      userId: 'user-1',
+      memberships: [membership({ organizationId: 'org-2' }), membership({ organizationId: 'org-9' })],
+      correlationId: 'c',
+    });
+    const backwards = resolveTenantContext({
+      userId: 'user-1',
+      memberships: [membership({ organizationId: 'org-9' }), membership({ organizationId: 'org-2' })],
+      correlationId: 'c',
+    });
+    expect(forwards.organizationId).toBe(backwards.organizationId);
+  });
+
+  it('still prefers an EXPLICIT selection over the default', () => {
+    const ctx = resolveTenantContext({
+      userId: 'user-1',
+      memberships: [membership({ organizationId: 'org-2' }), membership({ organizationId: 'org-9' })],
+      requestedOrganizationId: 'org-9',
+      correlationId: 'c',
+    });
+    expect(ctx.organizationId).toBe('org-9');
   });
 
   it('SECURITY: refuses an organization the user is not a member of', () => {

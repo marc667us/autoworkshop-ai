@@ -86,8 +86,12 @@ try {
     await page.waitForURL(/openid-connect\/auth/, { timeout: 60000 });
     await page.fill('#username', user);
     await page.fill('#password', password);
-    await page.click('#kc-login');
-    await page.waitForURL((u) => u.toString().startsWith(origin), { timeout: 30000 });
+    // `noWaitAfter` for the same reason as the provider button: this submit
+    // hands off to the app's callback and Playwright's default post-click wait
+    // times out on that redirect chain rather than following it. `waitForURL`
+    // below is the real signal.
+    await page.click('#kc-login', { noWaitAfter: true });
+    await page.waitForURL((u) => u.toString().startsWith(origin), { timeout: 90000 });
   }
 
   // Assert the sign-in actually took, BEFORE reading the target. Otherwise a

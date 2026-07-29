@@ -55,6 +55,8 @@ export interface AppShellProps {
    * Next runtime. `@autoworkshop/next-shell` supplies the real control.
    */
   accountControl?: React.ReactNode;
+  /** §5 organization switcher, passed through to the top bar. */
+  organizationSwitcher?: React.ReactNode;
   renderLink: (props: {
     href: string;
     children: React.ReactNode;
@@ -77,6 +79,7 @@ export function AppShell({
   warnings,
   topNavActions,
   accountControl,
+  organizationSwitcher,
   renderLink,
   children,
   drawer,
@@ -211,6 +214,7 @@ export function AppShell({
         actions={actions}
         themeControl={<ThemeToggle />}
         accountControl={accountControl}
+        organizationSwitcher={organizationSwitcher}
       />
 
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>

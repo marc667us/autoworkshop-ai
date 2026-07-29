@@ -2,6 +2,7 @@ import { cache } from 'react';
 import type { PermissionKey, RoleId, WorkspaceId } from '@autoworkshop/navigation';
 import { apiBaseUrl, workspaceAuth } from '@autoworkshop/auth';
 import { grantsFor, navRoleFor, NO_GRANTS, type ViewerDescription } from './viewer-contract';
+import { activeOrganizationId, rawOrganizationHeader } from './active-organization';
 
 /**
  * WHO THE VIEWER IS — resolved from a validated Keycloak session (T-0005).
@@ -40,15 +41,41 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
   // renewing it. Either way the viewer is unauthenticated for this render.
   if (!accessToken) return null;
 
-  let response: Response;
-  try {
-    response = await fetch(`${apiBaseUrl()}/api/v1/me`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+  // Two attempts: with the stored organization, then WITHOUT it.
+  //
+  // ⚠️ THE RETRY IS A LOCKOUT FIX, not belt and braces (Codex, HIGH). The API
+  // THROWS when a requested organization is not among the viewer's active
+  // memberships — correctly, since that is an authorization probe. But a
+  // selection can go stale through no fault of the user: they pick org A, their
+  // membership in A is later revoked, and they still belong to B. Every request
+  // then carries a now-invalid id, `/me` fails, the shell cannot render, and the
+  // switcher they would have used to choose B never appears. Retrying without
+  // the header lets them back in on the API's own default.
+  const attempt = async (withOrg: boolean): Promise<Response> =>
+    fetch(`${apiBaseUrl()}/api/v1/me`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        // MUST carry the same organization header the pages send (T-0016).
+        // Without it the shell resolves the API's DEFAULT organization while
+        // every page resolves the SELECTED one — the top bar would name one
+        // organisation while the table below listed another's customers. That
+        // is the nav/router divergence this file already exists to prevent,
+        // one layer down.
+        ...(withOrg ? await rawOrganizationHeader() : {}),
+      },
       // The viewer's role and permissions are per-request facts. Next caches
       // fetches by default; caching this one would serve one user's grants to
       // the next user who lands on the same rendered route.
       cache: 'no-store',
     });
+
+  let response: Response;
+  try {
+    response = await attempt(true);
+    // Only worth a second call if a selection was actually sent.
+    if (!response.ok && (await activeOrganizationId())) {
+      response = await attempt(false);
+    }
   } catch {
     // The API being unreachable must degrade to "unauthenticated", never throw:
     // an exception here takes out the whole page, including the parts that need
@@ -131,3 +158,29 @@ export async function viewerRole(
 
 export { grantsFor, navRoleFor, NO_GRANTS };
 export type { ViewerDescription };
+
+/**
+ * The organization header for ordinary API calls — VALIDATED.
+ *
+ * Drops a stored selection the viewer does not (or no longer) holds, so a stale
+ * cookie degrades to the API's default instead of failing every request. The
+ * check is a convenience, NOT the control: the API re-validates every
+ * `x-organization-id` against the user's own memberships and refuses one that
+ * is not theirs, whatever this sends.
+ *
+ * Lives here rather than in `active-organization.ts` because it needs the
+ * viewer, and `active-organization.ts` is imported BY the viewer lookup —
+ * putting it there would make the two modules import each other.
+ */
+export async function activeOrganizationHeader(
+  workspaceId: WorkspaceId | string,
+): Promise<Record<string, string>> {
+  const id = await activeOrganizationId();
+  if (!id) return {};
+  const viewer = await fetchViewer(workspaceId);
+  // No viewer means no session; the call will fail on the token regardless, and
+  // sending the id changes nothing.
+  if (!viewer) return {};
+  const holds = viewer.memberships.some((m) => m.organizationId === id);
+  return holds ? { 'x-organization-id': id } : {};
+}

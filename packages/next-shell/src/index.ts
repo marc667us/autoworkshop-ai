@@ -13,11 +13,15 @@ export { currentViewer, viewerGrants, viewerRole } from './viewer';
  * to hardcode the expected values, at which point the test stops testing the
  * model it is meant to guard.
  */
-export { grantsFor, navRoleFor, viewerLabels, NO_GRANTS } from './viewer-contract';
+export { grantsFor, navRoleFor, viewerLabels, NO_GRANTS, organizationsFromMemberships } from './viewer-contract';
 export { viewerHasSession } from './viewer';
 export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
 export { requireWorkspaceAccess } from './require-access';
 export { requireNavRoute } from './require-route';
 export { apiGet, apiPost, describeApiFailure } from './api';
+export { OrganizationSwitcher } from './OrganizationSwitcher';
+export type { OrganizationOption } from './OrganizationSwitcher';
+export { setActiveOrganizationAction } from './set-organization-action';
+export { activeOrganizationId, ACTIVE_ORG_COOKIE } from './active-organization';
 export type { ApiResult } from './api';
 export type { ViewerDescription, ViewerLabels } from './viewer-contract';

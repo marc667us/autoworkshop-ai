@@ -77,9 +77,30 @@ export function resolveTenantContext(params: {
   } else if (active.length === 1) {
     selected = active[0];
   } else {
-    throw new TenantResolutionError(
-      'user holds multiple memberships and no organization was selected',
-    );
+    // No selection, several memberships: take a DETERMINISTIC default.
+    //
+    // ⚠️ THIS USED TO THROW, AND THAT WAS A LATENT LOCKOUT. Every request goes
+    // through this function, `GET /me` included — so a user holding two
+    // memberships and no stored selection could not load the shell that
+    // contains the switcher they would have used to make one. The failure was
+    // invisible only because every seeded identity happened to hold exactly one
+    // membership; the first user granted a second would have been locked out of
+    // the whole application.
+    //
+    // Defaulting is NOT the fallback this function refuses elsewhere. A
+    // REQUESTED organization that is not among the user's memberships still
+    // throws, because that is an authorization probe and silently downgrading
+    // it would hide one. Here there is no request to contradict: every
+    // candidate is a membership the server has already proved, so choosing one
+    // grants nothing the user did not already hold.
+    //
+    // Sorted by organization id so the default is STABLE across requests.
+    // Picking `active[0]` unsorted would depend on row order, and a viewer whose
+    // tenant silently changed between two requests is far worse than an
+    // arbitrary-but-fixed choice.
+    selected = [...active].sort((a, b) =>
+      a.organizationId.localeCompare(b.organizationId),
+    )[0];
   }
 
   // Narrowed explicitly rather than with a non-null assertion: `!` would

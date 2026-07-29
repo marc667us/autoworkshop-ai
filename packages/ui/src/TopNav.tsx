@@ -92,6 +92,15 @@ export interface TopNavProps {
    * TopNav must stay renderable with no server, no session and no Next runtime.
    */
   accountControl?: React.ReactNode;
+  /**
+   * Replaces the read-only Organization chip with a real control (§5, T-0016).
+   *
+   * A ReactNode slot rather than data-plus-callback, mirroring `accountControl`:
+   * switching organizations needs a server action, and a server action cannot be
+   * created inside this client component — it has to be handed down from a
+   * server layout.
+   */
+  organizationSwitcher?: React.ReactNode;
 }
 
 const ICONS: Record<string, string> = {
@@ -234,6 +243,7 @@ export function TopNav({
   userLabel,
   themeControl,
   accountControl,
+  organizationSwitcher,
 }: TopNavProps) {
   return (
     <header
@@ -299,7 +309,10 @@ export function TopNav({
           would consume the entire bar and leave no room for search. */}
       <div className="aw-topnav-selectors" style={{ display: 'flex', gap: primitive.space[2] }}>
         <Selector label="Workspace" value={workspaceLabel} />
-        <Selector label="Organization" value={organizationLabel} />
+        {/* The switcher REPLACES the chip when one is supplied, rather than
+            sitting beside it — two controls naming the same organisation is how
+            a user ends up unsure which one is authoritative. */}
+        {organizationSwitcher ?? <Selector label="Organization" value={organizationLabel} />}
         <Selector label="Branch" value={branchLabel} />
       </div>
 
