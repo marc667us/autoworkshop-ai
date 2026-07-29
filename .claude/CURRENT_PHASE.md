@@ -1,5 +1,28 @@
 # Current phase
 
+**▶ PHASE 5 — Workshop + Repair · Release 0.4 · IN PROGRESS** as of 2026-07-28.
+
+Slice 1 shipped: `repair.job_cards` (migration 006), the 19 stages of
+`1.txt` §322-§360 plus `on_hold`, per-organization job numbers, and three access
+scopes from one query - staff see the organisation, a technician sees only cards
+assigned to them, a customer only cards against their own vehicles.
+
+**Next: the Repair Staging Board and stage transitions.** A card cannot yet
+leave `complaint_received`.
+
+## Phase 4 - Customer + Vehicle · Release 0.3 · LARGELY COMPLETE
+
+Built: registration (customer + vehicle), vehicle garage, customer dashboard,
+detail pages, complaint submission, and the organisation switcher.
+
+Outstanding, each blocked on something ABSENT rather than on time: service
+history (needs completed jobs), vehicle documents (file storage), maintenance
+schedule (service-interval rules), appointment request (an appointments table),
+workshop search (a public organisation directory). **Customer profile is small
+and buildable now.**
+
+---
+
 **▶ PHASE 4 — Customer + Vehicle · Release 0.3 · STARTING (not yet begun)**
 as of 2026-07-28. Phase 3 closed; T-0005 findings 5 and 4 are shut and gated,
 and the first screen that reads real data shipped

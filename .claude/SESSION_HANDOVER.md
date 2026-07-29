@@ -1,5 +1,54 @@
 # Session handover
 
+## 2026-07-28 pt2 — PHASE 4 BUILT, PHASE 5 STARTED · 9 commits · tip `e4efc81`
+
+**Read `.claude/NEXT_SESSION_START_HERE.md` FIRST** — it carries the start-up
+commands, the sign-in steps, the acceptance checks and the next task.
+
+Tree clean, pushed. typecheck 15/15 - lint 15/15 - 208 unit tests - page gates 23/23.
+
+### The nine commits
+
+| # | Commit | What |
+|---|---|---|
+| 1 | `53b2f05` | Phase 4 slice 1 - `core` schema (mig 004), customers + vehicles, first screens |
+| 2 | `2dd628b` | The WRITE path - register customer / register vehicle, `apiPost` |
+| 3 | `3f512e6` | Detail pages; a detail route gates on its PARENT list route |
+| 4 | `dad5f8b` | The customer GARAGE - owner-scoping finally ran against real data |
+| 5 | `3d850fa` | Add Vehicle (customer self-service); form controls moved to `packages/ui` |
+| 6 | `00a022f` | T-0016 organisation switcher - and two latent lockouts it uncovered |
+| 7 | `f187cfb` | Customer dashboard - real data, honest about what is not built |
+| 8 | `188a314` | PHASE 5 BEGINS - job cards (mig 006) + customer complaint opens one |
+| 9 | `e4efc81` | Fixed the "your session has ended" lie shown to first-time visitors (mig 007) |
+
+### Six defects found by RUNNING things, not reviewing them
+
+1. **The API handed a TECHNICIAN the whole customer book** - 200 with names,
+   phones and locations - while the page 404'd them. Tenant isolation held;
+   ROLE authorization did not exist. Found with a real token.
+2. **`reception_staff` got a 404 on the screen built for them** - the four role
+   trees route one concept to four different paths.
+3. **The migration ledger blamed an edit nobody made** - CRLF vs LF. The
+   anti-drift guard had CAUSED drift: mig 003 was applied by hand, unrecorded.
+4. **Owner-scoping had NEVER executed** - every seeded `customers.user_id` was
+   NULL, so a customer would have seen an empty garage that looked correct.
+5. **TWO lockouts in tenant resolution** - multi-membership, and a stale org
+   cookie. Both failed `/me`, so the shell could never render the switcher
+   needed to recover.
+6. **"Your session has ended" shown to people who never signed in** - reported
+   by the owner trying the app. Fixed across all 11 screens.
+
+### Gates
+
+Codex ran on every slice and found **8 real defects**, including: reads scoped
+to tenant when the records are organization-owned; POST body ids reaching SQL
+as 500s; a job card assignable to a cashier who would never see it; `engineType`
+sent with no field to enter it. The **Supervisor pass found one Codex missed** -
+narrowing reads to the organisation while uniqueness stayed tenant-wide turned a
+409 into a cross-organisation existence oracle (fixed by migration 005).
+
+---
+
 ## 2026-07-28 — findings 5 + 4 closed and gated · THE FIRST DATA-BACKED SCREEN · production suspended
 
 **Tip `9b29ebd` on `master`, pushed, tree clean.**
