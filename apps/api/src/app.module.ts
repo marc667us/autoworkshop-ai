@@ -6,6 +6,7 @@ import { CoreModule } from './core/core.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { IdentityModule } from './identity/identity.module';
+import { RepairModule } from './repair/repair.module';
 
 /**
  * Modular monolith root.
@@ -23,6 +24,7 @@ import { IdentityModule } from './identity/identity.module';
     IdentityModule,
     AuthModule,
     CoreModule,
+    RepairModule,
   ],
   controllers: [HealthController],
 })
