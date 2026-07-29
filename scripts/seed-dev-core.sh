@@ -155,6 +155,21 @@ else
   echo "      bash scripts/seed-dev-identity.sh   # then re-run this script"
 fi
 
+# Insurance dates, RELATIVE TO TODAY rather than fixed.
+#
+# The customer dashboard computes lapsed / due-soon / in-date from these, so
+# hardcoded dates would silently stop exercising those branches the moment they
+# aged past — the fixture would keep passing while testing only one outcome.
+# CURRENT_DATE arithmetic keeps one vehicle lapsed and one in date forever.
+psql_run -q <<'SQL'
+UPDATE core.vehicles SET insurer_name = 'Star Assurance',
+       insurance_expires_on = CURRENT_DATE - 30
+ WHERE upper(registration_number) = 'GR 4821-22';
+UPDATE core.vehicles SET insurer_name = 'Enterprise Insurance',
+       insurance_expires_on = CURRENT_DATE + 15
+ WHERE upper(registration_number) = 'GT 1190-19';
+SQL
+
 echo "==> verifying"
 psql_run -c "
 SELECT t.name AS tenant, c.display_name AS customer, count(v.id) AS vehicles
