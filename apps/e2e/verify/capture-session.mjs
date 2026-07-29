@@ -45,7 +45,13 @@ const ctx = await browser.newContext();
 const page = await ctx.newPage();
 
 await page.goto(`${APP}${LANDING}`);
-await page.getByRole('link', { name: 'Sign in' }).click();
+// `.first()`, because a signed-out landing page legitimately offers "Sign in"
+// TWICE — once in the global actions bar and once in the main content — and an
+// unscoped `getByRole` is a Playwright strict-mode violation that reads as
+// "capture is broken" rather than "there are two ways to sign in". Hit on
+// customer-web 2026-07-29 while proving the inspection refusals; both links go
+// to the same `/api/auth/signin`, so either serves.
+await page.getByRole('link', { name: 'Sign in' }).first().click();
 const p = page.getByRole('button', { name: /Keycloak/i });
 // `noWaitAfter`: the button submits a form that redirects to Keycloak, and
 // Playwright's default post-click navigation wait times out on that hand-off.

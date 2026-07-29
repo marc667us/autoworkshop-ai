@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
-import { JobCardController } from './repair.controller';
+import { InspectionController, JobCardController } from './repair.controller';
+import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 
 /**
@@ -15,8 +16,8 @@ import { JobCardService } from './job-card.service';
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [JobCardController],
-  providers: [JobCardService],
-  exports: [JobCardService],
+  controllers: [JobCardController, InspectionController],
+  providers: [JobCardService, InspectionService],
+  exports: [JobCardService, InspectionService],
 })
 export class RepairModule {}
