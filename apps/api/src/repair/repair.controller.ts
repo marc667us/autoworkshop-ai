@@ -16,6 +16,7 @@ import { DiagnosisService } from './diagnosis.service';
 import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 import { RepairPlanService } from './repair-plan.service';
+import { QuotationService } from './quotation.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -31,6 +32,7 @@ export class JobCardController {
     private readonly inspections: InspectionService,
     private readonly diagnoses: DiagnosisService,
     private readonly repairPlans: RepairPlanService,
+    private readonly quotations: QuotationService,
   ) {}
 
   @Get()
@@ -184,6 +186,31 @@ export class JobCardController {
     },
   ) {
     return this.repairPlans.start(req.tenantContext, id, body ?? {});
+  }
+
+  /** The quotations priced against a job card — `07.txt` §9-§16 (slice 5). */
+  @Get(':id/quotations')
+  listQuotations(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.quotations.listForJobCard(req.tenantContext, id);
+  }
+
+  /**
+   * §10 + §3 — "the approved repair plan is sent to quotation preparation" and
+   * "the system GENERATES a draft quotation".
+   *
+   * No body: the draft is generated FROM the approved plan, not typed in. A payload
+   * here would invite a caller to supply figures that disagree with the plan they are
+   * supposedly for.
+   */
+  @Post(':id/quotations')
+  prepareQuotation(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.quotations.prepare(req.tenantContext, id);
   }
 }
 
@@ -633,5 +660,124 @@ export class RepairPlanController {
     @Body() body: { decision?: string; note?: string },
   ) {
     return this.repairPlans.review(req.tenantContext, id, body ?? {});
+  }
+}
+
+
+/**
+ * Quotations addressed directly, once one exists — `07.txt` §9-§16.
+ *
+ * A SEPARATE controller, the judgement every sibling here made: pricing a line
+ * identifies the QUOTATION, not the card.
+ */
+@Controller('quotations')
+@UseGuards(TenantGuard)
+export class QuotationController {
+  constructor(private readonly quotations: QuotationService) {}
+
+  /**
+   * ⚠️ DECLARED BEFORE `@Get(':id')`, and it must stay there. Nest matches in
+   * declaration order; four slices have now paid for this note.
+   */
+  @Get()
+  list(@Req() req: AuthenticatedRequest) {
+    return this.quotations.list(req.tenantContext);
+  }
+
+  @Get(':id')
+  findOne(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.quotations.findById(req.tenantContext, id);
+  }
+
+  /**
+   * §11's taxes and discounts, §4's validity, warranty and conditions.
+   *
+   * The nullable fields declare `| null` because on this route `null` MEANS CLEAR THIS
+   * COLUMN and an absent key means leave it alone.
+   */
+  @Patch(':id')
+  recordDetails(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      discountAmount?: number;
+      discountReason?: string | null;
+      validUntil?: string | null;
+      warrantyTerms?: string | null;
+      completionConditions?: string | null;
+      recommendedRepair?: string | null;
+      alternativeOptions?: string | null;
+    },
+  ) {
+    return this.quotations.recordDetails(req.tenantContext, id, body ?? {});
+  }
+
+  /** §11's external services and §4's other charges — a line the plan did not produce. */
+  @Post(':id/lines')
+  addLine(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      lineKind?: string;
+      description?: string;
+      quantity?: number;
+      unit?: string;
+      unitPrice?: number;
+      isOptional?: boolean;
+    },
+  ) {
+    return this.quotations.addLine(req.tenantContext, id, body ?? {});
+  }
+
+  /** Price a generated line, or correct one. */
+  @Patch(':id/lines/:lineId')
+  updateLine(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('lineId', new ParseUUIDPipe()) lineId: string,
+    @Body()
+    body: {
+      lineKind?: string;
+      description?: string;
+      quantity?: number;
+      unit?: string | null;
+      unitPrice?: number;
+      isOptional?: boolean;
+    },
+  ) {
+    return this.quotations.updateLine(req.tenantContext, id, lineId, body ?? {});
+  }
+
+  @Delete(':id/lines/:lineId')
+  removeLine(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('lineId', new ParseUUIDPipe()) lineId: string,
+  ) {
+    return this.quotations.removeLine(req.tenantContext, id, lineId);
+  }
+
+  /** §5 — submit for internal approval. */
+  @Post(':id/submit')
+  submit(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.quotations.submit(req.tenantContext, id);
+  }
+
+  /** §5's internal approval — approve, or reject with a reason. */
+  @Post(':id/review')
+  review(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { decision?: string; note?: string },
+  ) {
+    return this.quotations.review(req.tenantContext, id, body ?? {});
   }
 }

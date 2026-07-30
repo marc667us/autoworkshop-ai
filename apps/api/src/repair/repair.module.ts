@@ -5,9 +5,11 @@ import {
   InspectionController,
   JobCardController,
   RepairPlanController,
+  QuotationController,
 } from './repair.controller';
 import { DiagnosisService } from './diagnosis.service';
 import { RepairPlanService } from './repair-plan.service';
+import { QuotationService } from './quotation.service';
 import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 
@@ -28,8 +30,21 @@ import { JobCardService } from './job-card.service';
     InspectionController,
     DiagnosisController,
     RepairPlanController,
+    QuotationController,
   ],
-  providers: [JobCardService, InspectionService, DiagnosisService, RepairPlanService],
-  exports: [JobCardService, InspectionService, DiagnosisService, RepairPlanService],
+  providers: [
+    JobCardService,
+    InspectionService,
+    DiagnosisService,
+    RepairPlanService,
+    QuotationService,
+  ],
+  exports: [
+    JobCardService,
+    InspectionService,
+    DiagnosisService,
+    RepairPlanService,
+    QuotationService,
+  ],
 })
 export class RepairModule {}
