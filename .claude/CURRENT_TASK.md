@@ -2,8 +2,10 @@
 
 **▶ PHASE 5 slice 4 — the repair plan.**
 
-**Read `.claude/NEXT_SESSION_START_HERE.md` first** — start-up commands, sign-in steps,
-the outstanding list, and the traps. Section 5 there is what makes slice 4 faster than 3b.
+**Run `bash scripts/start-session.sh` first**, then read
+`.claude/NEXT_SESSION_START_HERE.md` — start-up commands, sign-in steps, the outstanding
+list, and the traps. The script kills the stale servers that cost the 07-30 session an
+hour; the traps section is what makes slice 4 faster than 3b.
 
 **Owner direction 2026-07-29, still standing: batch 3-4 slices per session** and run the
 gates once per batch rather than once per slice. The order below is dependency order, not

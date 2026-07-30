@@ -1,5 +1,20 @@
 # ▶ START HERE — next session
 
+```bash
+cd /c/Users/USER/Documents/autoworkshop-ai && bash scripts/start-session.sh
+```
+
+**Run that first, before reading the rest of this file.** It is the start of the session:
+it kills stale dev servers (`pkill` does NOT work on Windows — this is the single most
+expensive trap in this repo), proves the ports are free, checks the Docker containers,
+applies any pending migration, and prints what to run next. Read-mostly and idempotent;
+it deliberately does NOT build or start anything, because a script that silently starts
+servers is how you end up with two.
+
+Then continue with this file, then `.claude/CURRENT_TASK.md`.
+
+---
+
 **Phase 5 slice 3b SHIPPED 2026-07-30 (`b243552`).** Diagnosis records: migration **013**,
 §3026-§3046's fields, §1290's three standings, §1294 made structural, §1292's supervisor
 review with BOTH the role rule and the reviewer-is-not-submitter rule, screens at all four
