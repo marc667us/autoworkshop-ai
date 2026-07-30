@@ -26,7 +26,40 @@ The rules, not the screen, were the deliverable again:
 - `technician` is limited to ASSIGNED cards on every path, including reading a
   sheet by its own id
 
-## The gap to close next — slice 3b
+## ▶ SLICE 3B IS PART-STARTED — the schema exists, nothing uses it
+
+**Migration `012` is written, applied locally, and committed.** It is SCHEMA ONLY:
+`repair.diagnoses` + `repair.diagnostic_findings`, RLS ENABLE+FORCE (measured
+`t|t`), DELETE withheld, immutability triggers, and the §1294 rule made
+structural — a finding is `confirmed` only if a human is named against it, so an
+AI suggestion cannot become a confirmed fault by a status flip. Both proven by
+effect against real Postgres, not read off the file.
+
+**What remains for 3b, in order:**
+1. `apps/api/src/repair/diagnosis-rules.ts` — the §3026-§3046 field list, the
+   three §1290 statuses, the two §1294 sources, the `08.txt` §9 affected-system
+   categories, role sets, and the start stage (`diagnosis_in_progress`). Copy
+   `inspection-checklist.ts`, including its drift test against the migration.
+2. `diagnosis.service.ts` — copy `inspection.service.ts` wholesale. It already
+   has the right shape: `assertCardVisible` (404 not 403), `assertWritable` with
+   `FOR UPDATE`, attempts not edits, the technician-assignment predicate on
+   EVERY path including read-by-id, and — learn from 3a — **guard the
+   zero-findings submission up front**, do not wait for review to find it.
+3. The review step (§1292): approve / reject with a reason. **The reviewer may
+   not be the submitter** — §563's independence. The columns and constraints for
+   this are already in 012.
+4. Controller routes + module wiring (`RepairModule` needs the new provider AND
+   controller — a Nest module using `@UseGuards(TenantGuard)` must import
+   `IdentityModule`, which `RepairModule` already does).
+5. Screens at the four role-tree routes the nav already advertises:
+   §34 `/repair-services/diagnosis` · §46 `/repair-control/diagnosis` ·
+   §47 `/repair-control/diagnosis-queue` · §49 `/record-work/diagnostic-results`.
+   Plus `[id]` detail pages gated on the parent list route.
+6. Copy the three verification scripts from 3a and point them at diagnosis:
+   `probe-inspection.mjs`, `record-inspection-in-browser.mjs`,
+   `measure-inspection-layout.mjs`.
+
+## The specs behind slice 3b
 
 `initial_inspection` now has content behind it. **`diagnosis_in_progress` still
 does not.** A card can move there and record nothing.

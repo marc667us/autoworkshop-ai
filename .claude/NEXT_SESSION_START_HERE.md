@@ -1,6 +1,21 @@
 # ▶ START HERE — next session
 
-**Phase 5 slice 2 shipped 2026-07-29** — job cards can now MOVE, and the Repair
+**Phase 5 slice 3a shipped 2026-07-29 (`444c165`, CI green).** Inspection records:
+migrations **010 + 011**, the 19 `07.txt` §2930-§2966 checkpoints, immutable once
+submitted, a second look is a new attempt, screens at all four role-tree routes.
+Codex found 2, the Supervisor found 2 more it missed — see
+`reviews/phase5-slice3a-inspection-records.md`.
+
+**Slice 3b (diagnosis) is PART-STARTED: migration `012` is applied and committed,
+schema only — nothing uses it yet.** `.claude/CURRENT_TASK.md` lists the six
+remaining steps in order. Owner direction: **batch 3-4 slices per session.**
+
+⚠️ **Migrations 008-012 are applied to the LOCAL database only** — run them
+wherever else the DB lives.
+
+---
+
+**Previously — Phase 5 slice 2 shipped 2026-07-29** — job cards can now MOVE, and the Repair
 Staging Board exists. typecheck 15/15 · lint 15/15 · **232 unit tests** ·
 page gates **23/23**. Migrations **008 + 009** applied locally — run
 `bash infrastructure/migrations/run.sh` before anything else.
