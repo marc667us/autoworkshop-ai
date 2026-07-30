@@ -18,6 +18,7 @@ import { JobCardService } from './job-card.service';
 import { RepairPlanService } from './repair-plan.service';
 import { QuotationService } from './quotation.service';
 import { ProposalService } from './proposal.service';
+import { ExecutionService } from './execution.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -35,6 +36,7 @@ export class JobCardController {
     private readonly repairPlans: RepairPlanService,
     private readonly quotations: QuotationService,
     private readonly proposals: ProposalService,
+    private readonly executions: ExecutionService,
   ) {}
 
   @Get()
@@ -236,6 +238,32 @@ export class JobCardController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
     return this.proposals.prepare(req.tenantContext, id);
+  }
+
+  /** The repairs carried out against a job card — `07.txt` §31-§33 (slice 7). */
+  @Get(':id/executions')
+  listExecutions(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.executions.listForJobCard(req.tenantContext, id);
+  }
+
+  /**
+   * §3 — "The technician selects 'Start Repair.'"
+   *
+   * The service refuses unless an APPROVED customer proposal exists (§7: work shall
+   * not start until the required approval is received) and creates one task row per
+   * approved plan task — §5 has the technician follow the APPROVED procedure, so the
+   * work list is not something a caller composes.
+   */
+  @Post(':id/executions')
+  startExecution(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { serviceBay?: string; readinessNote?: string },
+  ) {
+    return this.executions.start(req.tenantContext, id, body ?? {});
   }
 }
 
@@ -891,5 +919,142 @@ export class ProposalController {
     },
   ) {
     return this.proposals.recordDecision(req.tenantContext, id, body ?? {});
+  }
+}
+
+
+/**
+ * Repairs addressed directly, once one is under way — `07.txt` §31-§33.
+ *
+ * A SEPARATE controller, the judgement every sibling here made: booking time
+ * identifies the REPAIR, not the card.
+ */
+@Controller('repair-executions')
+@UseGuards(TenantGuard)
+export class ExecutionController {
+  constructor(private readonly executions: ExecutionService) {}
+
+  /**
+   * ⚠️ DECLARED BEFORE `@Get(':id')`, and it must stay there. Nest matches in
+   * declaration order; six slices have now paid for this note.
+   */
+  @Get()
+  list(@Req() req: AuthenticatedRequest) {
+    return this.executions.list(req.tenantContext);
+  }
+
+  @Get(':id')
+  findOne(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.executions.findById(req.tenantContext, id);
+  }
+
+  /** §32's five pre-start confirmations, and the bay. */
+  @Patch(':id')
+  recordReadiness(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      customerApprovalConfirmed?: boolean;
+      partsAvailableConfirmed?: boolean;
+      toolsAvailableConfirmed?: boolean;
+      bayAvailableConfirmed?: boolean;
+      safetyConfirmed?: boolean;
+      serviceBay?: string | null;
+      readinessNote?: string | null;
+    },
+  ) {
+    return this.executions.recordReadiness(req.tenantContext, id, body ?? {});
+  }
+
+  /** §6 — record task completion, or that a task is blocked or not required. */
+  @Patch(':id/tasks/:taskId')
+  setTaskStatus(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('taskId', new ParseUUIDPipe()) taskId: string,
+    @Body() body: { status?: string; statusNote?: string },
+  ) {
+    return this.executions.setTaskStatus(req.tenantContext, id, taskId, body ?? {});
+  }
+
+  /**
+   * §33's Start Work / Resume Work, and the start of any non-productive spell.
+   *
+   * POST to a sub-resource rather than a PATCH of a `paused` field: Pause and Resume
+   * close one interval and open another, so both produce a row of the same shape and
+   * both are auditable.
+   */
+  @Post(':id/time-entries')
+  startTimeEntry(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: { entryKind?: string; executionTaskId?: string; serviceBay?: string; note?: string },
+  ) {
+    return this.executions.startTimeEntry(req.tenantContext, id, body ?? {});
+  }
+
+  /** §33's Pause Work / Complete Task — close this technician's running entry. */
+  @Post(':id/time-entries/stop')
+  stopTimeEntry(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.executions.stopTimeEntry(req.tenantContext, id);
+  }
+
+  /** §7 — a part actually fitted, which is not the same as a part planned. */
+  @Post(':id/parts-used')
+  recordPartUsed(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      description?: string;
+      partNumber?: string;
+      quantity?: number;
+      unit?: string;
+      note?: string;
+      executionTaskId?: string;
+      repairPlanResourceId?: string;
+    },
+  ) {
+    return this.executions.recordPartUsed(req.tenantContext, id, body ?? {});
+  }
+
+  /** §8-§9 — a measurement, a photograph, an observation. */
+  @Post(':id/evidence')
+  recordEvidence(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      evidenceKind?: string;
+      description?: string;
+      recordedValue?: string;
+      externalReference?: string;
+      executionTaskId?: string;
+    },
+  ) {
+    return this.executions.recordEvidence(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * §13 — complete the authorised repair.
+   *
+   * Its own sub-resource, with preconditions the caller does not assign: no task may
+   * still be outstanding, and nothing may still be clocked on.
+   */
+  @Post(':id/complete')
+  complete(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { completionNote?: string; unexpectedFindings?: string },
+  ) {
+    return this.executions.complete(req.tenantContext, id, body ?? {});
   }
 }
