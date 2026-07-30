@@ -17,9 +17,10 @@ VERIFICATION HARNESSES, not the product. Section 5 is how not to re-pay that.
 **CI ✅ + Security CI ✅ on `b243552` (the tip) and on `b26058a`.** Release is RED at the
 Render deploy step only — the free-tier suspension, issue 2 below, not a defect.
 
-**Servers were LEFT RUNNING** — API on 4000 and workshop-web on 3001, both from the
-2026-07-30 06:29 build. **Kill them before doing anything** (section 1) — see trap 1.
-Docker infra is up and healthy: aw-keycloak, aw-postgres, aw-redis, aw-minio, aw-nats,
+**Dev servers are STOPPED** — killed at close deliberately, not left running. Three stale
+servers cost an hour of this session (trap 1), and leaving mine up would have re-armed the
+same trap for you. Section 1 brings them back.
+Docker infra IS up and healthy: aw-keycloak, aw-postgres, aw-redis, aw-minio, aw-nats,
 aw-coturn.
 
 ### ▶ THE FIRST THING TO DO
