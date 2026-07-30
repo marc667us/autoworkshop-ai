@@ -15,6 +15,7 @@ import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { DiagnosisService } from './diagnosis.service';
 import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
+import { RepairPlanService } from './repair-plan.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -29,6 +30,7 @@ export class JobCardController {
     private readonly jobCards: JobCardService,
     private readonly inspections: InspectionService,
     private readonly diagnoses: DiagnosisService,
+    private readonly repairPlans: RepairPlanService,
   ) {}
 
   @Get()
@@ -144,6 +146,44 @@ export class JobCardController {
     @Body() body: { summary?: string },
   ) {
     return this.diagnoses.start(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * The repair plans built against a job card — `07.txt` §22-§31 (slice 4).
+   *
+   * Nested under the card for the same reason the inspections and diagnoses are: a
+   * plan has no meaning apart from one, and the card's own scoping is what decides
+   * who may see it, so this path cannot become an existence oracle for cards a
+   * technician cannot read.
+   */
+  @Get(':id/repair-plans')
+  listRepairPlans(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.repairPlans.listForJobCard(req.tenantContext, id);
+  }
+
+  /**
+   * §22-§26 — "The technician selects 'Plan Repair.'"
+   *
+   * The service refuses unless the card is at `solution_preparation` AND an approved
+   * diagnosis with at least one confirmed fault exists — the plan is built from those
+   * faults, so there is nothing to build without them.
+   */
+  @Post(':id/repair-plans')
+  startRepairPlan(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      repairProcedure?: string;
+      safetyPrecautions?: string;
+      postRepairTests?: string;
+      notes?: string;
+    },
+  ) {
+    return this.repairPlans.start(req.tenantContext, id, body ?? {});
   }
 }
 
@@ -368,5 +408,230 @@ export class DiagnosisController {
     @Body() body: { decision?: string; note?: string },
   ) {
     return this.diagnoses.review(req.tenantContext, id, body ?? {});
+  }
+}
+
+/**
+ * Repair plans addressed directly, once one exists — `07.txt` §22-§31.
+ *
+ * A SEPARATE controller, the same judgement `InspectionController` and
+ * `DiagnosisController` made: recording a task identifies the PLAN, not the card.
+ * Routing a write through `/job-cards/:cardId/repair-plans/:id` would carry two ids
+ * that must agree, and the only thing that could resolve a disagreement is a check
+ * that the second belongs to the first — ceremony, since the plan already knows its
+ * card.
+ */
+@Controller('repair-plans')
+@UseGuards(TenantGuard)
+export class RepairPlanController {
+  constructor(private readonly repairPlans: RepairPlanService) {}
+
+  /**
+   * The organisation's repair plans — what the planning queue and §30's internal
+   * technical review queue render.
+   *
+   * ⚠️ DECLARED BEFORE `@Get(':id')`, and it must stay there. Nest matches in
+   * declaration order; the slice-2 board route, slice 3a and slice 3b have each paid
+   * for this note already.
+   */
+  @Get()
+  list(@Req() req: AuthenticatedRequest) {
+    return this.repairPlans.list(req.tenantContext);
+  }
+
+  @Get(':id')
+  findOne(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.repairPlans.findById(req.tenantContext, id);
+  }
+
+  /**
+   * §26's repair procedure, §29's safety precautions and §29.9's post-repair tests.
+   *
+   * ⚠️ EVERY FIELD DECLARES `| null`, because on this route `null` MEANS CLEAR THIS
+   * COLUMN and an absent key means leave it alone. Declaring them `string` only would
+   * hide the distinction from the next person to touch this signature — see
+   * `PlanDetailsInput` in the service for the whole contract.
+   */
+  @Patch(':id')
+  recordDetails(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      repairProcedure?: string | null;
+      safetyPrecautions?: string | null;
+      postRepairTests?: string | null;
+      notes?: string | null;
+    },
+  ) {
+    return this.repairPlans.recordDetails(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * §27 — add a repair task.
+   *
+   * POST to a collection, one task per call. Like a diagnostic finding and unlike the
+   * inspection's batched checklist: a task carries a description, a skill, a bay and
+   * an estimate, and batching would mean losing several half-written ones together.
+   */
+  @Post(':id/tasks')
+  addTask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      findingId?: string | null;
+      title?: string;
+      description?: string;
+      requiredSkill?: string;
+      serviceBay?: string;
+      assignedTechnicianId?: string;
+      estimatedLabourHours?: number;
+    },
+  ) {
+    return this.repairPlans.addTask(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * Correct a task, including DETACHING it from a fault with `findingId: null`.
+   *
+   * The nullable fields declare `| null` for the same reason the details route's do:
+   * a technician who attached a task to the wrong finding must be able to correct it
+   * without deleting the task and retyping its description.
+   */
+  @Patch(':id/tasks/:taskId')
+  updateTask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('taskId', new ParseUUIDPipe()) taskId: string,
+    @Body()
+    body: {
+      findingId?: string | null;
+      title?: string;
+      description?: string | null;
+      requiredSkill?: string | null;
+      serviceBay?: string | null;
+      assignedTechnicianId?: string | null;
+      estimatedLabourHours?: number | null;
+    },
+  ) {
+    return this.repairPlans.updateTask(req.tenantContext, id, taskId, body ?? {});
+  }
+
+  /**
+   * §28 — "the technician defines the task sequence".
+   *
+   * Its own sub-resource rather than a `position` field on the PATCH above: a caller
+   * assigning an absolute position has to know what every other task's position is,
+   * and two callers assigning positions concurrently produce an order neither asked
+   * for. A relative move is the operation, so it is the endpoint.
+   */
+  @Post(':id/tasks/:taskId/move')
+  moveTask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('taskId', new ParseUUIDPipe()) taskId: string,
+    @Body() body: { direction?: string },
+  ) {
+    return this.repairPlans.moveTask(req.tenantContext, id, taskId, body?.direction ?? '');
+  }
+
+  /**
+   * Remove a task entered in error, while the plan is still open.
+   *
+   * A real DELETE rather than a soft flag, and narrowly permitted: migration 014's
+   * trigger refuses it once the plan is submitted, and the grant exists so that
+   * refusal is a rule rather than a wall.
+   */
+  @Delete(':id/tasks/:taskId')
+  removeTask(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('taskId', new ParseUUIDPipe()) taskId: string,
+  ) {
+    return this.repairPlans.removeTask(req.tenantContext, id, taskId);
+  }
+
+  /** §29 — add a part, consumable, tool or piece of equipment. */
+  @Post(':id/resources')
+  addResource(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      taskId?: string;
+      resourceKind?: string;
+      name?: string;
+      reference?: string;
+      quantity?: number;
+      unit?: string;
+      note?: string;
+    },
+  ) {
+    return this.repairPlans.addResource(req.tenantContext, id, body ?? {});
+  }
+
+  /** Correct a resource; `taskId: null` makes it plan-wide rather than task-scoped. */
+  @Patch(':id/resources/:resourceId')
+  updateResource(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('resourceId', new ParseUUIDPipe()) resourceId: string,
+    @Body()
+    body: {
+      taskId?: string | null;
+      resourceKind?: string;
+      name?: string;
+      reference?: string | null;
+      quantity?: number;
+      unit?: string | null;
+      note?: string | null;
+    },
+  ) {
+    return this.repairPlans.updateResource(req.tenantContext, id, resourceId, body ?? {});
+  }
+
+  @Delete(':id/resources/:resourceId')
+  removeResource(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('resourceId', new ParseUUIDPipe()) resourceId: string,
+  ) {
+    return this.repairPlans.removeResource(req.tenantContext, id, resourceId);
+  }
+
+  /**
+   * §29.10 — submit the plan for supervisor review.
+   *
+   * POST to a sub-resource rather than a PATCH of `status`: this is a transition with
+   * its own preconditions (at least one task, every task estimated), not a field a
+   * caller assigns.
+   */
+  @Post(':id/submit')
+  submit(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.repairPlans.submit(req.tenantContext, id);
+  }
+
+  /**
+   * §30-§31's internal technical review — approve, or reject with a reason.
+   *
+   * Its own sub-resource for the same reason as `submit`, and because the rules that
+   * refuse it are about WHO is asking (`2.txt` §563's independence) as much as about
+   * the record's state. Both live in the service, so an MCP tool reviewing on an
+   * agent's behalf is held to them unchanged.
+   */
+  @Post(':id/review')
+  review(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { decision?: string; note?: string },
+  ) {
+    return this.repairPlans.review(req.tenantContext, id, body ?? {});
   }
 }

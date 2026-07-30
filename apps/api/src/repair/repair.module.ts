@@ -4,8 +4,10 @@ import {
   DiagnosisController,
   InspectionController,
   JobCardController,
+  RepairPlanController,
 } from './repair.controller';
 import { DiagnosisService } from './diagnosis.service';
+import { RepairPlanService } from './repair-plan.service';
 import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 
@@ -21,8 +23,13 @@ import { JobCardService } from './job-card.service';
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [JobCardController, InspectionController, DiagnosisController],
-  providers: [JobCardService, InspectionService, DiagnosisService],
-  exports: [JobCardService, InspectionService, DiagnosisService],
+  controllers: [
+    JobCardController,
+    InspectionController,
+    DiagnosisController,
+    RepairPlanController,
+  ],
+  providers: [JobCardService, InspectionService, DiagnosisService, RepairPlanService],
+  exports: [JobCardService, InspectionService, DiagnosisService, RepairPlanService],
 })
 export class RepairModule {}
