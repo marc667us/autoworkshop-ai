@@ -11,7 +11,7 @@ import {
   organizationsFromMemberships,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
-import { signOutAction } from './sign-out-action';
+import { signOutAction, switchUserAction } from './sign-out-action';
 
 export const metadata: Metadata = {
   title: 'AutoWorkshop AI — Workshop',
@@ -59,6 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // server layout because a server action cannot be created in the
           // client shell that renders the button.
           signOutAction={signOutAction}
+          switchUserAction={switchUserAction}
           signInHref="/api/auth/signin"
           signedIn={signedIn}
           // T-0016. The options are the viewer's OWN memberships as the API

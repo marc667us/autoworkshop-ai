@@ -40,9 +40,35 @@ import { postLogoutOrigin } from './origin';
  * files must be reachable from the app's own module graph and the workspace id
  * is the one genuinely per-app value (the same shape as each app's `auth.ts`).
  */
-export async function performSignOut(workspaceId: WorkspaceId | string): Promise<never> {
+export async function performSignOut(
+  workspaceId: WorkspaceId | string,
+  options: {
+    /**
+     * Where Keycloak returns the browser afterwards, relative to this app.
+     *
+     * ⚠️ SWITCHING USER IS SIGNING OUT, and that is the whole insight behind this
+     * parameter. Keycloak honours a live SSO session, so pressing "Sign in" while
+     * somebody else is still signed in returns THEIR identity without a prompt —
+     * reported as "i logged in as admin but it show technician". Neither
+     * `prompt=login` nor `prompt=select_account` fixes it: measured against this
+     * realm, `select_account` returns silently exactly as before, and `login`
+     * shows a re-authentication page PRE-FILLED with the previous user and no
+     * link to choose another. The only reliable way to become somebody else is to
+     * end the SSO session first — which is precisely what this function already
+     * does, correctly, in the order that matters.
+     *
+     * So "switch user" is not a new mechanism. It is this one, landing on the
+     * sign-in page instead of the dashboard.
+     */
+    returnTo?: string;
+  } = {},
+): Promise<never> {
   const instance = workspaceAuth(workspaceId);
-  const origin = await postLogoutOrigin();
+  const base = await postLogoutOrigin();
+  // Appended to the ORIGIN rather than accepted as a whole URL: the origin is
+  // validated by Keycloak against the client's allow-list, and letting a caller
+  // supply the full address would move that decision out of the allow-list.
+  const origin = options.returnTo ? `${base}${options.returnTo}` : base;
 
   // Step 1 — while the cookie still exists. Fails SOFT by design: a user who
   // cannot sign out because Keycloak is unreachable is left more exposed than

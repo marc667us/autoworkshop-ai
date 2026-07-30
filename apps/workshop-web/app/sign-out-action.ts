@@ -17,3 +17,18 @@ import { performSignOut } from '@autoworkshop/auth';
 export async function signOutAction(): Promise<never> {
   return performSignOut('workshop');
 }
+
+/**
+ * Sign out and land on the sign-in page — "switch user".
+ *
+ * The same three-step sequence, with one difference in where Keycloak returns the
+ * browser. It exists because pressing "Sign in" while another account still holds a
+ * Keycloak SSO session silently returns THAT account: the workshop terminal in
+ * `07.txt` pt2 §9 is shared, and the menu quietly being the wrong one is the only
+ * evidence. Ending the SSO session first is the only thing that reliably works —
+ * `prompt=login` and `prompt=select_account` were both measured against this realm and
+ * neither does.
+ */
+export async function switchUserAction(): Promise<never> {
+  return performSignOut('workshop', { returnTo: '/api/auth/signin' });
+}

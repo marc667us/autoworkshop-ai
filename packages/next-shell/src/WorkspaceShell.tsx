@@ -78,6 +78,7 @@ export interface WorkspaceShellProps {
    * token is revoked at; the sequence itself lives once in `@autoworkshop/auth`.
    */
   signOutAction?: () => Promise<void>;
+  switchUserAction?: () => Promise<void>;
   /** Where a signed-out viewer goes to sign in. */
   signInHref?: string;
   /**
@@ -101,6 +102,7 @@ export function WorkspaceShell({
   topNavActions,
   organizationSwitcher,
   signOutAction,
+  switchUserAction,
   signInHref,
   signedIn,
   drawer,
@@ -145,6 +147,7 @@ export function WorkspaceShell({
           signedIn={signedIn}
           userLabel={userLabel}
           signOutAction={signOutAction}
+          switchUserAction={switchUserAction}
           signInHref={signInHref}
         />
       }

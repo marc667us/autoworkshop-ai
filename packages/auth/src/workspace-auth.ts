@@ -195,6 +195,28 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
         // the change that introduces sessions at all.
         client: { token_endpoint_auth_method: 'none' },
         checks: ['pkce', 'state'],
+        /**
+         * ⚠️ NO `prompt` PARAMETER, AND THAT IS A MEASURED DECISION rather than an
+         * omission.
+         *
+         * Keycloak honours a live SSO session, so pressing "Sign in" while somebody
+         * else is still signed in returns THEIR identity without asking — reported as
+         * "i logged in as admin but it show technician". The obvious fix is a prompt.
+         * Both were tried against this realm and neither works:
+         *
+         *   · `prompt=select_account` — returns SILENTLY, exactly as with no parameter
+         *     at all. Measured: it landed straight on the previous user's dashboard.
+         *   · `prompt=login` — shows "Please re-authenticate to continue" PRE-FILLED
+         *     with the previous user and only a password box. There is no link to
+         *     choose another account in this theme, so it is strictly worse: it asks a
+         *     question the person cannot answer and gives them no way out.
+         *
+         * The mechanism that does work is ending the SSO session, which is what
+         * `performSignOut` already does correctly. So the fix is the "Switch user"
+         * control in the shell, and this is left at the default deliberately —
+         * shipping a parameter that measurably changes nothing, under a comment
+         * claiming it does, is worse than shipping neither.
+         */
       }),
     ],
     callbacks: {

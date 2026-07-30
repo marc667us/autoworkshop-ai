@@ -61,6 +61,15 @@ export interface AccountControlProps {
    * workspace decides which Keycloak client the token is revoked at.
    */
   signOutAction?: () => Promise<void>;
+  /**
+   * Sign out AND land on the sign-in page.
+   *
+   * Offered beside Sign out because they are different intentions with different
+   * endings, and because without it the only way to become somebody else on a shared
+   * terminal is to know that you must sign out first — which is exactly what nobody
+   * knows until the menu is wrong.
+   */
+  switchUserAction?: () => Promise<void>;
   /** Where an unauthenticated viewer goes to sign in, e.g. `/api/auth/signin`. */
   signInHref?: string;
 }
@@ -81,7 +90,7 @@ const CONTROL_STYLE: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-export function AccountControl({ signedIn, userLabel, signOutAction, signInHref }: AccountControlProps) {
+export function AccountControl({ signedIn, userLabel, signOutAction, switchUserAction, signInHref }: AccountControlProps) {
   // Sign-out is a redirect chain through Keycloak, so it is slow enough to be
   // double-clicked. A second submit would post after the cookie is already
   // gone, find no refresh token, and log "not revoked" for a failure that did
@@ -90,7 +99,7 @@ export function AccountControl({ signedIn, userLabel, signOutAction, signInHref 
   const [submitting, setSubmitting] = React.useState(false);
 
   if (signedIn && signOutAction) {
-    return (
+    const signOut = (
       <form
         // See the header note on why this cast exists and when to remove it.
         action={signOutAction as unknown as string}
@@ -114,6 +123,44 @@ export function AccountControl({ signedIn, userLabel, signOutAction, signInHref 
           {submitting ? 'Signing out…' : 'Sign out'}
         </button>
       </form>
+    );
+
+    // ⚠️ OFFERED BESIDE SIGN OUT, NOT INSTEAD OF IT. They are different intentions:
+    // one ends the day, the other hands the terminal to a colleague. Without this
+    // control the only way to become somebody else is to know that pressing "Sign in"
+    // will silently return the CURRENT user — because Keycloak honours its own SSO
+    // session — and that you must therefore sign out first. Nobody knows that until
+    // the menu is wrong, which is how it was reported.
+    if (!switchUserAction) return signOut;
+    return (
+      <span style={{ display: 'inline-flex', gap: primitive.space[2], alignItems: 'center' }}>
+        {signOut}
+        <form
+          action={switchUserAction as unknown as string}
+          onSubmit={() => setSubmitting(true)}
+          style={{ display: 'inline-flex', margin: 0 }}
+        >
+          <button
+            type="submit"
+            disabled={submitting}
+            // Says what it actually does. "Switch user" alone reads as a chooser, and
+            // this signs the current person out first — on a shared terminal that
+            // difference is the one worth being told about before pressing it.
+            aria-label={
+              userLabel
+                ? `Sign ${userLabel} out and sign in as somebody else`
+                : 'Sign out and sign in as somebody else'
+            }
+            style={{
+              ...CONTROL_STYLE,
+              opacity: submitting ? 0.6 : 1,
+              cursor: submitting ? 'progress' : 'pointer',
+            }}
+          >
+            {submitting ? 'Switching…' : 'Switch user'}
+          </button>
+        </form>
+      </span>
     );
   }
 
