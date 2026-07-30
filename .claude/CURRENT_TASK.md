@@ -1,97 +1,92 @@
 # Current task
 
-**▶ PHASE 5 slice 3b — diagnosis records.**
+**▶ PHASE 5 slice 4 — the repair plan.**
 
-**Read `.claude/NEXT_SESSION_START_HERE.md` first** — start-up commands, sign-in
-steps, acceptance checks, traps.
+**Read `.claude/NEXT_SESSION_START_HERE.md` first** — start-up commands, sign-in steps,
+the outstanding list, and the traps. Section 5 there is what makes slice 4 faster than 3b.
 
-**Owner direction 2026-07-29: batch 3-4 slices per session** and run the gates
-once per batch rather than once per slice. Phase 5 has ~12 slices left before
-Release 0.4 and one-slice-per-session is too slow for a 14-phase programme. The
-order below is dependency order, not preference — do not reorder it without a
-reason.
+**Owner direction 2026-07-29, still standing: batch 3-4 slices per session** and run the
+gates once per batch rather than once per slice. The order below is dependency order, not
+preference — do not reorder it without a reason.
 
 ---
 
 ## Where the last session stopped
 
-Slice 3a is done: an inspection can be started, recorded against the 19
-`07.txt` §2930-§2966 checkpoints, and submitted — after which it is immutable and
-a second look is a new attempt. Migrations 010 + 011.
+**Slice 3b is DONE (`b243552`).** A diagnosis can be started on a card at
+`diagnosis_in_progress`, findings recorded against §3026-§3046's fields, each carrying
+§1290's standing (confirmed / suspected / excluded) and §1294's source, submitted for
+§1292's supervisor review, and approved or rejected with a reason by somebody who did not
+submit it. Immutable once submitted; a further opinion is a new attempt. Migrations 012 + 013.
 
-The rules, not the screen, were the deliverable again:
-- the vehicle must be PRESENT (card at `initial_inspection`) before a sheet exists
-- every checkpoint must be answered before submission, `not_applicable` included
-- a submitted sheet is immutable in the service AND by database trigger
-- `technician` is limited to ASSIGNED cards on every path, including reading a
-  sheet by its own id
+**The rules, not the screen, were the deliverable again — and the ones worth carrying:**
 
-## ▶ SLICE 3B IS PART-STARTED — the schema exists, nothing uses it
+- **§1294 is structural, not displayed.** `source` is a SQL literal in the INSERT, never a
+  parameter, so a caller cannot file a machine's guess as a technician's finding. A finding is
+  `confirmed` only if a human is named against it — and the signature is CLEARED when the
+  standing moves away from confirmed, because the CHECK constraint only constrains rows that
+  ARE confirmed.
+- **§1292's review needs TWO rules.** Role (no technician reviews a diagnosis) AND identity
+  (the submitter may not review their own). Neither is sufficient: role alone lets two
+  technicians sign each other's work, identity alone lets a technician sign a colleague's.
+- **A new attempt is refused while the last one is SUBMITTED.** Codex found this as a HIGH:
+  every read path orders by `attempt_no DESC`, so starting attempt 2 made the submitted
+  attempt 1 stop being "the current record" and the awaiting-review count fell to zero with a
+  diagnosis still unreviewed. **Worse than a lost row, because nothing looks wrong.**
+- **Zero findings cannot be submitted**, and the refusal says a fault RULED OUT is a finding
+  too — otherwise it reads as "you must find something wrong", which invents faults.
 
-**Migration `012` is written, applied locally, and committed.** It is SCHEMA ONLY:
-`repair.diagnoses` + `repair.diagnostic_findings`, RLS ENABLE+FORCE (measured
-`t|t`), DELETE withheld, immutability triggers, and the §1294 rule made
-structural — a finding is `confirmed` only if a human is named against it, so an
-AI suggestion cannot become a confirmed fault by a status flip. Both proven by
-effect against real Postgres, not read off the file.
+## ▶ SLICE 4 — the repair plan
 
-**What remains for 3b, in order:**
-1. `apps/api/src/repair/diagnosis-rules.ts` — the §3026-§3046 field list, the
-   three §1290 statuses, the two §1294 sources, the `08.txt` §9 affected-system
-   categories, role sets, and the start stage (`diagnosis_in_progress`). Copy
-   `inspection-checklist.ts`, including its drift test against the migration.
-2. `diagnosis.service.ts` — copy `inspection.service.ts` wholesale. It already
-   has the right shape: `assertCardVisible` (404 not 403), `assertWritable` with
-   `FOR UPDATE`, attempts not edits, the technician-assignment predicate on
-   EVERY path including read-by-id, and — learn from 3a — **guard the
-   zero-findings submission up front**, do not wait for review to find it.
-3. The review step (§1292): approve / reject with a reason. **The reviewer may
-   not be the submitter** — §563's independence. The columns and constraints for
-   this are already in 012.
-4. Controller routes + module wiring (`RepairModule` needs the new provider AND
-   controller — a Nest module using `@UseGuards(TenantGuard)` must import
-   `IdentityModule`, which `RepairModule` already does).
-5. Screens at the four role-tree routes the nav already advertises:
-   §34 `/repair-services/diagnosis` · §46 `/repair-control/diagnosis` ·
-   §47 `/repair-control/diagnosis-queue` · §49 `/record-work/diagnostic-results`.
-   Plus `[id]` detail pages gated on the parent list route.
-6. Copy the three verification scripts from 3a and point them at diagnosis:
-   `probe-inspection.mjs`, `record-inspection-in-browser.mjs`,
-   `measure-inspection-layout.mjs`.
+`1.txt` §378-§384 and `07.txt` §22-§26. **It consumes the CONFIRMED findings of an APPROVED
+diagnosis**, which is exactly why 3b had to land first — the plan is what a quotation is
+priced from, so a plan built on a suspected fault is a customer charged for a guess.
 
-## The specs behind slice 3b
+Steps, in order:
 
-`initial_inspection` now has content behind it. **`diagnosis_in_progress` still
-does not.** A card can move there and record nothing.
+1. **Migration 014** — `repair.repair_plans` + child rows for tasks, tools, parts and labour.
+   Copy 012's shape: composite tenant-carrying FKs, RLS ENABLE **and** FORCE (measure `t|t`,
+   never read it off the file), immutability triggers, DELETE withheld on the header and
+   granted on the children **only while the plan is open** (013's reasoning — the trigger is
+   the narrowing, the grant is the permission).
+   ⚠️ **Decide up front what a plan LINKS TO.** A plan line should reference the
+   `diagnostic_findings.id` it addresses, so slice 9's QC can ask "was the confirmed fault
+   actually repaired". A plan that only names free text cannot answer that, and no later
+   migration can reconstruct the link.
+2. `apps/api/src/repair/repair-plan-rules.ts` — the field list, the statuses, role sets, the
+   start stage. Copy `diagnosis-rules.ts` **including its drift test against the migration**
+   (all four CHECK lists are compared to the SQL text).
+3. `repair-plan.service.ts` — copy `diagnosis.service.ts`. It has the right shape already:
+   `assertCardVisible` (404 not 403), `assertWritable` with `FOR UPDATE`, attempts not edits,
+   the technician-assignment predicate on EVERY path including read-by-id, an assembled
+   partial UPDATE where absent ≠ cleared, and the approval path with both independence rules.
+   **Guard the empty-plan submission up front** — third slice running where that hole existed.
+4. **§384's approval gate** if the specs require one at this stage; reuse 3b's review shape
+   rather than inventing a second one.
+5. Controller routes + `RepairModule` wiring (it already imports `IdentityModule`).
+6. Screens at every route the nav already advertises. **Checked against
+   `packages/navigation/src/workspaces.ts` at close — there are THREE distinct paths, not
+   four**, because §46 (owner) and §47 (manager) both name this screen
+   `repair-control/repair-plans`:
 
-Ground it in the specs, transcribed not paraphrased:
+   | Tree | Path |
+   |---|---|
+   | §34 default (incl. `workshop_supervisor`) | `/repair-services/repair-plans` |
+   | §46 owner **and** §47 manager | `/repair-control/repair-plans` |
+   | §49 technician | `/plan-work/repair-planning` |
 
-- **`07.txt` §3026-§3046** gives the recordable fields of a diagnostic finding:
-  fault code · fault description · affected system · observed symptom · test
-  performed · expected result · actual result · interpretation · confirmed fault ·
-  additional inspection required.
-- **`02.txt` §1290** — "identify **confirmed, suspected and excluded** faults".
-  That is a status on each finding, not a boolean.
-- **`02.txt` §1294** — "the system shall preserve the distinction between **AI
-  suggestions** and **technician-confirmed findings**." So a finding carries its
-  SOURCE, and nothing may promote an AI suggestion to a confirmed fault silently.
-  There is no AI in this build yet; the column and the rule land now so that when
-  Phase 8 arrives it cannot be retrofitted wrongly.
-- **`02.txt` §1276-§1282** — record observations, record measurements, enter fault
-  codes. `08.txt` §352-§356 lists the measurement types (voltage, current,
-  resistance, pressure, temperature); §3036-§3040's test/expected/actual IS the
-  measurement record for this slice.
-- **`02.txt` §1292** — "submit diagnosis for supervisor review where required."
-
-Copy slice 3a's shape wholesale: header + child rows, created in one transaction,
-immutable on submission, attempts rather than edits, role rules in their own
-module with a drift test against the migration.
+   Slices 3a and 3b each needed four directories, so the reflex is wrong here — creating a
+   fourth would be a page no nav tree points at. **Re-check the file anyway** rather than
+   trusting this table; and remember a `workshop_supervisor` reads the §34 default tree, which
+   is where any approval control has to be reachable.
+7. Copy the three proofs and point them at the plan: `probe-diagnosis.mjs`,
+   `record-diagnosis-in-browser.mjs`, `measure-diagnosis-layout.mjs`.
 
 ## Then, in order (the rest of Phase 5)
 
 | # | Slice | Spec anchor |
 |---|---|---|
-| 3b | Diagnosis records | `07.txt` §3026-§3046, `02.txt` §1260-§1294 |
+| ~~3b~~ | ~~Diagnosis records~~ | ✅ `b243552` |
 | 4 | Repair plan — tasks, tools, parts, labour | `1.txt` §378-§384, `07.txt` §22-§26 |
 | 5 | Quotation preparation | `1.txt` §340, `07.txt` §29 |
 | 6 | Solution Studio — proposal, versioning, variation, e-approval | `1.txt` §396-§424, spec 08 §14 |
@@ -102,34 +97,36 @@ module with a drift test against the migration.
 | 11 | Reception / manager / owner dashboards reading real data | `07.txt` pt2 §5-§9 |
 | 12 | Repair-request + complaint + notification inboxes | `07.txt` pt2 §10-§12 |
 
-Then Phase 5 acceptance is `07.txt` pt2 §51-§52 — the complete workshop repair
-flow end to end.
+Then Phase 5 acceptance is `07.txt` pt2 §51-§52 — the complete workshop repair flow end to end.
 
-**Not in Phase 5, and the owner has asked about both:** the 3D fault and
-repair-solution simulation is Phase 10 (viewer, Release 0.9) plus the new Phase 12
-Simulation Intelligence (Release 1.1); the libraries — repair procedures, fault-code
-search, diagnostic trees, wiring diagrams, knowledge base — are Phase 9
-(Release 0.8). `PLAN_EXTENSION_v1` §3.2 calls the simulation "a module the size of
-Phase 5" and sequences it after 1.0 for dependency reasons: measurement simulation
-consumes confirmed diagnostic data, and the repair-solution flow needs the Phase 9
-library and the Phase 8 approval gate. Building either now means building against
+**Not in Phase 5, and the owner has asked about both:** the 3D fault and repair-solution
+simulation is Phase 10 (viewer, Release 0.9) plus the new Phase 12 Simulation Intelligence
+(Release 1.1); the libraries — repair procedures, fault-code search, diagnostic trees, wiring
+diagrams, knowledge base — are Phase 9 (Release 0.8). `PLAN_EXTENSION_v1` §3.2 calls the
+simulation "a module the size of Phase 5" and sequences it after 1.0 for dependency reasons:
+measurement simulation consumes confirmed diagnostic data, and the repair-solution flow needs
+the Phase 9 library and the Phase 8 approval gate. Building either now means building against
 fixtures.
 
 ## Rules that keep applying
 
-**Prove endpoints with real tokens, and the screen with a browser.** Slice 3a
-added two re-runnable proofs — `packages/auth/verify/probe-inspection.mjs` (the
-API) and `apps/e2e/verify/record-inspection-in-browser.mjs` (the form). Copy both
-shapes. The API probe cannot catch a `<select>` whose `name` the server action does
-not read, and the browser cannot prove what the API accepts when nothing is
-offered.
+**Every refusal must name a REACHABLE alternative.** Three slices running, this has been the
+most expensive class of defect: 3a's API said "start a new inspection" with no way to;
+3b's migration wrote a DELETE trigger branch and revoked the privilege that would reach it;
+3b's first `updateFinding` could overwrite a wrong fault code but never clear it. When you
+write a refusal, open the screen and do the thing it suggests.
 
-**Measure the layout.** `apps/e2e/verify/measure-inspection-layout.mjs` catches
-the `visuallyHidden`-escapes-its-container defect that has now landed twice.
+**Prove endpoints with real tokens and the screen with a browser** — and for any rule about
+WHO, capture TWO sessions (`capture-session.mjs --out`). A single-identity probe asserts the
+role check and silently skips the identity check.
+
+**Measure the layout**, and make the measurement fail when it measures nothing. The
+`visuallyHidden` escape has landed twice; the population of hidden elements grows with the
+DATA, so measure a page that HAS data.
 
 **A migration already applied is CHECKSUMMED.** Fixes go in the next number.
 
-**Definition of complete (`05.txt` §6):** migration runs · backend rule exists ·
-API works · page renders with loading/empty/error/permission states · permissions
-enforced · tests pass · lint + typecheck pass · Playwright journey passes ·
-responsive checked · docs updated · **no paid dependency** · committed.
+**Definition of complete (`05.txt` §6):** migration runs · backend rule exists · API works ·
+page renders with loading/empty/error/permission states · permissions enforced · tests pass ·
+lint + typecheck pass · Playwright journey passes · responsive checked · docs updated ·
+**no paid dependency** · committed.
