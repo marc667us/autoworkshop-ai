@@ -285,19 +285,25 @@ export async function removeFindingAction(formData: FormData): Promise<ActionRes
   return { created: 'Finding removed' };
 }
 
-/** §376's technician notes on the diagnosis as a whole. */
+/**
+ * §376's technician notes on the diagnosis as a whole.
+ *
+ * ⚠️ AN EMPTY BOX CLEARS THE NOTES, it is not an error. The first version refused with
+ * "Write the notes before saving", which meant a technician who pasted the wrong
+ * paragraph in here could overwrite it but never remove it — the same asymmetry Codex
+ * found on the findings, one field over, and the column is nullable precisely because
+ * a diagnosis need not carry notes. `null` is sent explicitly, because the service
+ * reads an ABSENT key as "you meant nothing by this request" and refuses it.
+ */
 export async function recordDiagnosisSummaryAction(formData: FormData): Promise<ActionResult> {
   const diagnosisId = String(formData.get('diagnosisId') ?? '').trim();
   if (!diagnosisId) {
     return { error: 'That diagnosis could not be identified. Reload the page.' };
   }
   const summary = String(formData.get('summary') ?? '').trim();
-  if (summary === '') {
-    return { error: 'Write the notes before saving.' };
-  }
 
   const result = await apiPatch<{ id: string }>('workshop', `/diagnoses/${diagnosisId}`, {
-    summary,
+    summary: summary === '' ? null : summary,
   });
 
   if (!result.ok) {
@@ -305,7 +311,7 @@ export async function recordDiagnosisSummaryAction(formData: FormData): Promise<
   }
 
   revalidateAll();
-  return { created: 'Notes saved' };
+  return { created: summary === '' ? 'Notes cleared' : 'Notes saved' };
 }
 
 /** §1292 — submit for supervisor review. */

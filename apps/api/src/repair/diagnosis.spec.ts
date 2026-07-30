@@ -771,6 +771,35 @@ describe('clearing an optional field — Codex MEDIUM', () => {
     ).rejects.toThrow(/findingStatus must be one of/);
   });
 
+  it('REFUSES a non-string rather than silently clearing the field', async () => {
+    // ⚠️ A REGRESSION THE CLEAR-SEMANTICS THEMSELVES INTRODUCED, found by the
+    // Supervisor pass on the commit that added them. `optionalText` returns null for
+    // anything that is not a string, so `{"faultCode": 12345}` reached
+    // `set(column, null)` and ERASED the stored code. Under the old
+    // `COALESCE($n, column)` the same bad type was a harmless no-op — giving null a
+    // destructive meaning turned a wrong type from "nothing happens" into "the value
+    // is gone".
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    for (const bad of [12345, true, {}, []]) {
+      await expect(
+        svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, {
+          faultCode: bad as unknown as string,
+        }),
+      ).rejects.toThrow(/faultCode must be a string, or null to clear it/);
+    }
+  });
+
+  it('still treats a whitespace-only string as a clear', async () => {
+    // Selecting the contents of a box and typing a space means the same thing as
+    // emptying it, and the column stores no distinction between the two.
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, { faultCode: '   ' });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    expect(update?.values?.[0]).toBeNull();
+  });
+
   it('never lets a caller-supplied string reach the SQL TEXT', async () => {
     // The SET list is assembled, so this is worth asserting rather than assuming:
     // column names come from literals in the service and every value is bound.
@@ -832,6 +861,46 @@ describe('removing a finding entered in error', () => {
     await expect(svc.removeFinding(ctx(), DIAGNOSIS_ID, FINDING_ID)).rejects.toThrow(
       /cannot be changed/,
     );
+  });
+});
+
+describe('the technician notes can be cleared too', () => {
+  // The SAME asymmetry Codex found on the findings, one field over: `recordSummary`
+  // refused an empty summary, so a technician who pasted the wrong paragraph could
+  // overwrite it but never empty it. The column is nullable, so refusing to clear it
+  // was a rule the database does not have.
+  it('CLEARS the summary when sent an empty string', async () => {
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.recordSummary(ctx(), DIAGNOSIS_ID, { summary: '' });
+    const update = queries.find((q) => Q.headerUpdate.test(q.text));
+    expect(update?.values?.[0]).toBeNull();
+  });
+
+  it('CLEARS the summary when sent null', async () => {
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.recordSummary(ctx(), DIAGNOSIS_ID, { summary: null });
+    const update = queries.find((q) => Q.headerUpdate.test(q.text));
+    expect(update?.values?.[0]).toBeNull();
+  });
+
+  it('still refuses a PATCH that mentions nothing', async () => {
+    // The one case where guessing would be wrong either way: a request with no
+    // `summary` key is a mistake, not an instruction to erase the notes.
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(svc.recordSummary(ctx(), DIAGNOSIS_ID, {})).rejects.toThrow(
+      /summary is required/,
+    );
+  });
+
+  it('refuses a non-string summary rather than clearing it', async () => {
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(
+      svc.recordSummary(ctx(), DIAGNOSIS_ID, { summary: 42 as unknown as string }),
+    ).rejects.toThrow(/summary must be a string, or null to clear it/);
   });
 });
 

@@ -284,6 +284,12 @@ export class DiagnosisController {
   }
 
   /** Correct a finding, or move it between §1290's three standings. */
+  /**
+   * ⚠️ THE NULLABLE FIELDS DECLARE `| null`, because on this route `null` MEANS CLEAR
+   * THIS COLUMN and an absent key means leave it alone. Declaring them `string`
+   * only would hide the distinction from the next person to touch this signature —
+   * see `FindingInput` in the service for the whole contract.
+   */
   @Patch(':id/findings/:findingId')
   updateFinding(
     @Req() req: AuthenticatedRequest,
@@ -291,14 +297,14 @@ export class DiagnosisController {
     @Param('findingId', new ParseUUIDPipe()) findingId: string,
     @Body()
     body: {
-      faultCode?: string;
+      faultCode?: string | null;
       faultDescription?: string;
       affectedSystem?: string;
-      observedSymptom?: string;
-      testPerformed?: string;
-      expectedResult?: string;
-      actualResult?: string;
-      interpretation?: string;
+      observedSymptom?: string | null;
+      testPerformed?: string | null;
+      expectedResult?: string | null;
+      actualResult?: string | null;
+      interpretation?: string | null;
       findingStatus?: string;
       additionalInspectionRequired?: boolean;
     },
@@ -326,7 +332,9 @@ export class DiagnosisController {
   recordSummary(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { summary?: string },
+    // `null` clears the notes; an absent key is a 400. The column is nullable, so
+    // refusing to clear it would be a rule the database does not have.
+    @Body() body: { summary?: string | null },
   ) {
     return this.diagnoses.recordSummary(req.tenantContext, id, body ?? {});
   }

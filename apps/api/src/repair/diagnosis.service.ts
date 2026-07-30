@@ -93,16 +93,29 @@ export interface Diagnosis {
   reviewable: boolean;
 }
 
-/** What `addFinding`/`updateFinding` accept. Every field is §3026-§3046. */
+/**
+ * What `addFinding`/`updateFinding` accept. Every field is §3026-§3046.
+ *
+ * ⚠️ THE NULLABLE FIELDS DECLARE `| null` BECAUSE `null` IS PART OF THE CONTRACT, not
+ * an accident of JSON. On `updateFinding` it means CLEAR THIS COLUMN, and the types
+ * previously said `string | undefined` — so the one operation the Codex MEDIUM fix
+ * added was invisible to anyone reading the interface, and the tests had to launder it
+ * through `as unknown as string`. A type that omits a supported value is how a later
+ * DTO refactor or a stricter validation pipe strips `null` and silently removes the
+ * capability, with nothing failing to compile.
+ *
+ * The three NOT NULL columns keep `?: string` — `null` is not accepted for them, and
+ * the service answers a 400 naming the field rather than letting Postgres raise.
+ */
 interface FindingInput {
-  faultCode?: string;
+  faultCode?: string | null;
   faultDescription?: string;
   affectedSystem?: string;
-  observedSymptom?: string;
-  testPerformed?: string;
-  expectedResult?: string;
-  actualResult?: string;
-  interpretation?: string;
+  observedSymptom?: string | null;
+  testPerformed?: string | null;
+  expectedResult?: string | null;
+  actualResult?: string | null;
+  interpretation?: string | null;
   findingStatus?: string;
   additionalInspectionRequired?: boolean;
 }
@@ -433,7 +446,20 @@ export class DiagnosisService {
       sets.push(`${column} = $${values.length}`);
     };
 
-    /** A nullable text column: absent leaves it, null/'' clears it. */
+    /**
+     * A nullable text column: absent leaves it, null/'' clears it, a string sets it.
+     *
+     * ⚠️ A NON-STRING IS A 400, NOT A SILENT CLEAR — and this is a regression the
+     * clear-semantics themselves introduced (found by the Supervisor pass on the very
+     * commit that added them). `optionalText` returns `null` for anything that is not
+     * a string, so `{"faultCode": 12345}` reached `set(column, null)` and ERASED the
+     * stored code. Under the old `COALESCE($n, column)` the same bad type was a
+     * harmless no-op; giving `null` a destructive meaning turned a wrong type from
+     * "nothing happens" into "the value is gone".
+     *
+     * So the type is checked HERE rather than inferred from what `optionalText`
+     * happens to return. A caller that sends a number gets told which field is wrong.
+     */
     const nullableText = (
       column: string,
       raw: unknown,
@@ -441,7 +467,19 @@ export class DiagnosisService {
       max: number,
     ): void => {
       if (raw === undefined) return;
-      set(column, raw === null || raw === '' ? null : optionalText(raw, field, max));
+      if (raw === null || raw === '') {
+        set(column, null);
+        return;
+      }
+      if (typeof raw !== 'string') {
+        throw new BadRequestException(
+          `${field} must be a string, or null to clear it`,
+        );
+      }
+      // Whitespace-only still clears: a technician who selects the contents of a box
+      // and types a space means the same thing as emptying it, and `optionalText`
+      // trims to '' anyway.
+      set(column, optionalText(raw, field, max));
     };
 
     // The three NOT NULL columns. `requireText`/`requireOneOf` reject null with a
@@ -593,18 +631,35 @@ export class DiagnosisService {
     });
   }
 
-  /** §376's technician notes and §3042's interpretation of the whole diagnosis. */
+  /**
+   * §376's technician notes and §3042's interpretation of the whole diagnosis.
+   *
+   * ⚠️ AN EMPTY SUMMARY CLEARS IT, and the first version refused with "summary is
+   * required" — the SAME asymmetry Codex found on the findings, one field over. A
+   * technician who pasted the wrong paragraph in here could overwrite it but never
+   * empty it, and the column is nullable precisely because a diagnosis need not carry
+   * notes. Refusing to clear a field the schema allows to be absent is a rule the
+   * database does not have.
+   *
+   * `undefined` is still refused: a PATCH that mentions nothing is a mistake, not an
+   * instruction, and it is the one case where guessing would be wrong either way.
+   */
   async recordSummary(
     ctx: TenantContext,
     diagnosisId: string,
-    input: { summary?: string },
+    input: { summary?: string | null },
   ): Promise<Diagnosis> {
     this.assertMayRecord(ctx);
     const id = requireUuid(diagnosisId, 'id');
-    const summary = optionalText(input.summary, 'summary', 8000);
-    if (summary === null) {
+    if (input.summary === undefined) {
       throw new BadRequestException('summary is required');
     }
+    if (input.summary !== null && typeof input.summary !== 'string') {
+      throw new BadRequestException('summary must be a string, or null to clear it');
+    }
+    // `optionalText` trims and returns null for '' or whitespace — which is exactly
+    // "clear it" here, so no separate branch is needed.
+    const summary = optionalText(input.summary, 'summary', 8000);
 
     return this.db.withTenant(ctx, async (client) => {
       const diagnosis = await this.assertWritable(client, ctx, id);

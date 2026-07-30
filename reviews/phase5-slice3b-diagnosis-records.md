@@ -79,6 +79,29 @@ Codex missed, and `feedback_never_bypass_codex` is explicit that Codex is not in
    the header. Guarded up front, and the refusal names §1290's `excluded` so it does not read as
    "you must find something wrong", which invents faults.
 
+**Found by re-reviewing the FIX COMMIT itself — three more, all in code Codex had approved:**
+
+3a. **The clear-semantics fix introduced a data-destroying regression.** `optionalText`
+   returns `null` for anything that is not a string, so `{"faultCode": 12345}` reached
+   `set(column, null)` and ERASED the stored code. Under the old `COALESCE($n, column)` the
+   same bad type was a harmless no-op — giving `null` a destructive meaning turned a wrong
+   type from "nothing happens" into "the value is gone". `nullableText` now checks the type
+   itself and answers a 400 naming the field. **The lesson: when you give a value a new
+   meaning, re-check every path that could already produce it.**
+3b. **The types lied about the contract.** `FindingInput` and the controller body declared
+   `faultCode?: string` while `null` was the documented clear signal — the tests had to
+   launder it through `as unknown as string`. A type that omits a supported value is how a
+   later DTO refactor or a stricter validation pipe strips `null` and silently removes the
+   capability, with nothing failing to compile. Now `string | null` on the six nullable
+   fields; the three NOT NULL ones deliberately stay `string`.
+3c. **`recordSummary` could not clear the notes** — it refused `''` with "summary is
+   required". The same asymmetry Codex found on the findings, one field over: a technician
+   who pasted the wrong paragraph could overwrite it but never empty it, and the column is
+   nullable precisely because a diagnosis need not carry notes. Now `''`/`null` clears,
+   `undefined` is still a 400, and the form says "Saving an empty box clears the notes" —
+   because a box that accepts being emptied and one that refuses look identical until you
+   press the button.
+
 **Found in the harnesses, which is where the rest of the session's cost went:**
 
 4. **Three stale servers were serving the build from 2026-07-29.** `pkill -f` from Git Bash does
@@ -127,7 +150,7 @@ the SQL text. `apiDelete` sends no body and no `Content-Type`.
 | `apps/e2e/verify/measure-diagnosis-layout.mjs` — 1280/768/390 | **15/15** |
 | `infrastructure/migrations/verify/013_finding_removal.sql` — as `autoworkshop_app`, under RLS | **3/3** |
 | `scripts/guardrails/check-page-gates.sh` | OK — and **control-tested** by removing a gate and confirming it FAILS |
-| unit | **338** (API 244, incl. 70 for this slice) |
+| unit | **344** (API 250, incl. 76 for this slice) |
 | typecheck · lint | 15/15 · 15/15 |
 | Playwright | **138 passed / 2 skipped** — the COUNT, never the exit code |
 

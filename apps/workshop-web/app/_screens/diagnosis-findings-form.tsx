@@ -687,6 +687,11 @@ export function DiagnosisFindingsForm({
           placeholder="Overall interpretation, anything the individual findings do not cover."
           style={inputStyle}
         />
+        <p style={hintStyle}>
+          {/* Said out loud, because a box that silently accepts being emptied and a box
+              that refuses look identical until you press the button. */}
+          Saving an empty box clears the notes.
+        </p>
         <button
           type="submit"
           disabled={pending !== null}
