@@ -19,6 +19,7 @@ import { RepairPlanService } from './repair-plan.service';
 import { QuotationService } from './quotation.service';
 import { ProposalService } from './proposal.service';
 import { ExecutionService } from './execution.service';
+import { TestingService } from './testing.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -37,6 +38,7 @@ export class JobCardController {
     private readonly quotations: QuotationService,
     private readonly proposals: ProposalService,
     private readonly executions: ExecutionService,
+    private readonly testing: TestingService,
   ) {}
 
   @Get()
@@ -264,6 +266,29 @@ export class JobCardController {
     @Body() body: { serviceBay?: string; readinessNote?: string },
   ) {
     return this.executions.start(req.tenantContext, id, body ?? {});
+  }
+
+  /** The test sessions on a job card — `07.txt` §34-§36 (slice 8). */
+  @Get(':id/test-sessions')
+  listTestSessions(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.testing.listForJobCard(req.tenantContext, id);
+  }
+
+  /**
+   * §34 — begin recording test results.
+   *
+   * No body: the session is opened against the COMPLETED repair, which the service
+   * finds and a trigger insists on. §34 opens "after completing the repair".
+   */
+  @Post(':id/test-sessions')
+  startTestSession(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.testing.start(req.tenantContext, id);
   }
 }
 
@@ -1056,5 +1081,136 @@ export class ExecutionController {
     @Body() body: { completionNote?: string; unexpectedFindings?: string },
   ) {
     return this.executions.complete(req.tenantContext, id, body ?? {});
+  }
+}
+
+
+/**
+ * Test sessions addressed directly — `07.txt` §34-§36.
+ *
+ * A SEPARATE controller, the judgement every sibling here made: recording a result
+ * identifies the SESSION, not the card.
+ */
+@Controller('test-sessions')
+@UseGuards(TenantGuard)
+export class TestingController {
+  constructor(private readonly testing: TestingService) {}
+
+  /**
+   * ⚠️ DECLARED BEFORE `@Get(':id')`, and it must stay there. Nest matches in
+   * declaration order; seven slices have now paid for this note.
+   */
+  @Get()
+  list(@Req() req: AuthenticatedRequest) {
+    return this.testing.list(req.tenantContext);
+  }
+
+  @Get(':id')
+  findOne(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.testing.findById(req.tenantContext, id);
+  }
+
+  /** §34 — record one test result, with its fourteen fields. */
+  @Post(':id/results')
+  recordResult(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      testCategory?: string;
+      testName?: string;
+      testProcedure?: string;
+      testEquipment?: string;
+      equipmentIdentifier?: string;
+      calibrationStatus?: string;
+      expectedResult?: string;
+      actualResult?: string;
+      unitOfMeasurement?: string;
+      outcome?: string;
+      evidenceId?: string;
+      comments?: string;
+    },
+  ) {
+    return this.testing.recordResult(req.tenantContext, id, body ?? {});
+  }
+
+  @Delete(':id/results/:resultId')
+  removeResult(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('resultId', new ParseUUIDPipe()) resultId: string,
+  ) {
+    return this.testing.removeResult(req.tenantContext, id, resultId);
+  }
+
+  /** §35 — the post-repair diagnostic scan. */
+  @Patch(':id/scan')
+  recordScan(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      scanPerformed?: boolean;
+      preRepairFaultCodes?: string | null;
+      codesCleared?: string | null;
+      codesRemaining?: string | null;
+      newCodes?: string | null;
+      liveDataChecks?: string | null;
+      systemReadiness?: string | null;
+      warningLightStatus?: string | null;
+      criticalFaultsRemain?: boolean;
+    },
+  ) {
+    return this.testing.recordScan(req.tenantContext, id, body ?? {});
+  }
+
+  /** §36 — the road test. */
+  @Patch(':id/road-test')
+  recordRoadTest(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      roadTestPerformed?: boolean;
+      roadTestDriver?: string | null;
+      roadTestStartMileage?: number;
+      roadTestEndMileage?: number;
+      roadTestRoute?: string | null;
+      roadTestWeather?: string | null;
+      roadTestRoadCondition?: string | null;
+      roadTestInitialSymptom?: string | null;
+      roadTestOutcome?: string | null;
+      roadTestNotes?: string | null;
+    },
+  ) {
+    return this.testing.recordRoadTest(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * §35's DOCUMENTED APPROVAL — release a vehicle with an unresolved critical fault.
+   *
+   * Its own route with its own, NARROWER role set. An approval the technician can give
+   * themselves is not an approval, and §35 exists precisely so that decision has a name
+   * against it.
+   */
+  @Post(':id/critical-override')
+  approveCriticalOverride(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.testing.approveCriticalOverride(req.tenantContext, id, body ?? {});
+  }
+
+  /** Submit for quality control — slice 9 answers it. */
+  @Post(':id/submit')
+  submit(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.testing.submit(req.tenantContext, id);
   }
 }

@@ -8,12 +8,14 @@ import {
   QuotationController,
   ProposalController,
   ExecutionController,
+  TestingController,
 } from './repair.controller';
 import { DiagnosisService } from './diagnosis.service';
 import { RepairPlanService } from './repair-plan.service';
 import { QuotationService } from './quotation.service';
 import { ProposalService } from './proposal.service';
 import { ExecutionService } from './execution.service';
+import { TestingService } from './testing.service';
 import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 
@@ -37,6 +39,7 @@ import { JobCardService } from './job-card.service';
     QuotationController,
     ProposalController,
     ExecutionController,
+    TestingController,
   ],
   providers: [
     JobCardService,
@@ -46,6 +49,7 @@ import { JobCardService } from './job-card.service';
     QuotationService,
     ProposalService,
     ExecutionService,
+    TestingService,
   ],
   exports: [
     JobCardService,
@@ -55,6 +59,7 @@ import { JobCardService } from './job-card.service';
     QuotationService,
     ProposalService,
     ExecutionService,
+    TestingService,
   ],
 })
 export class RepairModule {}
