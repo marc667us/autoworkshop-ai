@@ -157,8 +157,33 @@ export async function apiPatch<T>(
   return apiWrite<T>('PATCH', workspaceId, path, body);
 }
 
+/**
+ * DELETE a resource as the current viewer.
+ *
+ * Shares `apiWrite` for the same reasons `apiPatch` does — same auth, same
+ * never-throws contract, same `invalid` pass-through.
+ *
+ * ⚠️ NO BODY IS SENT, and that is why this is a separate export rather than
+ * `apiWrite('DELETE', ..., {})`. An empty object would still set
+ * `Content-Type: application/json` and a `{}` payload on a request whose meaning
+ * is entirely in its URL — harmless today, and exactly the kind of thing a strict
+ * gateway or a future body-schema validator rejects with a message about JSON when
+ * the caller sent no data at all.
+ *
+ * Added for slice 3b's `removeFinding` (`DELETE /diagnoses/:id/findings/:id`),
+ * which exists so a finding entered in error can be taken back while the diagnosis
+ * is still open. Nothing else uses DELETE yet: the platform's records are
+ * append-only by default and this one is narrowly granted (migration 013).
+ */
+export async function apiDelete<T>(
+  workspaceId: WorkspaceId | string,
+  path: string,
+): Promise<ApiResult<T>> {
+  return apiWrite<T>('DELETE', workspaceId, path, undefined);
+}
+
 async function apiWrite<T>(
-  method: 'POST' | 'PATCH',
+  method: 'POST' | 'PATCH' | 'DELETE',
   workspaceId: WorkspaceId | string,
   path: string,
   body: unknown,
@@ -172,10 +197,17 @@ async function apiWrite<T>(
       method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
+        // ⚠️ ONLY WHEN THERE IS A BODY. `apiDelete` passes `undefined`, and
+        // declaring a JSON content type on a request that carries no bytes is what
+        // makes a strict gateway or a body-schema validator complain about
+        // malformed JSON when nothing was sent at all.
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(await activeOrganizationHeader(workspaceId)),
       },
-      body: JSON.stringify(body),
+      // `JSON.stringify(undefined)` is `undefined`, which fetch treats as no body —
+      // relied on deliberately rather than left to chance, hence the explicit
+      // branch above.
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     return { ok: false, reason: 'unavailable' };
