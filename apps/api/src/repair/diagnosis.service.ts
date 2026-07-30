@@ -209,17 +209,43 @@ export class DiagnosisService {
         );
       }
 
-      // One open diagnosis at a time. Two in-progress records for one card is not
-      // a second opinion — it is two people recording half a diagnosis each, and
-      // nothing says which one the repair plan should be built from.
-      const open = await client.query(
-        `SELECT id FROM repair.diagnoses
-          WHERE job_card_id = $1 AND tenant_id = $2 AND status = 'in_progress'`,
+      // ── ONE UNSETTLED DIAGNOSIS AT A TIME ────────────────────────────────
+      //
+      // Two in-progress records for one card is not a second opinion — it is two
+      // people recording half a diagnosis each, and nothing says which one the
+      // repair plan should be built from.
+      //
+      // ⚠️ `submitted` BLOCKS A NEW ATTEMPT TOO, and that is the half this slice
+      // originally got wrong (Codex, HIGH — accepted). Allowing it made §1292's
+      // review BYPASSABLE without deleting anything: submit attempt 1, immediately
+      // start attempt 2, and because every queue and this service order by
+      // `attempt_no DESC`, the in-progress attempt 2 becomes "the current record"
+      // and the submitted attempt 1 stops being surfaced. The awaiting-review count
+      // falls to zero while a diagnosis is still unreviewed. The row survived; the
+      // obligation to review it did not, which is worse than a lost row because
+      // nothing looks wrong.
+      //
+      // So a further opinion waits for the supervisor's answer. That is also the
+      // honest workshop rule: re-diagnosing while somebody is still reading your
+      // last diagnosis wastes both people's time.
+      const unsettled = await client.query(
+        `SELECT id, status FROM repair.diagnoses
+          WHERE job_card_id = $1 AND tenant_id = $2
+            AND status IN ('in_progress', 'submitted')
+          ORDER BY attempt_no DESC
+          LIMIT 1`,
         [cardId, ctx.tenantId],
       );
-      if (open.rows.length > 0) {
+      const blocking = unsettled.rows[0] as { id: string; status: string } | undefined;
+      if (blocking) {
+        // Two different situations, two different sentences — the caller's next
+        // action is not the same, and "already has a diagnosis" would leave a
+        // technician pressing a button that cannot work.
         throw new ConflictException(
-          'this job card already has a diagnosis in progress; submit it before starting another',
+          blocking.status === 'in_progress'
+            ? 'this job card already has a diagnosis in progress; submit it before starting another'
+            : 'the previous diagnosis for this job card is awaiting supervisor review; ' +
+              'a new attempt can only be started once it has been approved or rejected',
         );
       }
 
@@ -357,11 +383,32 @@ export class DiagnosisService {
   /**
    * Correct a finding while the diagnosis is still open.
    *
-   * PARTIAL: every field is optional and an omitted one is left alone, so a
-   * technician promoting a suspected fault to confirmed does not have to resend the
-   * paragraph they already wrote. `null` is not accepted as "clear this" for the
-   * same reason — a field the caller did not mention must not be erased by a client
-   * that serialises undefined as null.
+   * PARTIAL, with three distinct meanings per field — and the third one is the point
+   * (Codex, MEDIUM — accepted):
+   *
+   *   · ABSENT (`undefined`)  → leave the column alone. So a technician promoting a
+   *     suspected fault to confirmed does not resend the paragraph they wrote.
+   *   · `null` or `''`        → CLEAR the column, for the fields 012 makes nullable.
+   *   · a value               → set it.
+   *
+   * ⚠️ WHY "CLEAR" HAD TO EXIST. The first version used `COALESCE($n, column)`
+   * throughout, which collapses "clear this" and "not mentioned" into the same
+   * request — so a fault code typed against a fault that turns out to have no DTC
+   * could be overwritten with a DIFFERENT wrong code but never removed. The only way
+   * out was deleting the finding and retyping the reasoning, which loses the
+   * evidence to fix a single field and reads in the audit trail as though the whole
+   * finding had been wrong. A capability whose only route is destroying the record
+   * around it is the unreachable-alternative trap in another costume.
+   *
+   * ⚠️ AND WHY `undefined`-MEANS-LEAVE IS SAFE. `JSON.stringify` omits undefined
+   * properties entirely, so a client cannot accidentally send `null` for a field it
+   * never mentioned — the two are distinguishable on the wire, which is what makes
+   * this contract implementable rather than merely desirable.
+   *
+   * `faultDescription`, `affectedSystem` and `findingStatus` are NOT clearable: 012
+   * declares them NOT NULL, and `fault_description` additionally CHECKs that it is
+   * non-blank. Sending `null` for one of those is a 400 naming the field rather than
+   * a constraint violation surfacing as a 500.
    */
   async updateFinding(
     ctx: TenantContext,
@@ -373,82 +420,107 @@ export class DiagnosisService {
     const id = requireUuid(diagnosisId, 'id');
     const targetId = requireUuid(findingId, 'findingId');
 
-    const faultDescription = optionalText(input.faultDescription, 'faultDescription', 2000);
-    const affectedSystem = optionalOneOf(input.affectedSystem, AFFECTED_SYSTEMS, 'affectedSystem');
-    const findingStatus = optionalOneOf(input.findingStatus, FINDING_STATUSES, 'findingStatus');
-    const fields = this.validateOptionalFields(input);
+    // ── build the SET list from the fields the caller actually mentioned ────
+    //
+    // Assembled rather than a fixed statement of COALESCEs, because that is the
+    // only way "omitted" and "cleared" stay different things. Column names come
+    // from the literals below and NEVER from the request, so nothing caller-supplied
+    // reaches the SQL text — every value is a bound parameter.
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    const set = (column: string, value: unknown): void => {
+      values.push(value);
+      sets.push(`${column} = $${values.length}`);
+    };
 
-    const nothingGiven =
-      faultDescription === null &&
-      affectedSystem === null &&
-      findingStatus === null &&
-      fields.faultCode === null &&
-      fields.observedSymptom === null &&
-      fields.testPerformed === null &&
-      fields.expectedResult === null &&
-      fields.actualResult === null &&
-      fields.interpretation === null &&
-      input.additionalInspectionRequired === undefined;
-    if (nothingGiven) {
+    /** A nullable text column: absent leaves it, null/'' clears it. */
+    const nullableText = (
+      column: string,
+      raw: unknown,
+      field: string,
+      max: number,
+    ): void => {
+      if (raw === undefined) return;
+      set(column, raw === null || raw === '' ? null : optionalText(raw, field, max));
+    };
+
+    // The three NOT NULL columns. `requireText`/`requireOneOf` reject null with a
+    // message naming the field, which is what makes an attempt to clear one a clean
+    // 400 rather than a 23502 from Postgres.
+    if (input.faultDescription !== undefined) {
+      set('fault_description', requireText(input.faultDescription, 'faultDescription', 2000));
+    }
+    if (input.affectedSystem !== undefined) {
+      set('affected_system', requireOneOf(input.affectedSystem, AFFECTED_SYSTEMS, 'affectedSystem'));
+    }
+    const findingStatus =
+      input.findingStatus === undefined
+        ? null
+        : requireOneOf(input.findingStatus, FINDING_STATUSES, 'findingStatus');
+    if (findingStatus !== null) {
+      set('finding_status', findingStatus);
+    }
+
+    nullableText('fault_code', input.faultCode, 'faultCode', 64);
+    nullableText('observed_symptom', input.observedSymptom, 'observedSymptom', 2000);
+    nullableText('test_performed', input.testPerformed, 'testPerformed', 2000);
+    nullableText('expected_result', input.expectedResult, 'expectedResult', 2000);
+    nullableText('actual_result', input.actualResult, 'actualResult', 2000);
+    nullableText('interpretation', input.interpretation, 'interpretation', 8000);
+
+    if (input.additionalInspectionRequired !== undefined) {
+      set('additional_inspection_required', input.additionalInspectionRequired === true);
+    }
+
+    // ⚠️ THE CONFIRMATION SIGNATURE MOVES WITH THE STATUS, IN BOTH DIRECTIONS.
+    //
+    // Setting `confirmed` stamps whoever confirmed it — that is §1294's whole point.
+    // Setting anything ELSE clears the stamp, which is the half that is easy to
+    // forget: a finding downgraded from confirmed to suspected while still naming a
+    // confirmer would read as though someone had signed for a fault that is no
+    // longer established. The CHECK constraint does not catch that, because it only
+    // constrains rows that ARE confirmed.
+    //
+    // When the status is not being changed, both columns are left alone — the
+    // attribution already agrees with the standing, and touching it would rewrite
+    // WHEN a fault was confirmed every time an unrelated typo was fixed.
+    if (findingStatus === 'confirmed') {
+      // COALESCE, so re-saving a finding that is already confirmed does not move the
+      // signature to whoever last edited it. The first person to confirm it is the
+      // one who says so.
+      values.push(ctx.userId);
+      sets.push(`confirmed_by = COALESCE(confirmed_by, $${values.length})`);
+      sets.push('confirmed_at = COALESCE(confirmed_at, now())');
+    } else if (findingStatus !== null) {
+      sets.push('confirmed_by = NULL', 'confirmed_at = NULL');
+    }
+
+    if (sets.length === 0) {
       throw new BadRequestException('nothing to update');
     }
+
+    // Always, and after the caller's fields so it cannot be overwritten by one:
+    // whoever last touched the row, and when.
+    set('recorded_by', ctx.userId);
+    sets.push('recorded_at = now()');
+
+    // ⚠️ THE STATEMENT AND ITS PARAMETERS ARE FINISHED HERE, BEFORE THE
+    // TRANSACTION. Appending to `values` inside the callback would make the query
+    // depend on how many times the callback runs — correct today because
+    // `withTenant` invokes it once, and silently wrong the day it retries. A
+    // statement built from mutable state outside its own closure is the kind of
+    // thing that works until it does not.
+    values.push(targetId, id, ctx.tenantId);
+    const sql = `UPDATE repair.diagnostic_findings
+            SET ${sets.join(', ')}
+          WHERE id = $${values.length - 2}
+            AND diagnosis_id = $${values.length - 1}
+            AND tenant_id = $${values.length}`;
 
     return this.db.withTenant(ctx, async (client) => {
       const diagnosis = await this.assertWritable(client, ctx, id);
 
-      // ⚠️ THE CONFIRMATION SIGNATURE MOVES WITH THE STATUS, IN BOTH DIRECTIONS.
-      //
-      // Setting `confirmed` stamps whoever confirmed it — that is §1294's whole
-      // point. Setting anything ELSE clears the stamp, which is the half that is
-      // easy to forget: a finding downgraded from confirmed to suspected while
-      // still naming a confirmer would read as though someone had signed for a
-      // fault that is no longer established. The CHECK constraint does not catch
-      // that case, because it only constrains rows that ARE confirmed.
-      //
-      // `COALESCE($n, column)` everywhere else, so an omitted field is untouched.
-      const updated = await client.query(
-        `UPDATE repair.diagnostic_findings
-            SET fault_code        = COALESCE($1, fault_code),
-                fault_description = COALESCE($2, fault_description),
-                affected_system   = COALESCE($3, affected_system),
-                observed_symptom  = COALESCE($4, observed_symptom),
-                test_performed    = COALESCE($5, test_performed),
-                expected_result   = COALESCE($6, expected_result),
-                actual_result     = COALESCE($7, actual_result),
-                interpretation    = COALESCE($8, interpretation),
-                finding_status    = COALESCE($9, finding_status),
-                additional_inspection_required =
-                    COALESCE($10, additional_inspection_required),
-                confirmed_by = CASE
-                    WHEN COALESCE($9, finding_status) = 'confirmed'
-                        THEN COALESCE(confirmed_by, $11)
-                    ELSE NULL END,
-                confirmed_at = CASE
-                    WHEN COALESCE($9, finding_status) = 'confirmed'
-                        THEN COALESCE(confirmed_at, now())
-                    ELSE NULL END,
-                recorded_by = $11,
-                recorded_at = now()
-          WHERE id = $12 AND diagnosis_id = $13 AND tenant_id = $14`,
-        [
-          fields.faultCode,
-          faultDescription,
-          affectedSystem,
-          fields.observedSymptom,
-          fields.testPerformed,
-          fields.expectedResult,
-          fields.actualResult,
-          fields.interpretation,
-          findingStatus,
-          input.additionalInspectionRequired === undefined
-            ? null
-            : fields.additionalInspectionRequired,
-          ctx.userId,
-          targetId,
-          id,
-          ctx.tenantId,
-        ],
-      );
+      const updated = await client.query(sql, values);
       // `rowCount` 0 on an UPDATE is the quiet no-op that makes a write look
       // successful. Reported rather than silently skipped — the same lesson
       // `'ApiFailure' in 'describeApiFailure'` taught, in SQL form.

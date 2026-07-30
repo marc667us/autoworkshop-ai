@@ -200,6 +200,63 @@ export async function setFindingStatusAction(formData: FormData): Promise<Action
 }
 
 /**
+ * Correct a finding's details — the fault code and the §3036-§3040 evidence.
+ *
+ * ⚠️ SENDS `null` FOR AN EMPTIED FIELD, DELIBERATELY. The service reads `null` as
+ * "clear this column" and an ABSENT key as "leave it alone", and a technician who
+ * blanks the fault-code box means the first. Without this the only way to remove a
+ * wrong code was to delete the whole finding and retype the reasoning — destroying
+ * the record around a field in order to fix that field.
+ *
+ * `faultDescription` and `affectedSystem` are sent as values, never as null: the
+ * database declares them NOT NULL, and the service answers a clean 400 naming the
+ * field if either arrives empty.
+ */
+export async function updateFindingDetailsAction(formData: FormData): Promise<ActionResult> {
+  const diagnosisId = String(formData.get('diagnosisId') ?? '').trim();
+  const findingId = String(formData.get('findingId') ?? '').trim();
+  if (!diagnosisId || !findingId) {
+    return { error: 'That finding could not be identified. Reload the page.' };
+  }
+
+  const faultDescription = String(formData.get('faultDescription') ?? '').trim();
+  if (faultDescription === '') {
+    return { error: 'A finding must keep a fault description.' };
+  }
+
+  // `null` rather than `undefined` for the clearable fields — see the note above.
+  // `JSON.stringify` would DROP an undefined value, which is exactly what "leave it
+  // alone" means and exactly not what an emptied input means.
+  const clearable = (name: string): string | null => {
+    const value = String(formData.get(name) ?? '').trim();
+    return value === '' ? null : value;
+  };
+
+  const result = await apiPatch<{ findings: unknown[] }>(
+    'workshop',
+    `/diagnoses/${diagnosisId}/findings/${findingId}`,
+    {
+      faultDescription,
+      affectedSystem: String(formData.get('affectedSystem') ?? '').trim(),
+      faultCode: clearable('faultCode'),
+      observedSymptom: clearable('observedSymptom'),
+      testPerformed: clearable('testPerformed'),
+      expectedResult: clearable('expectedResult'),
+      actualResult: clearable('actualResult'),
+      interpretation: clearable('interpretation'),
+      additionalInspectionRequired: formData.get('additionalInspectionRequired') !== null,
+    },
+  );
+
+  if (!result.ok) {
+    return { error: explain(result.reason, result.message) };
+  }
+
+  revalidateAll();
+  return { created: 'Finding corrected' };
+}
+
+/**
  * Remove a finding entered in error, while the diagnosis is still open.
  *
  * ⚠️ THE ESCAPE HATCH, and it is here because the alternatives are all worse:

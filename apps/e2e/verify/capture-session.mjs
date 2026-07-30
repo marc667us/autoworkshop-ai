@@ -23,13 +23,25 @@
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 
-const SEAM = new URL('../../../.verify-session-cookies.json', import.meta.url);
-
-
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
   return i === -1 ? fallback : process.argv[i + 1];
 }
+
+/**
+ * Where the captured cookies land. Default unchanged, so every existing caller and
+ * every probe that reads the default seam keeps working.
+ *
+ * `--out` added 2026-07-30 (slice 3b): proving §1292's review needs TWO sessions
+ * ALIVE AT ONCE — a technician who submits a diagnosis and a supervisor who reviews
+ * it — because the rule under test is "the reviewer is not the submitter", and a
+ * single-slot seam can only ever hold one identity. Capturing them in sequence into
+ * one file would prove the second one twice.
+ */
+const SEAM = new URL(
+  `../../../${arg('out', '.verify-session-cookies.json')}`,
+  import.meta.url,
+);
 
 // `--url` and `--user` added 2026-07-28 (Phase 4): the same capture is now used
 // to prove what the API hands a TECHNICIAN, which needs a workshop-web session

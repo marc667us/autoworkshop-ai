@@ -10,6 +10,7 @@ import {
   removeFindingAction,
   setFindingStatusAction,
   submitDiagnosisAction,
+  updateFindingDetailsAction,
 } from './diagnosis-actions';
 // From the pure label module, NEVER from `diagnosis-sheet-screen` — that is an async
 // server component, and importing a constant out of it would pull the module and its
@@ -325,6 +326,163 @@ export function DiagnosisFindingsForm({
                   </button>
                 </form>
               </div>
+
+              {/*
+                ⚠️ CORRECTING THE DETAILS — and it has to be reachable from here, not
+                only from the API (Codex MEDIUM, accepted). A fault code typed against
+                a fault that turns out to set none, or a mistyped expected value, was
+                otherwise fixable ONLY by removing the whole finding and retyping the
+                reasoning: destroying the record around a field in order to fix that
+                field. An API that can clear a column and a product that cannot is
+                half a feature.
+
+                Behind a `<details>` disclosure so the list stays scannable — a
+                technician reads this list far more often than they correct it — and
+                because a native disclosure needs no focus plumbing and is keyboard-
+                and screen-reader-operable as it stands.
+
+                An EMPTIED field is sent as `null` by the action, which the service
+                reads as "clear this". That is why blanking a box here actually removes
+                the value instead of silently doing nothing.
+              */}
+              <details style={{ marginTop: primitive.space[2] }}>
+                <summary
+                  style={{
+                    cursor: 'pointer',
+                    fontSize: primitive.fontSize.sm,
+                    color: primitive.color.blue[600],
+                    fontWeight: 600,
+                  }}
+                >
+                  Correct the details
+                </summary>
+
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const form = event.currentTarget;
+                    if (!form.checkValidity()) {
+                      form.reportValidity();
+                      return;
+                    }
+                    void run(
+                      `edit:${finding.id}`,
+                      updateFindingDetailsAction,
+                      new FormData(form),
+                    );
+                  }}
+                  noValidate
+                  style={{
+                    display: 'grid',
+                    gap: primitive.space[2],
+                    marginTop: primitive.space[2],
+                  }}
+                >
+                  <input type="hidden" name="diagnosisId" value={diagnosisId} />
+                  <input type="hidden" name="findingId" value={finding.id} />
+
+                  <label htmlFor={`d-desc-${finding.id}`} style={labelStyle}>
+                    Fault description (required)
+                  </label>
+                  <input
+                    id={`d-desc-${finding.id}`}
+                    name="faultDescription"
+                    type="text"
+                    required
+                    maxLength={2000}
+                    defaultValue={finding.faultDescription}
+                    style={inputStyle}
+                  />
+
+                  <label htmlFor={`d-system-${finding.id}`} style={labelStyle}>
+                    Affected system (required)
+                  </label>
+                  <select
+                    id={`d-system-${finding.id}`}
+                    name="affectedSystem"
+                    required
+                    defaultValue={finding.affectedSystem}
+                    style={inputStyle}
+                  >
+                    {AFFECTED_SYSTEM_ORDER.map((value) => (
+                      <option key={value} value={value}>
+                        {AFFECTED_SYSTEM_LABEL[value]}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* The clearable fields. The hint is not decoration: without it,
+                      emptying a box looks like it might do nothing. */}
+                  <p style={hintStyle}>
+                    Emptying any field below removes its value. The description and the
+                    affected system cannot be emptied.
+                  </p>
+
+                  {(
+                    [
+                      ['faultCode', 'Fault code', finding.faultCode],
+                      ['observedSymptom', 'Observed symptom', finding.observedSymptom],
+                      ['testPerformed', 'Test performed', finding.testPerformed],
+                      ['expectedResult', 'Expected result', finding.expectedResult],
+                      ['actualResult', 'Actual result', finding.actualResult],
+                    ] as const
+                  ).map(([name, label, value]) => (
+                    <React.Fragment key={name}>
+                      <label htmlFor={`d-${name}-${finding.id}`} style={labelStyle}>
+                        {label}
+                      </label>
+                      <input
+                        id={`d-${name}-${finding.id}`}
+                        name={name}
+                        type="text"
+                        maxLength={name === 'faultCode' ? 64 : 2000}
+                        defaultValue={value ?? ''}
+                        style={
+                          name === 'faultCode'
+                            ? { ...inputStyle, fontFamily: primitive.fontFamily.mono }
+                            : inputStyle
+                        }
+                      />
+                    </React.Fragment>
+                  ))}
+
+                  <label htmlFor={`d-interp-${finding.id}`} style={labelStyle}>
+                    Interpretation
+                  </label>
+                  <textarea
+                    id={`d-interp-${finding.id}`}
+                    name="interpretation"
+                    rows={3}
+                    maxLength={8000}
+                    defaultValue={finding.interpretation ?? ''}
+                    style={inputStyle}
+                  />
+
+                  <label
+                    style={{
+                      ...labelStyle,
+                      display: 'flex',
+                      gap: primitive.space[2],
+                      alignItems: 'center',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      name="additionalInspectionRequired"
+                      defaultChecked={finding.additionalInspectionRequired}
+                    />
+                    Needs further inspection (§3046)
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={pending !== null}
+                    style={buttonStyle(pending === `edit:${finding.id}`)}
+                  >
+                    {pending === `edit:${finding.id}` ? 'Saving…' : 'Save corrections'}
+                  </button>
+                </form>
+              </details>
             </li>
           ))}
         </ol>

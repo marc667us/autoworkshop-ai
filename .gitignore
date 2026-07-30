@@ -84,4 +84,14 @@ infrastructure/backup/status/
 .guardrails/
 
 # Seam file for the sign-out revocation proof (contains a real dev session)
+# Captured sign-in sessions used by the verify/ probes. These are REAL CREDENTIALS —
+# an encrypted Auth.js session cookie plus a live Keycloak access token.
+#
+# ⚠️ A GLOB, NOT ONE FILENAME. `capture-session.mjs --out` (slice 3b) can write any
+# name, because proving §1292's reviewer independence needs two sessions alive at
+# once — and `.verify-tech-cookies.json` / `.verify-sup-cookies.json` were staged by
+# `git add -A` on the very first run, since the old exact-match line did not cover
+# them. One filename in an ignore file is a rule that holds only until somebody adds
+# a second file.
+.verify-*cookies*.json
 .verify-session-cookies.json

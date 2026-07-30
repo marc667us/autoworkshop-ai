@@ -95,7 +95,17 @@ const Q = {
   findings: /FROM repair\.diagnostic_findings f/,
   attempt: /COALESCE\(max\(attempt_no\)/,
   position: /COALESCE\(max\(position\)/,
-  openCheck: /SELECT id FROM repair\.diagnoses/,
+  /**
+   * `start`'s unsettled-attempt check.
+   *
+   * ⚠️ ANCHORED ON `status IN`, not on `SELECT id`. It used to select only `id`;
+   * when the fix for Codex's HIGH finding added `status` to the projection, a regex
+   * matching the old text stopped matching, the handler fell through to `[]`, and
+   * the "refuses a second open diagnosis" test PASSED A NEW ATTEMPT instead of
+   * refusing it. The regex has to name something the rule cannot be expressed
+   * without.
+   */
+  openCheck: /status IN \('in_progress', 'submitted'\)/,
   headerInsert: /INSERT INTO repair\.diagnoses/,
   findingInsert: /INSERT INTO repair\.diagnostic_findings/,
   findingUpdate: /UPDATE repair\.diagnostic_findings/,
@@ -408,11 +418,48 @@ describe('a diagnosis is only started once the car has been examined', () => {
 
   it('refuses a SECOND open diagnosis on the same card', async () => {
     const { db } = fakeDb([
-      [Q.openCheck, [{ id: DIAGNOSIS_ID }]],
+      [Q.openCheck, [{ id: DIAGNOSIS_ID, status: 'in_progress' }]],
       ...openDiagnosis(),
     ]);
     const svc = new DiagnosisService(db, fakeAudit());
     await expect(svc.start(ctx(), CARD_ID)).rejects.toThrow(/already has a diagnosis in progress/);
+  });
+
+  it('REFUSES A NEW ATTEMPT WHILE THE LAST ONE AWAITS REVIEW', async () => {
+    // Codex HIGH, accepted. Allowing it bypassed §1292's review without deleting
+    // anything: submit attempt 1, start attempt 2, and because every queue orders by
+    // `attempt_no DESC` the in-progress attempt 2 becomes "the current record" while
+    // the submitted attempt 1 stops being surfaced. The awaiting-review count falls
+    // to zero with a diagnosis still unreviewed — worse than a lost row, because
+    // nothing looks wrong.
+    const { db } = fakeDb([
+      [Q.openCheck, [{ id: DIAGNOSIS_ID, status: 'submitted' }]],
+      ...openDiagnosis(),
+    ]);
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(svc.start(ctx(), CARD_ID)).rejects.toThrow(/awaiting supervisor review/);
+  });
+
+  it('gives the two blocked cases DIFFERENT sentences', async () => {
+    // The caller's next action is not the same — submit the open one, versus wait for
+    // a supervisor — so one shared "already has a diagnosis" would leave a technician
+    // pressing a button that cannot work.
+    const { db } = fakeDb([
+      [Q.openCheck, [{ id: DIAGNOSIS_ID, status: 'submitted' }]],
+      ...openDiagnosis(),
+    ]);
+    await expect(new DiagnosisService(db, fakeAudit()).start(ctx(), CARD_ID)).rejects.toThrow(
+      /approved or rejected/,
+    );
+  });
+
+  it('ALLOWS a new attempt once the last one was settled', async () => {
+    // The other half of the same rule — the queue's "Start a new diagnosis" button
+    // exists for exactly this, and a refusal here would make the rejection reason
+    // unactionable.
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(svc.start(ctx(), CARD_ID)).resolves.toMatchObject({ id: DIAGNOSIS_ID });
   });
 
   it('locks the job card while allocating the attempt number', async () => {
@@ -607,8 +654,134 @@ describe('correcting a finding', () => {
     const svc = new DiagnosisService(db, fakeAudit());
     await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, { findingStatus: 'suspected' });
     const update = queries.find((q) => Q.findingUpdate.test(q.text));
-    expect(update?.text).toMatch(/confirmed_by = CASE[\s\S]*ELSE NULL END/);
-    expect(update?.text).toMatch(/confirmed_at = CASE[\s\S]*ELSE NULL END/);
+    expect(update?.text).toContain('confirmed_by = NULL');
+    expect(update?.text).toContain('confirmed_at = NULL');
+  });
+
+  it('STAMPS the confirmer on promotion, without displacing an existing one', async () => {
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx({ userId: TECH_ID }), DIAGNOSIS_ID, FINDING_ID, {
+      findingStatus: 'confirmed',
+    });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    // COALESCE, so re-saving an already-confirmed finding does not move the
+    // signature to whoever last edited it. The first person to confirm says so.
+    expect(update?.text).toMatch(/confirmed_by = COALESCE\(confirmed_by, \$\d+\)/);
+    expect(update?.text).toMatch(/confirmed_at = COALESCE\(confirmed_at, now\(\)\)/);
+    expect(update?.values).toContain(TECH_ID);
+  });
+
+  it('LEAVES the signature alone when the status is not being changed', async () => {
+    // Fixing a typo must not rewrite WHEN a fault was confirmed.
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, { faultCode: 'P0302' });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    expect(update?.text).not.toContain('confirmed_by');
+    expect(update?.text).not.toContain('confirmed_at');
+  });
+
+  it('does not touch a column the caller never mentioned', async () => {
+    // The whole reason the SET list is assembled rather than a fixed row of
+    // COALESCEs. A statement that always writes every column cannot tell "clear
+    // this" from "not mentioned".
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, { faultCode: 'P0302' });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    expect(update?.text).toContain('fault_code =');
+    expect(update?.text).not.toContain('interpretation =');
+    expect(update?.text).not.toContain('observed_symptom =');
+  });
+});
+
+describe('clearing an optional field — Codex MEDIUM', () => {
+  /**
+   * The capability that did not exist in the first version.
+   *
+   * `COALESCE($n, column)` collapses "clear this" and "not mentioned" into one
+   * request, so a fault code typed against a fault that turns out to have no DTC
+   * could be overwritten with a DIFFERENT wrong code but never removed. The only way
+   * out was deleting the finding and retyping the reasoning — destroying the record
+   * around a field to fix that field.
+   */
+  it('CLEARS a nullable field when the caller sends null', async () => {
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, {
+      faultCode: null as unknown as string,
+    });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    expect(update?.text).toContain('fault_code =');
+    expect(update?.values?.[0]).toBeNull();
+  });
+
+  it('treats an EMPTY STRING as a clear, not as a blank code', async () => {
+    // What a cleared text input actually submits. Storing '' would make "there is no
+    // code" and "somebody blanked the box" two different values meaning one thing.
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, { faultCode: '' });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    expect(update?.values?.[0]).toBeNull();
+  });
+
+  it('clears the evidence fields too, not only the code', async () => {
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, {
+      observedSymptom: '',
+      testPerformed: '',
+      interpretation: '',
+    });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    for (const column of ['observed_symptom', 'test_performed', 'interpretation']) {
+      expect(update?.text).toContain(`${column} =`);
+    }
+    expect(update?.values?.slice(0, 3)).toEqual([null, null, null]);
+  });
+
+  it('REFUSES to clear fault_description — 012 declares it NOT NULL and non-blank', async () => {
+    // A 400 naming the field, never a 23502 from Postgres surfacing as a 500.
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(
+      svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, { faultDescription: '' }),
+    ).rejects.toThrow(/faultDescription/);
+  });
+
+  it('REFUSES to clear affected_system', async () => {
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(
+      svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, {
+        affectedSystem: null as unknown as string,
+      }),
+    ).rejects.toThrow(/affectedSystem must be one of/);
+  });
+
+  it('REFUSES to clear finding_status', async () => {
+    const { db } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await expect(
+      svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, {
+        findingStatus: null as unknown as string,
+      }),
+    ).rejects.toThrow(/findingStatus must be one of/);
+  });
+
+  it('never lets a caller-supplied string reach the SQL TEXT', async () => {
+    // The SET list is assembled, so this is worth asserting rather than assuming:
+    // column names come from literals in the service and every value is bound.
+    const { db, queries } = fakeDb(openDiagnosis());
+    const svc = new DiagnosisService(db, fakeAudit());
+    await svc.updateFinding(ctx(), DIAGNOSIS_ID, FINDING_ID, {
+      faultCode: "P0301'; DROP TABLE repair.diagnoses; --",
+    });
+    const update = queries.find((q) => Q.findingUpdate.test(q.text));
+    expect(update?.text).not.toContain('DROP TABLE');
+    expect(update?.values).toContain("P0301'; DROP TABLE repair.diagnoses; --");
   });
 
   it('refuses an update once the diagnosis is submitted', async () => {

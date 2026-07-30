@@ -307,11 +307,18 @@ async function Queue({ route }: { route: string }) {
                           rule. Slice 3a shipped exactly this defect and Codex caught it;
                           it is offered here from the start.
 
-                          Shown only when the API would actually accept it: nothing open
-                          (the current record is settled) and the vehicle is back at the
-                          diagnosis stage.
+                          Shown only when the API would actually accept it: the current
+                          record is SETTLED (approved or rejected) and the vehicle is back
+                          at the diagnosis stage.
+
+                          ⚠️ NOT WHILE THE RECORD IS `submitted`. Offering it there was a
+                          review BYPASS (Codex, HIGH): starting attempt 2 made it the
+                          newest attempt, so the submitted attempt 1 stopped being the
+                          current record and the awaiting-review count above fell to zero
+                          while nobody had reviewed anything. The service refuses it now
+                          as well — this is the button not being offered, not the rule.
                         */}
-                        {current.status !== 'in_progress' &&
+                        {(current.status === 'approved' || current.status === 'rejected') &&
                         card.stage === 'diagnosis_in_progress' ? (
                           <div style={{ marginTop: primitive.space[2] }}>
                             <StartDiagnosisForm
