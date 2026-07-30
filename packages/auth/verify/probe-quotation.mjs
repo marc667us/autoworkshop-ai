@@ -58,6 +58,17 @@ async function tokenFrom(file) {
 const TECH = await tokenFrom(flag('--tech-session', '.verify-tech-cookies.json'));
 const ADMIN = await tokenFrom(flag('--admin-session', '.verify-admin-cookies.json'));
 const SUP = await tokenFrom(flag('--sup-session', '.verify-sup-cookies.json'));
+/**
+ * A FIFTH dev identity, and it is required rather than convenient.
+ *
+ * §5 holds approval to a narrower set than preparation, and §563 stops the submitter
+ * approving their own. With only the admin at manager level, a quotation this probe
+ * submits can never be approved by anyone — so the probe proved every refusal and left
+ * the happy path unreachable, and slice 6 (which needs an APPROVED quotation) had no
+ * precondition to work from. The rule generating its own identity requirement, for the
+ * second time in Phase 5.
+ */
+const MANAGER = await tokenFrom(flag('--manager-session', '.verify-manager-cookies.json'));
 
 async function call(who, path, method = 'GET', body) {
   const res = await fetch(`${base}/api/v1${path}`, {
@@ -163,7 +174,12 @@ if (openQuote) {
     }
     await call(ADMIN, `/quotations/${openQuote.id}/submit`, 'POST', {});
   }
-  await call(SUP, `/quotations/${openQuote.id}/review`, 'POST', {
+  // ⚠️ THE MANAGER SETTLES IT, NOT THE SUPERVISOR. A supervisor approves a repair PLAN
+  // and is refused a PRICE — which is the rule this probe asserts twenty lines below, so
+  // using SUP here left the residue unsettled and the next run reported "a quotation is
+  // prepared: FAIL". A cleanup step that uses a role the product refuses is a harness
+  // defect that presents as a product one.
+  await call(MANAGER, `/quotations/${openQuote.id}/review`, 'POST', {
     decision: 'rejected', note: 'settled by a re-run of probe-quotation.mjs',
   });
 }
@@ -341,6 +357,21 @@ check(
 
 const noReason = await call(TECH, `/quotations/${q.id}/review`, 'POST', { decision: 'rejected' });
 check('a technician may not approve either', noReason.status === 403, `HTTP ${noReason.status}`);
+
+// ⚠️ AND THE NAMED ALTERNATIVE IS EXERCISED. Every refusal above says another manager
+// must approve it; that is only a rule if such a person can actually do it. A second
+// manager-level identity closes it out — and leaves the APPROVED quotation slice 6
+// needs, so the two probes chain the way the product does.
+const byAnotherManager = await call(MANAGER, `/quotations/${q.id}/review`, 'POST', {
+  decision: 'approved',
+  note: `${RUN} approved by a different manager`,
+});
+check(
+  '⚠️ ANOTHER MANAGER CAN — the refusal names a route that exists',
+  (byAnotherManager.status === 200 || byAnotherManager.status === 201) &&
+    byAnotherManager.json?.status === 'approved',
+  `HTTP ${byAnotherManager.status}: ${message(byAnotherManager)}`,
+);
 
 // ── 6. scope ────────────────────────────────────────────────────────────────
 

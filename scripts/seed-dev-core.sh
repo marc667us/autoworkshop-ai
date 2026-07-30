@@ -180,3 +180,47 @@ SELECT t.name AS tenant, c.display_name AS customer, count(v.id) AS vehicles
  ORDER BY t.name, c.display_name;"
 
 echo "==> done. Signed in to Tenant A, the screens must show ONLY the Tenant A rows."
+
+# ── slice 6: a letterhead and a labour rate, so documents render as documents ──
+#
+# A repair proposal is a COMMERCIAL DOCUMENT that leaves the building. Without a
+# business identity behind it, the customer-facing page renders a name and a column of
+# blank lines — technically correct and useless to look at, which is the worst way to
+# review a document layout. Without a labour rate every generated labour line is priced
+# at zero and submission is refused, so the quotation screen cannot be exercised either.
+#
+# Idempotent. Applied to workshop organisations only — a parts supplier is not issuing
+# repair proposals.
+echo "==> dev letterhead + pricing (slice 6)"
+psql_run -q <<'SQL'
+INSERT INTO core.organization_profile
+  (organization_id, tenant_id, legal_name, trading_name, address, city, country,
+   phone, email, website, tax_identification_number, vat_registration_number, document_footer)
+SELECT o.id, o.tenant_id, o.name || ' Limited', o.name,
+       'Plot 14, Spintex Road' || chr(10) || 'Baatsona', 'Accra', 'Ghana',
+       '+233 30 123 4567', 'service@' || lower(replace(o.name,' ','')) || '.example',
+       'www.' || lower(replace(o.name,' ','')) || '.example',
+       'C0012345678', 'VAT-GH-004521',
+       'Payment due on collection. Bank: Example Bank Ghana, Acct 1234567890.' || chr(10) ||
+       'Registered in Ghana. All work carried out subject to our standard terms of business.'
+  FROM identity.organizations o
+ WHERE o.org_type IN ('individual_workshop','multi_branch_workshop')
+ON CONFLICT (organization_id) DO UPDATE
+  SET trading_name = EXCLUDED.trading_name, address = EXCLUDED.address,
+      city = EXCLUDED.city, country = EXCLUDED.country, phone = EXCLUDED.phone,
+      email = EXCLUDED.email, tax_identification_number = EXCLUDED.tax_identification_number,
+      vat_registration_number = EXCLUDED.vat_registration_number,
+      document_footer = EXCLUDED.document_footer;
+
+INSERT INTO repair.organization_pricing
+  (organization_id, tenant_id, currency, default_labour_rate, tax_name, tax_rate_percent,
+   default_validity_days, default_warranty_terms)
+SELECT o.id, o.tenant_id, 'GHS', 120.00, 'VAT', 15.000, 14,
+       '12 months or 20,000 km on parts supplied and labour carried out, whichever comes first.'
+  FROM identity.organizations o
+ WHERE o.org_type IN ('individual_workshop','multi_branch_workshop')
+ON CONFLICT (organization_id) DO UPDATE
+  SET default_labour_rate = EXCLUDED.default_labour_rate,
+      tax_rate_percent = EXCLUDED.tax_rate_percent,
+      default_warranty_terms = EXCLUDED.default_warranty_terms;
+SQL

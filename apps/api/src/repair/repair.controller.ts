@@ -17,6 +17,7 @@ import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 import { RepairPlanService } from './repair-plan.service';
 import { QuotationService } from './quotation.service';
+import { ProposalService } from './proposal.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -33,6 +34,7 @@ export class JobCardController {
     private readonly diagnoses: DiagnosisService,
     private readonly repairPlans: RepairPlanService,
     private readonly quotations: QuotationService,
+    private readonly proposals: ProposalService,
   ) {}
 
   @Get()
@@ -211,6 +213,29 @@ export class JobCardController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
     return this.quotations.prepare(req.tenantContext, id);
+  }
+
+  /** The customer proposals for a job card — `1.txt` §396-§424 (slice 6). */
+  @Get(':id/proposals')
+  listProposals(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.proposals.listForJobCard(req.tenantContext, id);
+  }
+
+  /**
+   * Draft a proposal from the approved quotation — or §424's NEW VERSION of it.
+   *
+   * No body: §410-§422's content is READ from the frozen records behind it, and the
+   * narrative is recorded separately once the draft exists.
+   */
+  @Post(':id/proposals')
+  prepareProposal(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.proposals.prepare(req.tenantContext, id);
   }
 }
 
@@ -779,5 +804,92 @@ export class QuotationController {
     @Body() body: { decision?: string; note?: string },
   ) {
     return this.quotations.review(req.tenantContext, id, body ?? {});
+  }
+}
+
+
+/**
+ * Proposals addressed directly, once one exists — `1.txt` §396-§424, `07.txt` §7.
+ *
+ * A SEPARATE controller, the judgement every sibling here made: recording a decision
+ * identifies the PROPOSAL, not the card.
+ */
+@Controller('proposals')
+@UseGuards(TenantGuard)
+export class ProposalController {
+  constructor(private readonly proposals: ProposalService) {}
+
+  /**
+   * ⚠️ DECLARED BEFORE `@Get(':id')`, and it must stay there. Nest matches in
+   * declaration order; five slices have now paid for this note.
+   */
+  @Get()
+  list(@Req() req: AuthenticatedRequest) {
+    return this.proposals.list(req.tenantContext);
+  }
+
+  @Get(':id')
+  findOne(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.proposals.findById(req.tenantContext, id);
+  }
+
+  /**
+   * §418's expected result, §422's risks and uncertainties.
+   *
+   * Every field declares `| null` because on this route `null` MEANS CLEAR THIS COLUMN
+   * and an absent key means leave it alone.
+   */
+  @Patch(':id')
+  recordNarrative(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      expectedResult?: string | null;
+      riskAndLimitations?: string | null;
+      uncertainties?: string | null;
+      presentationNote?: string | null;
+    },
+  ) {
+    return this.proposals.recordNarrative(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * Put the proposal in front of the customer.
+   *
+   * POST to a sub-resource rather than a PATCH of `status`: this is a transition with
+   * its own precondition (§418's expected result), not a field a caller assigns.
+   */
+  @Post(':id/issue')
+  issue(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.proposals.issue(req.tenantContext, id);
+  }
+
+  /**
+   * §7 — record the customer's answer.
+   *
+   * `decidedByName` is the CUSTOMER and is required; the staff member who captured it
+   * comes from the session and is never accepted from the request.
+   */
+  @Post(':id/decision')
+  recordDecision(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body()
+    body: {
+      decision?: string;
+      approvedOption?: string;
+      decidedByName?: string;
+      decisionChannel?: string;
+      note?: string;
+    },
+  ) {
+    return this.proposals.recordDecision(req.tenantContext, id, body ?? {});
   }
 }
