@@ -10,8 +10,87 @@ Codex found 2, the Supervisor found 2 more it missed — see
 schema only — nothing uses it yet.** `.claude/CURRENT_TASK.md` lists the six
 remaining steps in order. Owner direction: **batch 3-4 slices per session.**
 
-⚠️ **Migrations 008-012 are applied to the LOCAL database only** — run them
-wherever else the DB lives.
+## 📍 STATE AT THE 2026-07-29 pt2 CLOSE — read this whole block first
+
+**Tip `efb2f79` on `master`. Tree clean, nothing unpushed. CI ✅ + Security CI ✅
+on both of the day's commits** (`444c165` slice 3a · `efb2f79` migration 012).
+Release is RED at the deploy step only — see issue 2 below, it is not a defect.
+
+**Dev servers are STOPPED** (killed for the Playwright run, not restarted).
+Docker infra IS up and healthy: aw-keycloak, aw-postgres, aw-redis, aw-minio,
+aw-nats, aw-coturn. Section 1 below brings the apps back.
+
+### ▶ THE FIRST THING TO DO
+
+`bash infrastructure/migrations/run.sh` — then start slice 3b at step 1 of
+`.claude/CURRENT_TASK.md`. **Nothing is on fire and nothing is blocked.**
+
+### ⚠️ OUTSTANDING ISSUES AND ERRORS — the complete list
+
+| # | Item | State |
+|---|---|---|
+| 1 | **Migrations 008-012 applied to the LOCAL Postgres ONLY** | Must run wherever else the DB lives before anything depends on them. `run.sh` is idempotent-by-tracking. |
+| 2 | **Live site 503 until 1 August** — Render free-tier instance-hours, owner-confirmed | **No code change affects it.** The Release workflow is red for this reason alone; re-run it once the site serves. Two always-on free services cannot share one 750h allowance. |
+| 3 | **`RENDER_API_KEY` unrotated** since the 2026-07-27 transcript leak | Treat as compromised. Rotate, then update the GitHub secret on this repo. Owner said "soon we rotate". |
+| 4 | **T-0044 — document scrolls 51px sideways at a 768px viewport, on EVERY page** | Pre-existing shell defect. Measured identical on both new inspection pages, so it is NOT from slices 3a/3b. 1280 and 390 are clean. |
+| 5 | **Slice 3b is part-started: schema `012` exists, nothing uses it** | Deliberate and documented, not a loose end. Six remaining steps in `CURRENT_TASK.md`. |
+| 6 | Supervisor `/verify` on a running app was not re-run after the final rebuild | Everything else was: 268 unit tests, Playwright 138/2 skipped, API probe 39/39, browser 15/15, layout 14/14, RLS + triggers proven by effect. |
+
+### 🔴 TRAPS THAT COST TIME THIS SESSION — do not re-pay them
+
+- **A rule whose escape hatch is UNREACHABLE is a wall, not a rule.** Codex's P1:
+  the API told technicians "start a new inspection to record a second look" and
+  the UI had no way to do it. Whenever a refusal names an alternative, check the
+  alternative is reachable from the product.
+- **Read the COUNT, never the exit code.** 49 tests "passed" while an entire file
+  failed to COMPILE (backticks in a SQL comment inside a template literal).
+- **`visuallyHidden` is `position: absolute`** — with no positioned ancestor it
+  escapes its scroll container and stretches `<html>`. Landed AGAIN this session
+  (23px at 390px). Fix the ANCESTOR, never the label.
+- **A `BEFORE DELETE` trigger must `RETURN OLD`.** Returning `NEW` (NULL on a
+  delete) does not refuse loudly — it SKIPS the row silently and the caller sees
+  success.
+- **An unscoped `[role="alert"]`/`[role="status"]` matches the shell's own empty
+  live region** and reads as a failure. Scope to `main` and filter by text.
+- **`locator.count()` does NOT auto-wait** (unlike `click`/`selectOption`), so it
+  reports 0 on a page that has not rendered. A harness that cries wolf costs as
+  much as one that runs nothing.
+- **`capture-session.mjs` needed `.first()`** — customer-web's signed-out page
+  offers "Sign in" twice, which was a Playwright strict-mode violation that
+  blocked ANY customer-web capture. Fixed.
+- **A migration already applied is CHECKSUMMED — never edit it.** Fixes to 010
+  went into 011.
+- **`MSYS_NO_PATHCONV=1`** for leading-slash args to node scripts — but NOT for
+  `pnpm` itself, which it breaks.
+
+### 🔁 RE-RUNNABLE PROOFS BUILT THIS SESSION — copy these for every later slice
+
+```bash
+# the API, with a REAL Keycloak token (39/39)
+(cd apps/e2e && node verify/capture-session.mjs --url http://localhost:3001 \
+     --user technician@autoworkshop.local)
+(cd packages/auth && node verify/probe-inspection.mjs --card JC-000003)
+
+# the SCREEN — catches a <select> whose name the server action does not read (15/15)
+(cd apps/e2e && node verify/record-inspection-in-browser.mjs)
+
+# layout — the visuallyHidden-escape signature at 1280/768/390 (14/14)
+(cd apps/e2e && node verify/measure-inspection-layout.mjs)
+```
+
+`call-api-as.mjs` TRUNCATES bodies to 400 chars for review notes — do not parse
+its output; that is why `probe-inspection.mjs` does its own fetch.
+
+### 🗓 OWNER DIRECTION — standing
+
+- **Batch 3-4 slices per session**, gates once per batch. One slice per session is
+  too slow: we are at phase 5 of 11 (+12-14 from the extension) and Phase 5 is the
+  largest phase — roughly **4 of 16 slices done**.
+- The owner pressed on three gaps. **Two are scheduled, not skipped:** the 3D
+  fault/repair simulation is Phase 10 (viewer, 0.9) + **new Phase 12 Simulation
+  Intelligence (1.1, after 1.0)**; the libraries are Phase 9 (0.8). User flows are
+  Phase 5 — i.e. now, which is the one the owner is right to press on. Full
+  reasoning at the end of `CURRENT_TASK.md`.
 
 ---
 
