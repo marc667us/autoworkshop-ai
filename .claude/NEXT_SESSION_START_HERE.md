@@ -19,6 +19,25 @@ Then continue with this file, then `.claude/CURRENT_TASK.md`.
 **Tip `32613ea`, tree clean, everything PUSHED. CI ✅ · Security CI ✅ · Release ❌
 (Render suspension only — expected, see the Render block below).**
 
+🔴 **OWNER FEEDBACK AT CLOSE: "no matter what username same technical page".**
+UNRESOLVED, and worth an explicit check FIRST. Two candidate causes, and they
+need separating before anything is "fixed":
+
+1. **Most likely — wrong app.** Real screens are NOT evenly spread:
+   `workshop-web` :3001 has **~80**, `customer-web` :3000 has **5**
+   (`/home/dashboard`, `/my-vehicles/garage`, `/my-vehicles/add-vehicle`,
+   `/service-and-repairs/report-a-problem`, `/parts-and-warranty/parts-orders`),
+   `supplier-web` :3002 has **1** (`/orders-and-delivery/new-orders`).
+   Everything else is the catch-all placeholder BY DESIGN. On :3002 nearly every
+   click is a placeholder and that is correct, not a defect.
+2. **Or sign-in is not taking effect at all**, in which case every viewer falls
+   back to the default tree and the role genuinely does not matter. Distinguish
+   them: if signed-in and signed-out render IDENTICALLY on
+   `:3001/home/dashboard`, it is this, not (1).
+
+⚠️ Do NOT start "fixing" the placeholder until (1) and (2) are separated —
+the placeholder is correct behaviour for an unbuilt module.
+
 **▶ RESUME HERE, in order:**
 
 1. **Render production after midnight** — the block below. Free-tier hours reset
