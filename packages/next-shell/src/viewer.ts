@@ -3,6 +3,7 @@ import type { PermissionKey, RoleId, WorkspaceId } from '@autoworkshop/navigatio
 import { apiBaseUrl, workspaceAuth } from '@autoworkshop/auth';
 import { grantsFor, navRoleFor, NO_GRANTS, type ViewerDescription } from './viewer-contract';
 import { activeOrganizationId, rawOrganizationHeader } from './active-organization';
+import { activeRoleName } from './active-role';
 
 /**
  * WHO THE VIEWER IS — resolved from a validated Keycloak session (T-0005).
@@ -183,4 +184,30 @@ export async function activeOrganizationHeader(
   if (!viewer) return {};
   const holds = viewer.memberships.some((m) => m.organizationId === id);
   return holds ? { 'x-organization-id': id } : {};
+}
+
+/**
+ * The viewer's chosen ROLE as a header, dropped when they no longer hold it.
+ *
+ * ⚠️ THIS FILTER IS A COURTESY, NOT THE CONTROL. `resolveTenantContext`
+ * re-checks `x-role-name` against the user's own memberships and REFUSES one
+ * that is not theirs, whatever this sends. What dropping it here buys is that a
+ * stale cookie — a role revoked while the user was signed in — degrades to the
+ * API's own default instead of failing every request until they clear it.
+ *
+ * Mirrors `activeOrganizationHeader` deliberately, including living here rather
+ * than in `active-role.ts`: it needs the viewer, and `active-role.ts` is
+ * imported BY the viewer lookup, so putting it there would make the two modules
+ * import each other.
+ */
+export async function activeRoleHeader(
+  workspaceId: WorkspaceId | string,
+): Promise<Record<string, string>> {
+  const role = await activeRoleName();
+  if (!role) return {};
+  const viewer = await fetchViewer(workspaceId);
+  // No viewer means no session; the call fails on the token regardless.
+  if (!viewer) return {};
+  const holds = viewer.memberships.some((m) => m.roleName === role);
+  return holds ? { 'x-role-name': role } : {};
 }

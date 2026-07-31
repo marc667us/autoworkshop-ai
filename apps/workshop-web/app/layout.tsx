@@ -7,6 +7,9 @@ import {
   viewerLabels,
   viewerHasSession,
   OrganizationSwitcher,
+  RoleSwitcher,
+  roleLabel,
+  setActiveRoleAction,
   setActiveOrganizationAction,
   organizationsFromMemberships,
 } from '@autoworkshop/next-shell';
@@ -70,11 +73,39 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // cannot change anything is worse than no control.
           organizationSwitcher={
             viewer ? (
-              <OrganizationSwitcher
-                organizations={organizationsFromMemberships(viewer.memberships)}
-                activeId={viewer.organizationId}
-                action={setActiveOrganizationAction}
-              />
+              // BOTH switchers share this slot rather than adding a second prop
+              // to WorkspaceShell, which all seven apps would then have to
+              // thread through. They are one control group to the user: "who am
+              // I acting as, and where".
+              <span style={{ display: 'inline-flex', gap: '0.5rem', alignItems: 'center' }}>
+                <OrganizationSwitcher
+                  organizations={organizationsFromMemberships(viewer.memberships)}
+                  activeId={viewer.organizationId}
+                  action={setActiveOrganizationAction}
+                />
+                {/*
+                  The ROLE switcher — one login acting as any role it holds,
+                  without signing out. Options are the viewer's OWN memberships
+                  as the API reported them, DEDUPLICATED because the same role in
+                  two organisations is one choice here; the organisation switcher
+                  beside it is what picks between them.
+
+                  It renders nothing for a viewer holding a single role, which is
+                  most of them. And it is NOT the control: the API refuses a role
+                  the user does not hold rather than downgrading to one they do.
+                */}
+                <RoleSwitcher
+                  roles={[...new Set(viewer.memberships.map((m) => m.roleName))].map((name) => ({
+                    name,
+                    label: roleLabel(name),
+                  }))}
+                  activeRole={viewer.activeRole}
+                  action={async (formData: FormData) => {
+                    'use server';
+                    await setActiveRoleAction(String(formData.get('roleName') ?? ''));
+                  }}
+                />
+              </span>
             ) : null
           }
           counters={{

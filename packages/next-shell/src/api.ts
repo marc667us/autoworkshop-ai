@@ -1,6 +1,6 @@
 import { apiBaseUrl, workspaceAuth } from '@autoworkshop/auth';
 import type { WorkspaceId } from '@autoworkshop/navigation';
-import { activeOrganizationHeader } from './viewer';
+import { activeOrganizationHeader, activeRoleHeader } from './viewer';
 
 /**
  * How a PAGE reads the API. The link that did not exist until now.
@@ -77,6 +77,10 @@ export async function apiGet<T>(
         // The viewer's chosen organization (T-0016). Absent until they pick
         // one, in which case the API takes its own deterministic default.
         ...(await activeOrganizationHeader(workspaceId)),
+        // The viewer's chosen ROLE. Absent until they pick one, in which case
+        // the API takes its own deterministic default. Validated again there —
+        // a role the viewer does not hold is REFUSED, never downgraded.
+        ...(await activeRoleHeader(workspaceId)),
       },
       cache: 'no-store',
     });
@@ -203,6 +207,10 @@ async function apiWrite<T>(
         // malformed JSON when nothing was sent at all.
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(await activeOrganizationHeader(workspaceId)),
+        // The viewer's chosen ROLE. Absent until they pick one, in which case
+        // the API takes its own deterministic default. Validated again there —
+        // a role the viewer does not hold is REFUSED, never downgraded.
+        ...(await activeRoleHeader(workspaceId)),
       },
       // `JSON.stringify(undefined)` is `undefined`, which fetch treats as no body —
       // relied on deliberately rather than left to chance, hence the explicit

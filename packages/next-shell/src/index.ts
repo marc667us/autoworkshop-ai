@@ -26,3 +26,10 @@ export { setActiveOrganizationAction } from './set-organization-action';
 export { activeOrganizationId, ACTIVE_ORG_COOKIE } from './active-organization';
 export type { ApiResult } from './api';
 export type { ViewerDescription, ViewerLabels } from './viewer-contract';
+
+// Role switcher — one login acting as any role it holds, without signing out.
+export { RoleSwitcher, roleLabel } from './RoleSwitcher';
+export type { RoleOption } from './RoleSwitcher';
+export { setActiveRoleAction } from './set-role-action';
+export { activeRoleName, ACTIVE_ROLE_COOKIE } from './active-role';
+export { activeRoleHeader } from './viewer';
