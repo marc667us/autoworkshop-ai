@@ -97,6 +97,63 @@ production back rather than after.
 ⚠️ Do not "fix" the red Release run by changing the workflow. The workflow is
 correct; the instance was suspended.
 
+### 🔴 OWNER REQUEST 2026-07-31 — ROLE SWITCHER: ONE LOGIN, EVERY ROLE, NO SIGN-OUT
+
+**"i need one power user account for owner that see everything so owner can play
+all roles" / "no owner log in out to use another role".** Build this FIRST next
+session. It is well-scoped, and the pattern to copy is in the same file.
+
+**What already exists:** `owner@autoworkshop.local` (password
+`Change_me_locally1!`) holds `platform_administrator` AND supplier membership on
+all five published suppliers, so one login already spans admin, buyer-facing and
+supplier surfaces. What it cannot do is BE a technician, then a supervisor, then
+reception, without signing out.
+
+**🔴 THE BLOCKER, AND WHY STACKING ROLES IS NOT THE FIX.**
+`resolveTenantContext` (`apps/api/src/tenancy/tenant-context.ts:98-102`) selects
+a membership by sorting on **`organizationId` only — not role precedence**:
+
+```ts
+selected = [...active].sort((a, b) => a.organizationId.localeCompare(b.organizationId))[0];
+```
+
+Give one account six roles in one organisation and every candidate compares
+EQUAL, so the winner falls out of database row order. The owner could resolve as
+`technician` and see LESS than they hold. That is why the account was given one
+strong role instead of six weak ones — stacking produces a confusing account,
+not a powerful one.
+
+**THE DESIGN — copy the organisation switcher, which already solves this
+safely.** `TenantGuard` takes `x-organization-id` and uses it ONLY to select
+among memberships the server has already proved (`tenant-context.ts:55,67-68`);
+naming one you do not hold is REFUSED, never silently downgraded, because a
+silent fallback masks an authorization probe (`1.txt` §9). Role is the identical
+shape:
+
+1. `resolveTenantContext` gains `requestedRoleName?: string`, applied AFTER the
+   organisation is chosen, matched against `active` memberships only.
+2. `TenantGuard` reads it from a header/cookie beside `x-organization-id`.
+   Mirror `ACTIVE_ORG_COOKIE` (`packages/next-shell/src/active-organization.ts:31`)
+   and `setActiveOrganizationAction` — a `aw.activeRole` cookie plus a server
+   action.
+3. A control in the shell next to `OrganizationSwitcher`, listing ONLY the roles
+   the viewer actually holds.
+4. `viewerGrants` / `navRoleFor` must read the same selection, or the navigation
+   and the router will disagree about who you are — the exact divergence
+   `packages/navigation/src/resolve.ts` exists to prevent.
+5. Seed the owner into the remaining workshop roles once selection is explicit;
+   until then extra rows only add ambiguity.
+
+**⚠️ THE PROPERTY THAT MUST NOT BE LOST: the client names a PREFERENCE, never a
+grant.** If the switcher ever admits a role with no membership row behind it,
+that is privilege escalation by header. Test it: ask for a role you do not hold
+and assert REFUSAL, not a downgrade. Capture two sessions — a single-identity
+probe silently skips the check that matters.
+
+**Also worth doing in the same slice:** `identity.memberships` is unique on
+`(organization_id, user_id, role_name)`, so multi-role is already representable.
+No migration is needed.
+
 ### ▶ THE FIRST THING TO DO
 
 Nothing is on fire. Bring the stack up (section 1), confirm the marketplace renders at
