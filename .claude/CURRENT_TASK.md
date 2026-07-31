@@ -1,6 +1,35 @@
 # Current task
 
-**▶ PHASE 5 slice 4 — the repair plan.**
+## 🔴 CORRECTED 2026-07-31 — THIS FILE WAS STALE AND WOULD HAVE REBUILT SHIPPED WORK
+
+Everything below the line was written at commit `0fc7421` ("slice 4 queued"). **Five slices
+shipped after it and this file was never updated**, so it still instructs the next session to
+build migration 014 as step 1. Measured today, not inferred:
+
+| Claim in the old text | Measured reality |
+|---|---|
+| "Migration 014 — build it" | **APPLIED 2026-07-30**; `repair.repair_plans` holds **11 rows** |
+| "slice 4 is next" | slice 4 `9932934`, 5 `4831488`, 6 `a2c66cb`, 7 `e6f5c6f`, 8 `a739635` — **all shipped** |
+| "Phase 5 is ~5 of 16" | **~9 of 16** |
+
+Migrations `014`–`021` are all in `public.schema_migrations`. **A migration already applied is
+CHECKSUMMED — re-writing 014 would fail the checksum, and the wasted session is the real cost.**
+
+**▶ THE ACTUAL NEXT WORK is Slice A (marketplace ordering)** — section 3 of
+`.claude/NEXT_SESSION_START_HERE.md`, which is the current document. Still open in Phase 5
+after that: slice 7b (variation control), slice 9 (QC — must be done by somebody who did not do
+the work, `2.txt` §563), slice 10 (vehicle release), 11 (dashboards), 12 (inboxes).
+
+**The lesson, because it is the third time in this repo:** a control file that is not updated
+in the same commit as the work becomes an instruction to redo it. `.claude/CURRENT_TASK.md`
+must be updated **in the slice's own commit**, not at session close.
+
+---
+
+<details>
+<summary>Superseded text from 0fc7421, kept for the slice-4 design notes only — do NOT follow its instructions</summary>
+
+**▶ PHASE 5 slice 4 — the repair plan.** ✅ **DONE — `9932934`. Do not rebuild.**
 
 **Run `bash scripts/start-session.sh` first**, then read
 `.claude/NEXT_SESSION_START_HERE.md` — start-up commands, sign-in steps, the outstanding
@@ -132,3 +161,5 @@ DATA, so measure a page that HAS data.
 page renders with loading/empty/error/permission states · permissions enforced · tests pass ·
 lint + typecheck pass · Playwright journey passes · responsive checked · docs updated ·
 **no paid dependency** · committed.
+
+</details>

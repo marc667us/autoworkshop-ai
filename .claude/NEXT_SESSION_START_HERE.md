@@ -80,10 +80,33 @@ bash infrastructure/migrations/run.sh    # 021 applied locally; nothing pending
 (cd apps/api && rm -rf dist && ./node_modules/.bin/nest build)
 set -a && . ./.env && set +a && (cd apps/api && node dist/main.js &)
 
-# Web
+# Web — the env MUST be sourced for `next dev` too. See the warning below.
+set -a && . ./.env && set +a
 (cd apps/customer-web && ./node_modules/.bin/next dev -p 3000 &)   # public marketplace
 (cd apps/workshop-web && ./node_modules/.bin/next dev -p 3001 &)
 ```
+
+### 🔴 `next dev` NEEDS the env — and that is the OPPOSITE of `next build`
+
+This block previously started the web apps **without** sourcing `.env`, and that is
+almost certainly the whole of the owner's "all pages don't show" report. Reproduced
+2026-07-31: with `AUTH_SECRET` absent, `middleware.ts` runs `auth`, which calls
+`required('AUTH_SECRET')` and throws — so **every route returns HTTP 500, including
+the public marketplace at `/`**, which needs no account at all. The matcher
+`'/((?!api/auth|_next/static|_next/image|favicon.ico).*)'` includes `/`.
+
+The failure gives you a 500 page and nothing else; the cause is one line in
+`/tmp/aw-customer.log`:
+`⨯ Error [AuthConfigError]: AUTH_SECRET is not set — authentication cannot start`.
+**Read that log before forming any theory** — a blank marketplace looks like a
+rendering or data bug and is neither.
+
+Do not "simplify" these two rules into one, they genuinely differ:
+
+| Command | `.env` | Why |
+|---|---|---|
+| `next dev` | **SOURCE IT** | needs `AUTH_SECRET`; `NODE_ENV=development` is correct here |
+| `next build` | **NEVER** | `NODE_ENV=development` loads the dev React runtime into a prod build |
 
 Seed the public catalogue if the marketplace looks empty:
 
