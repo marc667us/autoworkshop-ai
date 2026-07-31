@@ -70,16 +70,72 @@ jobs:
           node-version: "20"
 
       - name: Install (locked)
-        run: pnpm install --frozen-lockfile || echo "no lockfile yet — Phase 1 scaffolding"
+        run: pnpm install --frozen-lockfile
 
+      # ⚠️ NO `|| echo` FALLBACK. These steps used to end in
+      # `|| echo "no ... yet — Phase 1 scaffolding"`, which made every one of
+      # them incapable of failing: lint errors, type errors and failing tests
+      # all exited 0 and CI stayed green. That scaffolding period is long over
+      # — there are 15 packages with lint and typecheck targets and 442 unit
+      # tests — so the fallbacks protected nothing and hid everything. All
+      # three were verified passing (exit 0) before these were removed.
       - name: Lint
-        run: pnpm -r lint || echo "no lint targets yet — Phase 1 scaffolding"
+        run: pnpm -r lint
 
       - name: Typecheck
-        run: pnpm -r typecheck || echo "no typecheck targets yet — Phase 1 scaffolding"
+        run: pnpm -r typecheck
 
       - name: Unit tests (Vitest)
-        run: pnpm -r test || echo "no tests yet — Phase 1 scaffolding"
+        run: pnpm -r test
+
+
+  # ── 2b. Next production build ───────────────────────────────────────────────
+  #
+  # ⚠️ THIS JOB EXISTS BECAUSE `next build` WAS NEVER RUN BY CI AT ALL.
+  # Lint, typecheck and unit tests all pass on code whose production build
+  # fails: the build is where prerendering happens, and prerendering is where
+  # server/client boundary faults, bad static/dynamic choices and runtime
+  # mismatches actually surface. A repository that ships a web app and never
+  # builds it in CI is trusting `next dev`, which resolves modules differently
+  # and never prerenders anything.
+  #
+  # NODE_ENV is pinned to production explicitly. `next build` emits a production
+  # bundle but does NOT override an NODE_ENV it inherits, and with
+  # NODE_ENV=development it loads the development React runtime into a
+  # production build — which fails during prerendering with a null
+  # useContext/useState blaming whichever component rendered first, never
+  # mentioning NODE_ENV. scripts/assert-build-env.mjs now refuses that
+  # combination outright; setting it here means CI never depends on the guard.
+  build:
+    name: Next — production build
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: production
+      # Build-time placeholders. The apps read these at RUNTIME; the build only
+      # needs them to be present and syntactically valid, and using obvious fakes
+      # keeps real secrets out of a job that does not need them.
+      AUTH_SECRET: ci-build-placeholder-not-a-real-secret
+      AUTH_URL: http://localhost:3000
+      API_BASE_URL: http://localhost:4000
+      KEYCLOAK_URL: http://localhost:8080
+      KEYCLOAK_REALM: autoworkshop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # NODE_ENV=production makes pnpm skip devDependencies, and next/typescript
+      # live there — so the install must opt back in explicitly or the build has
+      # no compiler.
+      - name: Install (locked)
+        run: pnpm install --frozen-lockfile --prod=false
+
+      # No `|| echo` fallback anywhere in this job. A build that fails must fail
+      # the pipeline; that is the entire point of adding it.
+      - name: Build all apps
+        run: pnpm build
 
   # ── 3. Python ADK agent host ────────────────────────────────────────────────
   python:

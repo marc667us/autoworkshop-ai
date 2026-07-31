@@ -1,3 +1,5 @@
+import { assertBuildEnv } from '../../scripts/assert-build-env.mjs';
+
 /**
  * `next build` re-runs ESLint and the TypeScript checker.
  *
@@ -29,4 +31,14 @@ const nextConfig = {
   poweredByHeader: false,
 };
 
-export default nextConfig;
+/**
+ * Exported as a FUNCTION so the build phase is visible to the guard below.
+ * Next calls this with the phase it is running in; a plain object cannot see it.
+ */
+export default (phase) => {
+  // Fails fast, in one line, when NODE_ENV=development would otherwise produce a
+  // prerender crash two minutes later that blames an innocent component.
+  // See scripts/assert-build-env.mjs for the full symptom list.
+  assertBuildEnv(phase);
+  return nextConfig;
+};
