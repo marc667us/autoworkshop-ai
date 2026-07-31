@@ -1,3 +1,4 @@
+import { apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { currentViewer, grantsFor, navRoleFor, requireNavRoute } from '@autoworkshop/next-shell';
@@ -58,22 +59,46 @@ async function describeNavigation() {
 /**
  * Workshop dashboard — §18, the default landing page for the workspace.
  *
- * The figures below are DEMO DATA and are labelled as such on screen. Phase 5
- * replaces them with real job-card and staging-board queries. Labelling fake
- * numbers is not decoration: an unlabelled demo dashboard is indistinguishable
- * from a real one that is silently returning wrong figures.
+ * ⚠️ THE FIGURES WERE DEMO DATA UNTIL 2026-07-31 AND ARE NOW REAL, computed
+ * from `GET /job-cards` — the same endpoint and therefore the same tenant
+ * scoping the staging board uses. The old note said Phase 5 would replace them;
+ * Phase 5 has landed, so it has.
+ *
+ * ⚠️ EVERY TILE IS DERIVED FROM A STAGE THAT ACTUALLY EXISTS in
+ * `BOARD_COLUMNS`. Tiles whose data this product cannot yet answer were
+ * REMOVED rather than left showing an invented number: "Reorder alerts" needed
+ * stock levels and "Appointments today" needed a scheduling module, and neither
+ * exists. A dashboard that keeps a fake tile beside five real ones is worse
+ * than one that had six fakes, because nothing on it tells you which is which.
+ *
+ * The counts narrow with the viewer, because `list` does: staff see the
+ * organisation, a technician sees only cards assigned to them. That is the
+ * property worth having — no dashboard-only query that could drift from the
+ * board's own scoping.
  */
 
-const tiles = [
-  { label: 'Active job cards', value: 12, kind: 'active' as const, hint: 'On the staging board now' },
-  { label: 'Awaiting approval', value: 2, kind: 'attention' as const, hint: 'Customer proposals pending' },
-  { label: 'New complaints', value: 4, kind: 'attention' as const, hint: 'Received today' },
-  { label: 'Ready for collection', value: 3, kind: 'complete' as const, hint: 'Passed quality control' },
-  { label: 'Reorder alerts', value: 2, kind: 'blocked' as const, hint: 'Parts below minimum stock' },
-  { label: 'Appointments today', value: 6, kind: 'active' as const, hint: 'Across 4 service bays' },
-];
+/** Stages that mean a job is live work rather than finished or parked. */
+const OPEN_STAGES = new Set([
+  'complaint_received', 'appointment_confirmed', 'vehicle_received',
+  'initial_inspection', 'diagnosis_in_progress', 'further_information_required',
+  'solution_preparation', 'quotation_preparation', 'specialist_consultation',
+  'awaiting_customer_approval', 'awaiting_deposit', 'awaiting_parts',
+  'authorized_to_start', 'repair_in_progress', 'testing', 'quality_control',
+]);
 
-function Tile({ label, value, kind, hint }: (typeof tiles)[number]) {
+interface JobCardRow {
+  id: string;
+  stage: string;
+}
+
+type TileSpec = {
+  label: string;
+  value: number;
+  kind: 'active' | 'attention' | 'complete' | 'blocked';
+  hint: string;
+};
+
+function Tile({ label, value, kind, hint }: TileSpec) {
   return (
     <div
       style={{
@@ -112,13 +137,82 @@ export default async function Dashboard() {
 
   const nav = await describeNavigation();
 
+  // REAL FIGURES. Same endpoint the staging board reads, so the counts inherit
+  // its tenant and role scoping rather than re-deriving it here.
+  const jobCards = await apiGet<JobCardRow[]>('workshop', '/job-cards');
+  const cards = jobCards.ok ? jobCards.data : [];
+  const count = (pred: (c: JobCardRow) => boolean) => cards.filter(pred).length;
+
+  const tiles: TileSpec[] = [
+    {
+      label: 'Active job cards',
+      value: count((c) => OPEN_STAGES.has(c.stage)),
+      kind: 'active',
+      hint: 'Live work on the board',
+    },
+    {
+      label: 'Awaiting customer approval',
+      value: count((c) => c.stage === 'awaiting_customer_approval'),
+      kind: 'attention',
+      hint: 'Quotation sent, no answer yet',
+    },
+    {
+      label: 'New complaints',
+      value: count((c) => c.stage === 'complaint_received'),
+      kind: 'attention',
+      // NOT "today" — the stage says a complaint is unprocessed, not when it
+      // arrived, and claiming a timeframe the data does not carry is the same
+      // defect as an invented number.
+      hint: 'Received and not yet started',
+    },
+    {
+      label: 'Ready for collection',
+      value: count((c) => c.stage === 'ready_for_collection'),
+      kind: 'complete',
+      hint: 'Passed quality control',
+    },
+    {
+      label: 'On hold',
+      value: count((c) => c.stage === 'on_hold'),
+      kind: 'blocked',
+      hint: 'Parked — needs a decision',
+    },
+    {
+      label: 'In quality control',
+      value: count((c) => c.stage === 'quality_control'),
+      kind: 'active',
+      hint: 'Being checked before release',
+    },
+  ];
+
   return (
     <>
       <PageHeader
         title={nav.pageTitle}
-        description="Today at Demo Motors Ltd — Accra Main"
-        actions={<StatusBadge kind="draft" label="Demo data — not yet wired to the API" />}
+        description="Live figures from the job-card board."
       />
+
+      {/*
+        ⚠️ SAYS SO WHEN IT COULD NOT ASK, rather than rendering six zeroes.
+        Six zeroes is a claim — "you have no work" — and it is the wrong one
+        when the truth is that the request failed. A quiet zero on a dashboard
+        is how a workshop misses a job that is waiting.
+      */}
+      {!jobCards.ok && (
+        <p
+          role="alert"
+          style={{
+            border: `1px solid ${themeVar.borderDefault}`,
+            borderRadius: primitive.radius.lg,
+            padding: primitive.space[3],
+            marginBottom: primitive.space[4],
+            color: themeVar.textSecondary,
+          }}
+        >
+          These figures could not be loaded, so every count below reads zero. That is a
+          connection problem, not an empty workshop — open the job cards board to check.
+        </p>
+      )}
 
       <section
         aria-label="Key figures"
