@@ -141,3 +141,132 @@ describe('resolveTenantContext', () => {
     expect(stmts.some((s) => s.text.startsWith('SET LOCAL'))).toBe(false);
   });
 });
+
+/**
+ * The ROLE switcher — one login acting as any role it actually holds, without
+ * signing out (owner request 2026-07-31).
+ *
+ * The whole risk sits in one sentence: the client names a PREFERENCE, never a
+ * grant. These tests exist to make a regression toward "helpfully" honouring an
+ * unheld role fail loudly.
+ */
+describe('resolveTenantContext — requestedRoleName', () => {
+  const owner = [
+    membership({ organizationId: 'org-1', roleName: 'technician' }),
+    membership({ organizationId: 'org-1', roleName: 'workshop_supervisor' }),
+    membership({ organizationId: 'org-1', roleName: 'platform_administrator' }),
+  ];
+
+  it('acts as a role the user holds', () => {
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: owner,
+      requestedRoleName: 'workshop_supervisor',
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('workshop_supervisor');
+  });
+
+  it('switches again without any sign-out — the point of the feature', () => {
+    for (const role of ['technician', 'workshop_supervisor', 'platform_administrator']) {
+      const ctx = resolveTenantContext({
+        userId: 'owner',
+        memberships: owner,
+        requestedRoleName: role,
+        correlationId: 'c',
+      });
+      expect(ctx.activeRole).toBe(role);
+    }
+  });
+
+  /**
+   * 🔴 PRIVILEGE ESCALATION BY HEADER. A user holding only `technician` asks to
+   * be `platform_administrator`. It must THROW — never fall back to the role
+   * they do hold, because a silent downgrade hides an authorization probe, and
+   * never honour it, because that is the confused-deputy attack `1.txt` §9
+   * forbids.
+   */
+  it('REFUSES a role the user does not hold, rather than downgrading', () => {
+    expect(() =>
+      resolveTenantContext({
+        userId: 'tech',
+        memberships: [membership({ roleName: 'technician' })],
+        requestedRoleName: 'platform_administrator',
+        correlationId: 'c',
+      }),
+    ).toThrow(TenantResolutionError);
+  });
+
+  it('refuses an unheld role even when the user holds exactly one membership', () => {
+    // Guards the `active.length === 1` fast path: filtering AFTER it would let
+    // the shortcut return a membership contradicting the request.
+    expect(() =>
+      resolveTenantContext({
+        userId: 'solo',
+        memberships: [membership({ roleName: 'customer' })],
+        requestedRoleName: 'platform_administrator',
+        correlationId: 'c',
+      }),
+    ).toThrow(/requested role is not among/i);
+  });
+
+  it('refuses a role held only through a REVOKED membership', () => {
+    // Status is checked before the role filter, so revocation is immediate.
+    expect(() =>
+      resolveTenantContext({
+        userId: 'ex',
+        memberships: [
+          membership({ roleName: 'technician' }),
+          membership({ roleName: 'platform_administrator', status: 'revoked' }),
+        ],
+        requestedRoleName: 'platform_administrator',
+        correlationId: 'c',
+      }),
+    ).toThrow(TenantResolutionError);
+  });
+
+  it('still honours the organisation switcher alongside the role', () => {
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-1', roleName: 'technician' }),
+        membership({ organizationId: 'org-2', roleName: 'technician' }),
+        membership({ organizationId: 'org-2', roleName: 'workshop_manager' }),
+      ],
+      requestedOrganizationId: 'org-2',
+      requestedRoleName: 'workshop_manager',
+      correlationId: 'c',
+    });
+    expect(ctx.organizationId).toBe('org-2');
+    expect(ctx.activeRole).toBe('workshop_manager');
+  });
+
+  it('refuses a role the user holds only in a DIFFERENT organisation', () => {
+    // Holding `workshop_manager` in org-2 must not make you one in org-1.
+    expect(() =>
+      resolveTenantContext({
+        userId: 'owner',
+        memberships: [
+          membership({ organizationId: 'org-1', roleName: 'technician' }),
+          membership({ organizationId: 'org-2', roleName: 'workshop_manager' }),
+        ],
+        requestedOrganizationId: 'org-1',
+        requestedRoleName: 'workshop_manager',
+        correlationId: 'c',
+      }),
+    ).toThrow(TenantResolutionError);
+  });
+
+  it('without a request, behaviour is unchanged — no silent role change', () => {
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: owner,
+      correlationId: 'c',
+    });
+    // Same-organisation candidates compare equal, so the default is whatever
+    // the old sort produced. Asserting only that it IS one the user holds:
+    // pinning the exact winner would encode the very ambiguity this parameter
+    // exists to let a caller resolve.
+    expect(owner.map((m) => m.roleName)).toContain(ctx.activeRole);
+  });
+});

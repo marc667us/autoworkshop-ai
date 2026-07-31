@@ -123,6 +123,15 @@ EQUAL, so the winner falls out of database row order. The owner could resolve as
 strong role instead of six weak ones — stacking produces a confusing account,
 not a powerful one.
 
+**✅ THE API HALF IS BUILT AND TESTED (2026-07-31).** `resolveTenantContext`
+takes `requestedRoleName`, `TenantGuard` reads it from `x-role-name`, and 8 new
+tests cover the security property including privilege-escalation-by-header, an
+unheld role on the single-membership fast path, a role held only through a
+REVOKED membership, and a role held only in a DIFFERENT organisation. 484 unit
+tests pass. **What remains is the UI: steps 2-5 below (cookie, server action,
+control in the shell, `viewerGrants`/`navRoleFor` reading the same selection).**
+Until the control exists the switch is reachable only by sending the header.
+
 **THE DESIGN — copy the organisation switcher, which already solves this
 safely.** `TenantGuard` takes `x-organization-id` and uses it ONLY to select
 among memberships the server has already proved (`tenant-context.ts:55,67-68`);

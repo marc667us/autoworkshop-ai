@@ -53,13 +53,55 @@ export function resolveTenantContext(params: {
   userId: string;
   memberships: readonly ValidatedMembership[];
   requestedOrganizationId?: string;
+  /**
+   * The ROLE switcher, and it obeys exactly the same rule as the organisation
+   * one: it SELECTS among memberships the server has already proved, and can
+   * never introduce a role the user does not hold.
+   *
+   * ⚠️ THE CLIENT NAMES A PREFERENCE, NEVER A GRANT. If this ever admitted a
+   * role with no membership row behind it, that is privilege escalation by
+   * header — the confused-deputy attack `1.txt` §9 forbids. Asking for a role
+   * you do not hold THROWS; it is never quietly downgraded to one you do,
+   * because a silent downgrade hides an authorization probe.
+   *
+   * Why this exists: `identity.memberships` is unique on
+   * (organization_id, user_id, role_name), so one user holding several roles is
+   * already representable — but the default selection below sorts on
+   * ORGANISATION ID ALONE. Two roles in the SAME organisation compare equal, so
+   * the winner fell out of database row order and a user could resolve as the
+   * weaker of their own roles. Stacking roles without this parameter produces a
+   * confusing account, not a powerful one.
+   */
+  requestedRoleName?: string;
   correlationId: string;
 }): TenantContext {
-  const { userId, memberships, requestedOrganizationId, correlationId } = params;
+  const {
+    userId,
+    memberships,
+    requestedOrganizationId,
+    requestedRoleName,
+    correlationId,
+  } = params;
 
-  const active = memberships.filter((m) => m.status === 'active');
-  if (active.length === 0) {
+  // ⚠️ NARROW BY ROLE **BEFORE** ANYTHING ELSE, INCLUDING THE `length === 1`
+  // SHORTCUT. Filtering afterwards would let the single-membership fast path
+  // return a membership whose role contradicts the request — a switcher that
+  // silently ignores what it was asked for is worse than one that refuses.
+  const activeAll = memberships.filter((m) => m.status === 'active');
+  const active =
+    requestedRoleName === undefined
+      ? activeAll
+      : activeAll.filter((m) => m.roleName === requestedRoleName);
+
+  if (activeAll.length === 0) {
     throw new TenantResolutionError('user holds no active membership');
+  }
+  if (active.length === 0) {
+    // Held no such role. REFUSED, not downgraded — same reasoning as the
+    // organisation branch below.
+    throw new TenantResolutionError(
+      'requested role is not among the user active memberships',
+    );
   }
 
   let selected: ValidatedMembership | undefined;

@@ -66,11 +66,20 @@ export class TenantGuard implements CanActivate {
     const requestedOrganizationId =
       (req.headers['x-organization-id'] as string | undefined) ?? undefined;
 
+    // The ROLE switcher — one login acting as any role it actually holds,
+    // without signing out. Read exactly like the organisation above, and
+    // trusted exactly as little: `resolveTenantContext` uses it only to select
+    // among memberships already proved from the token subject, and REFUSES a
+    // role the user does not hold rather than downgrading to one they do.
+    const requestedRoleName =
+      (req.headers['x-role-name'] as string | undefined)?.trim() || undefined;
+
     try {
       req.tenantContext = resolveTenantContext({
         userId: record.userId,
         memberships: record.memberships,
         requestedOrganizationId,
+        requestedRoleName,
         correlationId,
       });
     } catch (err) {
