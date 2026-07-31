@@ -28,6 +28,42 @@ them up re-arms trap 1 for you, and a running dev server also locks `.next` and 
 `pnpm build` fail with `EPERM: .next\trace`.
 Docker infra is up: aw-keycloak, aw-postgres, aw-redis, aw-minio, aw-nats, aw-coturn.
 
+### 🔴 OWNER REPORTED AT CLOSE: "all pages don't show" — VERIFY FIRST, DO NOT ASSUME
+
+Reported after the dev servers had been stopped at session close, so the likely
+explanation is simply that nothing was listening. It is recorded here as
+UNVERIFIED because it was never reproduced against a running stack.
+
+Two things make it worth an explicit check rather than a shrug:
+
+1. During the restart attempt, `:3001` answered 307 while `:3000` and `:4000`
+   still answered 000 — they were mid-boot, not ready. Anyone testing in that
+   window sees nothing on two of three ports and a redirect on the third.
+2. The customer-web `.next` directory was deleted and rebuilt several times
+   during the build investigation, and the app was last confirmed working in
+   `next dev`, not `next start`.
+
+**Check, in this order, before touching any code:**
+
+```bash
+# 1. is anything actually listening?
+powershell.exe -NoProfile -Command "foreach(\$p in @(3000,3001,4000)){ \$c = Get-NetTCPConnection -LocalPort \$p -State Listen -ErrorAction SilentlyContinue; if(\$c){'LISTENING: '+\$p}else{'free: '+\$p} }"
+
+# 2. bring the stack up (section 1), then WAIT — next dev takes ~15-25s to
+#    compile a route on first hit. A curl during compilation returns 000.
+for u in http://localhost:4000/api/v1/health http://localhost:3000/ http://localhost:3001/; do
+  echo "$u -> $(curl -s -o /dev/null -w '%{http_code}' --max-time 90 $u)"
+done
+# expect 200 / 200 / 307
+
+# 3. only if a page is genuinely blank/500, read the server log — do not guess
+tail -40 /tmp/aw-customer.log
+```
+
+Last CONFIRMED-good state (2026-07-30 pt2, before the servers were stopped):
+18/18 content checks against the rendered landing page, all four authenticated
+routes 200, `/nonexistent-page` 404. Nothing was changed after that measurement.
+
 ### ▶ THE FIRST THING TO DO
 
 Nothing is on fire. Bring the stack up (section 1), confirm the marketplace renders at
