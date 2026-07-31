@@ -1,5 +1,5 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { AddVehicleScreen } from '../../_screens/add-vehicle-screen';
+import { AddVehicleScreen } from '../../../_screens/add-vehicle-screen';
 
 /**
  * /my-vehicles/add-vehicle — `01 (1).txt` §33.

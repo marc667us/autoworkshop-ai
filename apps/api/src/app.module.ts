@@ -6,6 +6,7 @@ import { CoreModule } from './core/core.module';
 import { DatabaseModule } from './database/database.module';
 import { HealthController } from './health/health.controller';
 import { IdentityModule } from './identity/identity.module';
+import { PublicModule } from './public/public.module';
 import { RepairModule } from './repair/repair.module';
 
 /**
@@ -24,6 +25,7 @@ import { RepairModule } from './repair/repair.module';
     IdentityModule,
     AuthModule,
     CoreModule,
+    PublicModule,
     RepairModule,
   ],
   controllers: [HealthController],

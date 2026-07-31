@@ -1,0 +1,146 @@
+/**
+ * Pure input rules for the PUBLIC catalogue (migration 021).
+ *
+ * Separated from the service, like every other `*-rules.ts` in this repository,
+ * so the decisions can be tested without a database. Nothing here touches
+ * Postgres and nothing here is async.
+ *
+ * ⚠️ THIS IS THE ONLY MODULE IN THE API THAT NORMALISES INPUT FROM AN
+ * UNAUTHENTICATED STRANGER. Every other controller sits behind `TenantGuard`
+ * and can assume a validated Keycloak claim upstream; these endpoints can
+ * assume nothing at all. The query string is attacker-controlled in the plain
+ * sense — anyone on the internet can send anything.
+ *
+ * The defence against injection is that the service passes every value as a
+ * BOUND PARAMETER and never interpolates one into SQL. What this module does is
+ * different and additional: it bounds the SHAPE of the input so a caller cannot
+ * ask for a million rows or drive the query with a 4KB string.
+ */
+
+/** Hard ceiling on rows returned, whatever the caller asks for. */
+export const MAX_PAGE_SIZE = 60;
+export const DEFAULT_PAGE_SIZE = 24;
+
+/** Longest free-text search accepted. Longer input is truncated, not rejected —
+ *  a stranger typing into a search box should get results, not a 400. */
+export const MAX_QUERY_LENGTH = 80;
+
+/** The range a vehicle year may plausibly fall in; mirrors migration 021's CHECK. */
+export const MIN_YEAR = 1900;
+export const MAX_YEAR = 2100;
+
+export interface PartsQuery {
+  q: string | null;
+  /** Vehicle make — Toyota, Ford. Matched against `part_fitments.make`. */
+  make: string | null;
+  /** Vehicle model — Corolla, Focus. Matched against `part_fitments.model`. */
+  model: string | null;
+  year: number | null;
+  /**
+   * The PART's manufacturer — Bosch, MANN, NGK. Matched against `parts.brand`.
+   *
+   * ⚠️ NOT THE SAME FIELD AS `make`, AND CONFUSING THEM IS THE OBVIOUS BUG HERE.
+   * `make` is who built the CAR; `manufacturer` is who built the PART. A driver
+   * searching "Toyota" wants parts that FIT a Toyota, which is a fitment
+   * lookup; a driver searching manufacturer "Bosch" wants parts BUILT by Bosch,
+   * which fits many makes. They are independent filters and combining them
+   * ("Bosch pads for a Corolla") is the useful case.
+   *
+   * Optional by design — the owner's phrasing was "manufacturer if known", and
+   * most drivers do not know it. It must never be a required control.
+   */
+  manufacturer: string | null;
+  category: string | null;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * Trim, collapse whitespace and cap length. Returns null for anything that is
+ * empty after cleaning, so the service can test `!== null` rather than
+ * repeating truthiness rules that treat `'0'` and `''` differently.
+ */
+export function cleanText(value: unknown, maxLength = MAX_QUERY_LENGTH): string | null {
+  if (typeof value !== 'string') return null;
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (collapsed.length === 0) return null;
+  return collapsed.slice(0, maxLength);
+}
+
+/**
+ * A vehicle year, or null.
+ *
+ * ⚠️ REJECTS RATHER THAN CLAMPS, and that distinction is deliberate. Clamping
+ * `year=1` to 1900 would silently answer a different question than the one
+ * asked and show the visitor parts for a car they do not own. An unparseable or
+ * out-of-range year means "no year filter", which shows MORE parts — visibly
+ * wrong to the person reading the page, rather than invisibly wrong.
+ */
+export function cleanYear(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isInteger(n)) return null;
+  if (n < MIN_YEAR || n > MAX_YEAR) return null;
+  return n;
+}
+
+/** Page size, bounded to [1, MAX_PAGE_SIZE]. */
+export function cleanLimit(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return DEFAULT_PAGE_SIZE;
+  return Math.min(n, MAX_PAGE_SIZE);
+}
+
+/** Offset, bounded below at 0. No upper bound: deep paging returns nothing,
+ *  which is correct and costs one index probe. */
+export function cleanOffset(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return 0;
+  return n;
+}
+
+/**
+ * Escape the LIKE metacharacters in a user's search term.
+ *
+ * ⚠️ NOT AN INJECTION DEFENCE — the value is a bound parameter, so it can never
+ * become SQL. This is a CORRECTNESS fix: a visitor searching for the literal
+ * string "100%" would otherwise have the `%` read as a wildcard and match
+ * every part in the catalogue. `\` must be escaped first or it would double up
+ * the escapes added after it.
+ */
+export function escapeLike(term: string): string {
+  return term.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+/** Normalise a whole query string into the shape the service consumes. */
+export function parsePartsQuery(raw: Record<string, unknown>): PartsQuery {
+  return {
+    q: cleanText(raw.q),
+    make: cleanText(raw.make, 40),
+    model: cleanText(raw.model, 40),
+    year: cleanYear(raw.year),
+    manufacturer: cleanText(raw.manufacturer, 40),
+    category: cleanText(raw.category, 40),
+    limit: cleanLimit(raw.limit),
+    offset: cleanOffset(raw.offset),
+  };
+}
+
+/**
+ * Does a fitment row cover the requested year?
+ *
+ * ⚠️ `yearTo === null` MEANS "STILL CURRENT", NOT "UNKNOWN". Treating it as a
+ * missing value — the instinct — would exclude every part still in production
+ * from every year search, which is most of the catalogue. Exported so the SQL
+ * predicate in the service has an executable statement of the same rule to be
+ * tested against.
+ */
+export function fitmentCoversYear(
+  yearFrom: number,
+  yearTo: number | null,
+  year: number,
+): boolean {
+  if (year < yearFrom) return false;
+  if (yearTo === null) return true;
+  return year <= yearTo;
+}

@@ -1,5 +1,5 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { ReportProblemScreen } from '../../_screens/report-problem-screen';
+import { ReportProblemScreen } from '../../../_screens/report-problem-screen';
 
 /**
  * /service-and-repairs/report-a-problem — `01 (1).txt` §33.

@@ -1,74 +1,60 @@
 import type { Metadata } from 'next';
-import {
-  WorkspaceShell,
-  currentViewer,
-  grantsFor,
-  navRoleFor,
-  viewerLabels,
-  viewerHasSession,
-} from '@autoworkshop/next-shell';
-import { themeBootScript } from '@autoworkshop/ui';
-import { signOutAction } from './sign-out-action';
+import { ThemeProvider, themeBootScript } from '@autoworkshop/ui';
 
 export const metadata: Metadata = {
-  title: 'AutoWorkshop AI — Customer',
-  description: 'Vehicle owners — garage, complaints, proposals, payments',
+  title: 'Abossey Okai Auto Parts Marketplace — AutoWorkshop AI',
+  description:
+    'Browse car parts from verified suppliers and find a mechanic near you. Free to search — no account needed.',
 };
 
 /**
- * All seven apps share one shell (`@autoworkshop/next-shell`). Only the
- * workspace id differs — the navigation itself comes from
- * `@autoworkshop/navigation`, transcribed from the approved spec.
+ * ROOT LAYOUT — html, body, the theme boot script and the theme provider.
+ * No application shell.
  *
- * `currentViewer()` resolves the signed-in user from the Keycloak session and
- * `GET /api/v1/me` (T-0005). The grants and the role derived from it are the
- * single source shared with this workspace's catch-all route — React's
- * `cache()` makes both resolve the SAME viewer within one render, so the
- * navigation and the router cannot disagree about what may be seen.
+ * ⚠️ WHY THE APPLICATION SHELL IS NO LONGER HERE. This layout wraps EVERY route
+ * in the workspace, including the public landing page at `/`. When it rendered
+ * `WorkspaceShell` directly, a signed-out visitor arriving at the marketplace
+ * got the signed-in application's navigation — the home and dashboard tree —
+ * before they had an account. That contradicts the requirement directly: a
+ * visitor may only VIEW, and sees home and the dashboard once signed in.
  *
- * Accurate is not the same as enforcing: hiding a nav entry protects nothing.
- * The API's tenant guard and Postgres RLS deny independently (CLAUDE.md §8).
+ * The shell therefore moved down one level into the `(app)` route group, which
+ * wraps the authenticated routes and nothing else. Route groups do not appear
+ * in the URL, so `/home/dashboard` is still `/home/dashboard`; the only thing
+ * that changed is which layouts wrap it.
+ *
+ * ⚠️ `ThemeProvider` IS RENDERED HERE FOR TWO REASONS, AND THE SECOND IS NOT
+ * COSMETIC. First, the public landing page should honour the visitor's
+ * light/dark preference like every other screen — it used to inherit that from
+ * the shell, and the split would otherwise have taken it away.
+ *
+ * Second, it is the root layout's CLIENT BOUNDARY, and removing it breaks the
+ * build. With a root layout containing no client component at all, Next 15.1.3
+ * fails to prerender `/_not-found` with "Cannot read properties of null
+ * (reading 'useContext')" and then falls back to generating the pages-router
+ * error page, which dies with "<Html> should not be imported outside of
+ * pages/_document". Both symptoms have this one cause; both were measured by
+ * removing and restoring this component. If it is ever taken out, the app
+ * router needs another client boundary at the root, not a workaround on the
+ * 404 route.
  */
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Resolved together: the viewer DESCRIBES the person, the session says whether
-  // there is one. They are separate calls because `/me` can fail while the
-  // session is live, and sign-out must survive that (Codex finding M2).
-  const [viewer, signedIn] = await Promise.all([
-    currentViewer('customer'),
-    viewerHasSession('customer'),
-  ]);
-
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Applies the stored theme before first paint — prevents the
-            flash of incorrect theme. Must be inline and synchronous. */}
+        {/* Applies the stored theme before first paint — prevents the flash of
+            incorrect theme. Must be inline and synchronous: a React effect runs
+            after paint, which is exactly too late. */}
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
-      <body style={{ margin: 0, background: 'var(--aw-background-primary)', color: 'var(--aw-text-primary)' }}>
-        <WorkspaceShell
-          workspaceId="customer"
-          grants={grantsFor(viewer)}
-          role={navRoleFor(viewer?.activeRole)}
-          {...viewerLabels(viewer)}
-          // T-0005 finding 5: a real sign-out — revoke the refresh token at
-          // Keycloak, clear the cookie, end the SSO session. Passed from the
-          // server layout because a server action cannot be created in the
-          // client shell that renders the button.
-          signOutAction={signOutAction}
-          signInHref="/api/auth/signin"
-          signedIn={signedIn}
-          topNavActions={[
-            { id: 'create', label: 'Create', icon: 'create' },
-            { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
-            { id: 'messages', label: 'Messages and calls', icon: 'messages' },
-            { id: 'notifications', label: 'Notifications', icon: 'notifications' },
-            { id: 'ai', label: 'AI assistant', icon: 'ai' },
-            { id: 'help', label: 'Help and support', icon: 'help' },
-          ]}
-        >
-          {children}
-        </WorkspaceShell>
+      <body
+        style={{
+          margin: 0,
+          background: 'var(--aw-background-primary)',
+          color: 'var(--aw-text-primary)',
+        }}
+      >
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

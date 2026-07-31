@@ -1,5 +1,5 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { GarageScreen } from '../../_screens/garage-screen';
+import { GarageScreen } from '../../../_screens/garage-screen';
 
 /**
  * /my-vehicles/garage — `01 (1).txt` §33, the customer workspace.

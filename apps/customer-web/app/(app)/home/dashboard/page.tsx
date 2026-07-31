@@ -1,5 +1,5 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { CustomerDashboardScreen } from '../../_screens/dashboard-screen';
+import { CustomerDashboardScreen } from '../../../_screens/dashboard-screen';
 
 /**
  * /home/dashboard — `01 (1).txt` §18, the customer's landing page.
