@@ -83,8 +83,26 @@ for (const server of servers) {
     // is named only in the flight payload would be reported fresh. Cheap to
     // close, so closed. Stylesheets and fonts fail identically and are caught by
     // form 1 as well.
-    const prefixed = html.match(/\/_next\/static\/[^"'\\\s>)]+/g) ?? [];
-    const bare = (html.match(/(?<!\/_next\/)\bstatic\/(?:chunks|css|media)\/[^"'\\\s>)]+/g) ?? []).map(
+    // ⚠️ `)` IS NOT A TERMINATOR, AND EXCLUDING IT BROKE THIS ENTIRE SUITE.
+    //
+    // A Next ROUTE GROUP is a directory literally named `(app)`, and it appears
+    // verbatim in the emitted chunk path:
+    //   /_next/static/chunks/app/(app)/layout-8f3c….js
+    // With `)` in the character class the match stopped mid-path at
+    // `/_next/static/chunks/app/(app`, which naturally does not exist on disk —
+    // so this guard reported customer-web as serving a STALE BUILD, failed as a
+    // setup dependency, and left 133 tests NOT RUN. The build was fine; the
+    // regex was not.
+    //
+    // It went unnoticed because route groups arrived with the public
+    // marketplace on 2026-07-30 and the suite's last recorded green run
+    // (138 passed / 2 skipped) predates them.
+    //
+    // Nothing is lost by allowing `)`: every context these appear in is already
+    // terminated by a quote, an escaped quote (the `\\` exclusion), whitespace
+    // or `>`. Excluding it only ever truncated legitimate paths.
+    const prefixed = html.match(/\/_next\/static\/[^"'\\\s>]+/g) ?? [];
+    const bare = (html.match(/(?<!\/_next\/)\bstatic\/(?:chunks|css|media)\/[^"'\\\s>]+/g) ?? []).map(
       (a) => `/_next/${a}`,
     );
     const referenced = [...new Set([...prefixed, ...bare])];
