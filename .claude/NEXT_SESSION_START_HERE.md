@@ -14,6 +14,49 @@ Then continue with this file, then `.claude/CURRENT_TASK.md`.
 
 ---
 
+## 📍 SESSION CLOSE 2026-07-31 — READ THIS BLOCK FIRST, IT IS THE NEWEST
+
+**Tip `32613ea`, tree clean, everything PUSHED. CI ✅ · Security CI ✅ · Release ❌
+(Render suspension only — expected, see the Render block below).**
+
+**▶ RESUME HERE, in order:**
+
+1. **Render production after midnight** — the block below. Free-tier hours reset
+   00:00 on 1 Aug. ⚠️ Migrations 008–023 are LOCAL ONLY; production has none of the
+   marketplace schema.
+2. **Finish the role switcher rollout** — API + UI shipped, but mounted in
+   `workshop-web` ONLY. The other six apps need the same block from
+   `apps/workshop-web/app/layout.tsx`. The owner account holds ONE role so the
+   control renders nothing for it — seed a second membership to see it work.
+3. **Slice B — supplier + admin catalogue management** (section 3). Until it
+   exists the marketplace cannot grow without a developer.
+
+**What shipped today:** Slice A complete end-to-end — public marketplace ordering,
+both sides. Migrations **022** (orders/lines/append-only events) and **023**
+(supplier accounts + column-guard trigger). Buyer basket/checkout/my-orders,
+supplier order inbox. Role switcher (API + UI). Three dashboards/pages enriched so
+**no screen in the product renders invented data**.
+
+**Three gates that reported success while doing NOTHING were found and fixed:**
+`apps/api` lint could not load its config · seven packages linted zero files ·
+an e2e build guard blocked **133 tests** because `)` is not a path terminator.
+
+**Verified at close:** `pnpm -r lint` 0 · `pnpm -r typecheck` 0 · **578 unit tests** ·
+Playwright **138 passed / 2 skipped / 0 failed** · verifies 021 10/10, 022 13/13,
+023 12/12.
+
+**⚠️ NOT CONFIRMED IN A BROWSER:** the populated states of the two dashboards and
+the marketplace checkout. All need a real Keycloak sign-in. The empty and error
+branches are what a signed-out render exercises. **Do not read "build clean" as
+"seen working"** — sign in as `owner@autoworkshop.local` (password
+`Change_me_locally1!`, full email as username, plain `http`) and look.
+
+**Dev servers were STOPPED at close.** ⚠️ A stopped TASK is not a stopped SERVER on
+Windows — orphans survived twice today and impersonated results once. Always confirm
+with `Get-NetTCPConnection`, never `pkill`.
+
+---
+
 **Phase 5 slice 3b SHIPPED 2026-07-30 (`b243552`)** — diagnosis records, migration 013.
 **Public marketplace landing SHIPPED 2026-07-30 pt2 (`ef9d1c4`)** — migration 021, the
 first public surface in the repository. Build + CI gating fixed in the same session.
