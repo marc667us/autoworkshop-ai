@@ -95,3 +95,7 @@ infrastructure/backup/status/
 # a second file.
 .verify-*cookies*.json
 .verify-session-cookies.json
+
+# Backup-drill runtime lock — holds a live PID and timestamp, so it is machine
+# state, never source. Swept into a commit once by a `git add -A`.
+infrastructure/backup/.lock-*/
