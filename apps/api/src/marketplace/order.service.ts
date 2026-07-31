@@ -316,6 +316,82 @@ export class OrderService {
   }
 
   /**
+   * Record the supplier's own tracking reference and delivery note.
+   *
+   * ⚠️ A SEPARATE ENDPOINT FROM `changeStatus`, DELIBERATELY. Dispatching and
+   * recording a waybill are different acts: a supplier corrects a mistyped
+   * reference on an already-dispatched order without re-dispatching it, and
+   * folding tracking into the status call would make that impossible — or worse,
+   * would accept the field and silently ignore it, which is what the first
+   * version of the supplier screen did.
+   *
+   * FREE TEXT, and it stays free text. Delivery is the supplier's own system
+   * (migration 022), so this is whatever they use to find the consignment.
+   * Parsing it into carrier states would invent states nothing here observes.
+   *
+   * ⚠️ THE COLUMN RULE IS NOT ENFORCED HERE. Migration 023's
+   * `trg_orders_supplier_scope` decides what a supplier may change; this method
+   * simply does not offer the other columns. If it tried, the trigger would
+   * raise `insufficient_privilege`. RLS picks the ROW, the trigger picks the
+   * COLUMNS, and this is only the convenient path to both.
+   */
+  async setTracking(
+    userId: string,
+    orderId: string,
+    trackingReference: unknown,
+    notes: unknown,
+  ): Promise<{ trackingReference: string | null }> {
+    if (!UUID.test(orderId)) throw new NotFoundException('order not found');
+
+    const ref =
+      typeof trackingReference === 'string' && trackingReference.trim() !== ''
+        ? trackingReference.trim().slice(0, 200)
+        : null;
+    const note =
+      typeof notes === 'string' && notes.trim() !== '' ? notes.trim().slice(0, 500) : null;
+
+    if (ref === null && note === null) {
+      throw new BadRequestException(
+        'Give a tracking reference or a delivery note — whatever the customer ' +
+          'would quote to find this consignment.',
+      );
+    }
+
+    return this.db.withUser(userId, async (client) => {
+      const { rows } = await client.query<{ id: string; status: OrderStatus }>(
+        `SELECT id, status FROM catalogue.orders WHERE id = $1 FOR UPDATE`,
+        [orderId],
+      );
+      if (!rows[0]) throw new NotFoundException('order not found');
+      if (rows[0].status === 'cancelled') {
+        throw new BadRequestException(
+          'This order was cancelled, so there is nothing to track.',
+        );
+      }
+
+      // COALESCE so sending only one of the two does not blank the other.
+      await client.query(
+        `UPDATE catalogue.orders
+            SET delivery_tracking_reference = COALESCE($2, delivery_tracking_reference),
+                delivery_notes = COALESCE($3, delivery_notes),
+                updated_at = now()
+          WHERE id = $1`,
+        [orderId, ref, note],
+      );
+
+      await this.recordEvent(
+        client,
+        orderId,
+        'tracking_updated',
+        userId,
+        ref ? `Tracking reference ${ref}` : 'Delivery note updated',
+      );
+
+      return { trackingReference: ref };
+    });
+  }
+
+  /**
    * Record a settlement that happened OUTSIDE this application.
    *
    * ⚠️ THIS IS THE WHOLE PAYMENT STORY TODAY, AND IT IS COMPLETE, NOT A STUB.

@@ -87,6 +87,26 @@ export class MarketplaceController {
   }
 
   /**
+   * The supplier's own tracking reference / delivery note.
+   *
+   * Separate from the status route because correcting a mistyped waybill must
+   * not require re-dispatching the order.
+   */
+  @Patch('orders/:id/tracking')
+  async tracking(
+    @Req() req: UserRequest,
+    @Param('id') id: string,
+    @Body() body: { trackingReference?: unknown; notes?: unknown },
+  ) {
+    return this.orders.setTracking(
+      req.appUserId,
+      id,
+      body?.trackingReference,
+      body?.notes,
+    );
+  }
+
+  /**
    * Record a settlement made outside the app.
    *
    * There is deliberately no "pay now" route: no payment provider is
