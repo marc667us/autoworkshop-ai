@@ -21,6 +21,15 @@
 export const MAX_PAGE_SIZE = 60;
 export const DEFAULT_PAGE_SIZE = 24;
 
+/**
+ * Hard ceiling on how far into the result set an anonymous caller may skip.
+ *
+ * 5000 is ~83 pages of `MAX_PAGE_SIZE`. Nobody browses a parts catalogue that
+ * deep; a search that needs to would use the facets. See `cleanOffset` for why
+ * an unbounded offset is not free even when it returns nothing.
+ */
+export const MAX_OFFSET = 5000;
+
 /** Longest free-text search accepted. Longer input is truncated, not rejected —
  *  a stranger typing into a search box should get results, not a 400. */
 export const MAX_QUERY_LENGTH = 80;
@@ -91,12 +100,41 @@ export function cleanLimit(value: unknown): number {
   return Math.min(n, MAX_PAGE_SIZE);
 }
 
-/** Offset, bounded below at 0. No upper bound: deep paging returns nothing,
- *  which is correct and costs one index probe. */
+/**
+ * Offset, bounded to [0, MAX_OFFSET].
+ *
+ * ⚠️ THE OLD COMMENT HERE SAID "No upper bound: deep paging returns nothing,
+ * which is correct and costs one index probe." THAT REASONING WAS WRONG, and
+ * Codex caught it 2026-07-31. It is true that a large offset RETURNS nothing —
+ * `offset=999999999999` was measured returning 200 with zero rows. But the cost
+ * is not one index probe:
+ *
+ *   - `searchParts` runs an uncached `count(*)` over the whole filtered set
+ *     BEFORE it pages, so the count is paid in full at every offset;
+ *   - Postgres reaches OFFSET n by generating and DISCARDING n rows, so a broad
+ *     `ILIKE` search with a huge offset makes the server sort and skip the
+ *     entire match set to return an empty page.
+ *
+ * This controller is unauthenticated and has no rate limit, so that work is
+ * reachable by anyone on the internet. Today the catalogue holds 18 published
+ * parts and the cost is trivial — this is a latent scaling defect, fixed now
+ * because the cap is one line and the incident would not be.
+ *
+ * CLAMPED, not rejected — the opposite of `cleanYear` above, deliberately.
+ * A year is a question about the visitor's CAR and answering a different one
+ * shows parts for a car they do not own. An offset is a position in a result
+ * list: past the end there is nothing to be wrong about, and every offset above
+ * the true total already returns the same empty page. Rejecting would turn a
+ * bookmarked deep link into a 400 for no benefit.
+ *
+ * Genuine deep paging past MAX_OFFSET wants keyset/cursor paging, not a bigger
+ * number. If the catalogue ever grows enough for that to matter, change the
+ * mechanism rather than raising this constant.
+ */
 export function cleanOffset(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return 0;
-  return n;
+  return Math.min(n, MAX_OFFSET);
 }
 
 /**

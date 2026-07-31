@@ -6,6 +6,7 @@ import {
   cleanYear,
   escapeLike,
   fitmentCoversYear,
+  MAX_OFFSET,
   MAX_PAGE_SIZE,
   MAX_QUERY_LENGTH,
   parsePartsQuery,
@@ -77,6 +78,27 @@ describe('cleanLimit and cleanOffset', () => {
   it('never returns a negative offset', () => {
     expect(cleanOffset(-1)).toBe(0);
     expect(cleanOffset('x')).toBe(0);
+  });
+
+  /**
+   * Regression, Codex 2026-07-31. `cleanOffset` used to return the caller's
+   * number unchanged, on the reasoning that a huge offset "returns nothing,
+   * which is correct and costs one index probe". Returning nothing was true —
+   * `offset=999999999999` was measured returning HTTP 200 with zero rows — but
+   * the cost was not: the endpoint runs an uncached `count(*)` before paging,
+   * and Postgres reaches OFFSET n by generating and discarding n rows. On an
+   * unauthenticated, unrated-limited endpoint that is reachable by anyone.
+   */
+  it('caps how far an anonymous caller may skip into the result set', () => {
+    expect(cleanOffset(999999999999)).toBe(MAX_OFFSET);
+    expect(cleanOffset(MAX_OFFSET + 1)).toBe(MAX_OFFSET);
+  });
+
+  it('leaves ordinary paging untouched — the cap must not break real pages', () => {
+    // The guard is worthless if it also clamps the pages people actually use.
+    expect(cleanOffset(0)).toBe(0);
+    expect(cleanOffset(MAX_PAGE_SIZE)).toBe(MAX_PAGE_SIZE);
+    expect(cleanOffset(MAX_OFFSET)).toBe(MAX_OFFSET);
   });
 });
 
