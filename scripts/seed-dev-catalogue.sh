@@ -207,8 +207,45 @@ ON CONFLICT (organization_id) DO UPDATE
 COMMIT;
 SQL
 
+echo "==> seeding catalogue.supplier_users (migration 023)"
+
+# ⚠️ WITHOUT THIS THE SUPPLIER ORDER INBOX LOOKS BROKEN RATHER THAN EMPTY.
+# Migration 023 created the membership table but nothing seeded a row, so
+# `/orders-and-delivery/new-orders` on supplier-web showed "No orders yet" for
+# every dev identity no matter how many orders existed — the policy was working
+# exactly as designed and there was simply nobody it could match. Found by
+# handing over test credentials that could not reach the screen they were for.
+#
+# Dev-only convenience. In production a supplier account arrives through
+# sign-up and verification, which is Slice B — this is NOT that flow, and it
+# must not become the model for it.
+#
+# Both identities are attached to EVERY published supplier so a tester can work
+# any order without hunting for the right login. That is a dev shortcut and
+# would be wrong in production: a real member belongs to one supplier.
+psql_run -q <<'SQL'
+BEGIN;
+SELECT set_config('app.current_role', 'admin', true);
+
+INSERT INTO catalogue.supplier_users (supplier_id, user_id, member_role, status)
+SELECT s.id, u.id, 'owner', 'active'
+  FROM catalogue.suppliers s
+  CROSS JOIN identity.users u
+ WHERE s.is_published
+   AND u.email IN ('manager@autoworkshop.local', 'admin@autoworkshop.local')
+-- Idempotent, and DO NOTHING rather than DO UPDATE on purpose: re-running the
+-- seed must never silently REACTIVATE a membership somebody revoked while
+-- testing revocation.
+ON CONFLICT (supplier_id, user_id) DO NOTHING;
+COMMIT;
+SQL
+
 echo "==> catalogue seeded"
 psql_run -tAc "SELECT 'suppliers published: ' || count(*) FILTER (WHERE is_published) || ' of ' || count(*) FROM catalogue.suppliers;"
 psql_run -tAc "SELECT 'parts published: '     || count(*) FILTER (WHERE is_published) || ' of ' || count(*) FROM catalogue.parts;"
 psql_run -tAc "SELECT 'fitments: '            || count(*) FROM catalogue.part_fitments;"
 psql_run -tAc "SELECT 'mechanics published: ' || count(*) FILTER (WHERE is_published) || ' of ' || count(*) FROM catalogue.mechanic_directory;"
+# READ THIS COUNT. A zero here means the supplier inbox has nobody to
+# authenticate and will read as broken — the exact failure this seed exists to
+# prevent.
+psql_run -tAc "SELECT 'supplier memberships: ' || count(*) FILTER (WHERE status='active') || ' active of ' || count(*) FROM catalogue.supplier_users;"
