@@ -325,8 +325,8 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // is the only place the refresh token exists.
       const req = { headers: await headers() };
 
+      // `refreshTokenRevoked` stays `let` — it IS reassigned below.
       let refreshTokenRevoked = false;
-      let idToken: string | undefined;
 
       // Same both-names read as `getAccessToken`. Getting this wrong here is
       // WORSE than getting it wrong there: a miss means the refresh token is
@@ -334,7 +334,11 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // exactly the defect this method exists to fix.
       const token = await readSessionToken(req);
       const keycloak = token?.keycloak;
-      idToken = keycloak?.idToken;
+      // Declared AT its assignment rather than hoisted as `let` above. Same
+      // scope, assigned once, read once — so there was never anything for the
+      // earlier declaration to buy, and a `let` that is never reassigned
+      // invites somebody to reassign it.
+      const idToken = keycloak?.idToken;
       if (keycloak?.refreshToken) {
         refreshTokenRevoked = await revokeRefreshToken(clientId, keycloak.refreshToken);
       }

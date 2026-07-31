@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "build": "echo 'e2e has no build artefact'",
-    "lint": "echo ok",
+    "lint": "eslint . --ext .ts,.tsx --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'e2e runs via pnpm e2e — it needs built apps and a browser'",
+    "test": "echo 'e2e runs via pnpm e2e \u2014 it needs built apps and a browser'",
     "e2e": "playwright test",
     "e2e:a11y": "playwright test --project=storybook-a11y",
     "e2e:journey": "playwright test --project=shell-journey",
@@ -18,12 +18,16 @@
     "@autoworkshop/next-shell": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "^1.49.1",
+    "@autoworkshop/config": "workspace:*",
     "@axe-core/playwright": "^4.10.1",
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^20.17.10",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
     "axe-core": "^4.10.2",
+    "eslint": "^8.57.1",
     "http-server": "^14.1.1",
     "next": "15.1.3",
-    "@types/node": "^20.17.10",
     "typescript": "^5.7.2"
   }
 }
