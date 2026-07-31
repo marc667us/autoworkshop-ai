@@ -39,6 +39,24 @@ export class PublicController {
     return this.catalogue.searchParts(query);
   }
 
+  /**
+   * Resolve a specific set of part ids — what the BASKET renders from.
+   *
+   * Public for the same reason the search is: the basket is filled before
+   * anyone signs in, and every field returned is already on the search
+   * response. Ids for unpublished parts simply come back missing, which is what
+   * lets the basket say "no longer available" rather than silently dropping a
+   * line the buyer thought they were ordering.
+   *
+   * ⚠️ MUST BE DECLARED ABOVE `parts/:id`-style routes if one is ever added —
+   * Nest matches in declaration order and a parameterised route would swallow
+   * `by-ids` as an id.
+   */
+  @Get('parts/by-ids')
+  async partsByIds(@Query('ids') ids: unknown) {
+    return this.catalogue.partsByIds(ids);
+  }
+
   /** The values the search controls may offer — categories, makes, models,
    *  years and part manufacturers, each derived from data that has results. */
   @Get('parts/facets')

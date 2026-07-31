@@ -182,3 +182,36 @@ export function fitmentCoversYear(
   if (yearTo === null) return true;
   return year <= yearTo;
 }
+
+/**
+ * Parse a comma-separated list of part ids from a query string.
+ *
+ * ⚠️ SILENTLY DROPS ANYTHING THAT IS NOT A UUID rather than rejecting the whole
+ * request, because the caller is a basket that may hold a stale id from a
+ * previous visit. Failing the lookup would leave the buyer with a basket they
+ * cannot render and no way to remove the bad entry; dropping it means the part
+ * comes back missing and the basket can say so.
+ *
+ * Bounded so this cannot become a bulk catalogue export driven by uuid
+ * enumeration.
+ */
+export function cleanIdList(value: unknown, max = MAX_ORDER_LINE_IDS): string[] {
+  const raw =
+    typeof value === 'string'
+      ? value.split(',')
+      : Array.isArray(value)
+        ? value
+        : [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const id = typeof entry === 'string' ? entry.trim().toLowerCase() : '';
+    if (UUID_SHAPE.test(id)) seen.add(id);
+    if (seen.size >= max) break;
+  }
+  return [...seen];
+}
+
+/** Matches `MAX_ORDER_LINES` in the marketplace rules — a basket cannot exceed it. */
+export const MAX_ORDER_LINE_IDS = 50;
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

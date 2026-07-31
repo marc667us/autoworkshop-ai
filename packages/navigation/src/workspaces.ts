@@ -70,6 +70,22 @@ const customerGroups: NavGroup[] = [
   ]),
   group('parts-and-warranty', 'Parts and Warranty', 'cog', [
     ['installed-parts', 'Installed Parts'],
+    // ⚠️ NOT IN §33 — ADDED 2026-07-31 FOR THE MARKETPLACE (migrations 022/023),
+    // AND FLAGGED RATHER THAN SLIPPED IN. CLAUDE.md's prohibited list includes
+    // "changing approved navigation without review", so this is called out for
+    // exactly that review.
+    //
+    // The justification: §33 was written before the public parts marketplace
+    // existed, so it has no item for a customer's own parts orders. Without a
+    // nav entry the screen is unreachable — `requireNavRoute` resolves a path
+    // against the viewer's VISIBLE navigation, so a page no tree points at is a
+    // page nobody can open. The alternative considered and rejected was
+    // overloading `installed-parts`, which means something else entirely: parts
+    // fitted to your vehicle by a workshop, not parts you bought yourself.
+    //
+    // Placed in this group rather than a new one, so the change is one ITEM and
+    // not a new top-level shape.
+    ['parts-orders', 'My Parts Orders'],
     ['product-recommendations', 'Product Recommendations'],
     ['warranty', 'Warranty'],
     ['warranty-claims', 'Warranty Claims'],

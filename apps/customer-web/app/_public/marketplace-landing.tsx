@@ -7,6 +7,7 @@ import {
   PublicMechanic,
   PublicPart,
 } from './public-api';
+import { AddToBasket } from './add-to-basket';
 
 /**
  * ABOSSEY OKAI AUTO PARTS MARKETPLACE — the public landing page.
@@ -636,6 +637,15 @@ function PartCard({ part }: { part: PublicPart }) {
           {part.fitments.length > 3 ? ` · +${part.fitments.length - 3} more` : ''}
         </div>
       ) : null}
+
+      {/*
+        Adding to the basket needs NO ACCOUNT — the basket is browser state
+        until checkout, which is what keeps 021's promise that browsing this
+        marketplace requires no sign-up. A part with no price refuses here,
+        where the buyer can still act on it, rather than at the last step of
+        checkout after they have typed an address.
+      */}
+      <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
 
       <div
         style={{

@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { escapeLike, parsePartsQuery, PartsQuery } from './catalogue-rules';
+import {
+  cleanIdList,
+  escapeLike,
+  parsePartsQuery,
+  type PartsQuery,
+} from './catalogue-rules';
 
 /**
  * The public catalogue — parts, fitments and the mechanic directory.
@@ -338,6 +343,50 @@ export class CatalogueService {
       services: (r.services as string[] | null) ?? [],
       specialisms: (r.specialisms as string[] | null) ?? [],
     }));
+  }
+
+  /**
+   * Resolve a specific set of parts — what the BASKET renders from.
+   *
+   * ⚠️ THE BASKET DELIBERATELY STORES ONLY PART IDS AND QUANTITIES, so it needs
+   * somewhere to turn those into names and prices. Caching a price in the
+   * browser instead would put a number the user can edit next to the thing they
+   * are about to buy, and it would go stale the moment a supplier re-prices.
+   * Reading them here keeps the displayed price LIVE and unforgeable.
+   *
+   * It is not a leak of anything: every field returned is already on the public
+   * search response, and the same `is_published` gates apply — an id for an
+   * unpublished part simply comes back missing, which is what lets the basket
+   * say "this part is no longer available" instead of silently dropping it.
+   *
+   * Bounded by MAX_ORDER_LINES-worth of ids so it cannot be used as a bulk
+   * export of the catalogue by someone enumerating uuids.
+   */
+  async partsByIds(rawIds: unknown): Promise<{ parts: unknown[] }> {
+    const ids = cleanIdList(rawIds);
+    if (ids.length === 0) return { parts: [] };
+
+    const rows = await this.db.queryWithoutTenant<Record<string, unknown>>(
+      `SELECT p.id, p.part_number, p.name, p.brand, p.price, p.currency,
+              s.id AS supplier_id, s.name AS supplier_name
+         FROM catalogue.parts p
+         JOIN catalogue.suppliers s ON s.id = p.supplier_id
+        WHERE p.id = ANY($1::uuid[]) AND p.is_published AND s.is_published`,
+      [ids],
+    );
+
+    return {
+      parts: rows.map((r) => ({
+        id: String(r.id),
+        partNumber: String(r.part_number),
+        name: String(r.name),
+        brand: (r.brand as string | null) ?? null,
+        price: r.price === null ? null : String(r.price),
+        currency: String(r.currency),
+        supplierId: String(r.supplier_id),
+        supplierName: String(r.supplier_name),
+      })),
+    };
   }
 
   /** The KPI strip. Counts only what a visitor can actually reach. */
