@@ -25,12 +25,23 @@ BEGIN
   -- 1. RLS is ENABLED *and* FORCED on all five tables. ENABLE alone exempts the
   --    table owner, and migrations run as the owner, so a policy without FORCE
   --    is decorative.
+  --
+  -- ⚠️ NAMES THE FIVE TABLES RATHER THAN COUNTING THE SCHEMA. It used to count
+  -- every table in `catalogue` and require exactly 5, which made this check a
+  -- tripwire on the schema's SIZE rather than on 021's tables: migration 022
+  -- added orders/order_lines/order_events and this failed with "expected 5,
+  -- found 8" while all five of 021's tables were still correctly protected.
+  -- A check that fails when unrelated correct work lands trains people to edit
+  -- the check. Listing the tables asserts the same thing and keeps failing for
+  -- the RIGHT reason — if any one of these five loses ENABLE or FORCE.
   SELECT count(*) INTO n
     FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
    WHERE ns.nspname = 'catalogue' AND c.relkind = 'r'
+     AND c.relname IN ('suppliers', 'part_categories', 'parts',
+                       'part_fitments', 'mechanic_directory')
      AND c.relrowsecurity AND c.relforcerowsecurity;
   IF n <> 5 THEN
-    RAISE EXCEPTION 'check 1 FAILED: expected 5 catalogue tables with ENABLE+FORCE RLS, found %', n;
+    RAISE EXCEPTION 'check 1 FAILED: expected 021''s 5 tables with ENABLE+FORCE RLS, found %', n;
   END IF;
   RAISE NOTICE 'check 1 OK: 5 catalogue tables are ENABLE + FORCE row level security';
 
