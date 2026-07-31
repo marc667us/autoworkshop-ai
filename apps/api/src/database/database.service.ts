@@ -75,6 +75,53 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Run work as a signed-in USER who may belong to no tenant at all.
+   *
+   * ⚠️ THIS IS NOT A WEAKER `withTenant`, IT IS A DIFFERENT SUBJECT, and it
+   * exists because migration 022 introduced the first rows this application
+   * owns that are scoped to a PERSON rather than to an organisation. A
+   * marketplace buyer is a vehicle owner with no workshop: they hold no
+   * membership, so `resolveTenantContext` has nothing to resolve and
+   * `withTenant` cannot represent them. Forcing one would mean inventing a
+   * tenant for every private buyer.
+   *
+   * Only `app.user_id` is set. `app.tenant_id` is deliberately left UNSET, so
+   * every tenant-owned table still returns zero rows inside this transaction —
+   * the same fail-closed default `queryWithoutTenant` relies on. Reaching a
+   * workshop table from here is an empty result, not a leak.
+   *
+   * `app.current_role` is left unset too, so `identity.current_role_name()`
+   * answers 'none' and the `admin_all` policies do not match. A buyer must not
+   * acquire admin reach by virtue of not having a tenant.
+   *
+   * Transaction-local (`set_config(..., true)`) and bound as a PARAMETER, for
+   * the same two reasons as `withTenant`: the setting dies with the
+   * transaction so a pooled connection carries nothing to the next request,
+   * and a crafted user id reaches Postgres as data rather than as SQL.
+   */
+  async withUser<T>(
+    userId: string,
+    work: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT set_config($1, $2, true)', [
+        'app.user_id',
+        userId,
+      ]);
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Escape hatch for genuinely tenant-less work — health checks, migrations
    * ledger reads. RLS still applies; with no tenant context set, policies
    * return zero rows rather than everything (fail closed).
