@@ -64,6 +64,39 @@ Last CONFIRMED-good state (2026-07-30 pt2, before the servers were stopped):
 18/18 content checks against the rendered landing page, all four authenticated
 routes 200, `/nonexistent-page` 404. Nothing was changed after that measurement.
 
+### 🔴 OWNER INSTRUCTION 2026-07-31 — TRY RENDER PRODUCTION AFTER MIDNIGHT
+
+**The Render free-tier instance-hours reset at 00:00 on 1 August**, and the owner
+wants production attempted then. Until that reset the live site answers **503**
+and the **Release** workflow is red FOR THAT REASON ALONE — it was already red on
+`efd30c9` before any of this session's work, so it is not a regression and no code
+change affects it.
+
+**Do this before assuming anything is broken:**
+
+```bash
+# 1. Is the site actually back? 503 means still suspended, not a deploy fault.
+curl -s -o /dev/null -w 'live -> %{http_code}\n' --max-time 60 \
+  https://autoworkshop.aiappinvent.com/
+
+# 2. Only once it serves, re-run the release — do NOT re-run it while 503.
+gh run list --workflow=release.yml --limit 3
+gh run rerun <id>            # or push a commit; the workflow runs on master
+```
+
+⚠️ **Migrations 008–023 are LOCAL ONLY.** Production has none of the marketplace
+schema. `022_marketplace_orders` and `023_supplier_accounts` must be applied
+wherever the production database lives BEFORE the marketplace screens are opened
+there, or every marketplace route fails on a missing table. `run.sh` is
+idempotent-by-tracking, so re-running it is safe; applying nothing is not.
+
+⚠️ **`RENDER_API_KEY` is still unrotated** since the 2026-07-27 transcript leak.
+Treat it as compromised. Rotating it is worth doing as part of bringing
+production back rather than after.
+
+⚠️ Do not "fix" the red Release run by changing the workflow. The workflow is
+correct; the instance was suspended.
+
 ### ▶ THE FIRST THING TO DO
 
 Nothing is on fire. Bring the stack up (section 1), confirm the marketplace renders at

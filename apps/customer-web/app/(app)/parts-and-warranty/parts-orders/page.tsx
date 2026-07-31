@@ -5,12 +5,13 @@ import { PartsOrdersScreen } from '../../../_screens/parts-orders-screen';
  * /parts-and-warranty/parts-orders — the buyer's marketplace orders.
  *
  * ⚠️ THE NAV ITEM THIS RESOLVES AGAINST WAS ADDED 2026-07-31 AND IS NOT IN §33.
- * `packages/navigation/src/workspaces.ts` carries the note and the reasoning:
+ * ✅ OWNER-APPROVED 2026-07-31. `packages/navigation/src/workspaces.ts` carries
+ * the note and the reasoning:
  * §33 predates the public parts marketplace, so it has no item for a customer's
  * own orders, and `requireNavRoute` refuses a path the viewer's tree does not
  * contain — a page no tree points at is a page nobody can open. CLAUDE.md lists
- * "changing approved navigation without review" as prohibited, so it is flagged
- * for review rather than slipped in.
+ * "changing approved navigation without review" as prohibited, so it was raised
+ * for that review rather than slipped in, and the owner approved it.
  *
  * ⚠️ WHAT THIS GATE DOES, STATED ACCURATELY — the same caveat as the garage
  * page. `requireNavRoute` resolves the path against the viewer's VISIBLE

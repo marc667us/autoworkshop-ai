@@ -70,10 +70,12 @@ const customerGroups: NavGroup[] = [
   ]),
   group('parts-and-warranty', 'Parts and Warranty', 'cog', [
     ['installed-parts', 'Installed Parts'],
-    // ⚠️ NOT IN §33 — ADDED 2026-07-31 FOR THE MARKETPLACE (migrations 022/023),
-    // AND FLAGGED RATHER THAN SLIPPED IN. CLAUDE.md's prohibited list includes
-    // "changing approved navigation without review", so this is called out for
-    // exactly that review.
+    // ⚠️ NOT IN §33 — ADDED 2026-07-31 FOR THE MARKETPLACE (migrations 022/023).
+    // ✅ **OWNER-APPROVED 2026-07-31.** CLAUDE.md's prohibited list includes
+    // "changing approved navigation without review"; this was raised for that
+    // review and the owner approved it. The note stays because the REASON is
+    // what a future reader needs — a bare approval with no rationale is how the
+    // next person justifies the next unreviewed addition.
     //
     // The justification: §33 was written before the public parts marketplace
     // existed, so it has no item for a customer's own parts orders. Without a
