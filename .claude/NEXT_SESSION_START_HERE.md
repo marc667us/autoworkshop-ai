@@ -82,9 +82,17 @@ branches are what a signed-out render exercises. **Do not read "build clean" as
 "seen working"** — sign in as `owner@autoworkshop.local` (password
 `Change_me_locally1!`, full email as username, plain `http`) and look.
 
-**Dev servers were STOPPED at close.** ⚠️ A stopped TASK is not a stopped SERVER on
-Windows — orphans survived twice today and impersonated results once. Always confirm
-with `Get-NetTCPConnection`, never `pkill`.
+**⚠️ DEV SERVERS WERE LEFT RUNNING at close** — deliberately, so the owner could keep
+testing: API :4000, workshop-web :3001, customer-web :3000, supplier-web :3002. They are
+UNSUPERVISED background processes and will be stale by next session.
+
+`bash scripts/start-session.sh` kills them and proves the ports are free — which is
+exactly why it is the first command. Do NOT trust anything served on those ports until
+it has run.
+
+⚠️ A stopped TASK is not a stopped SERVER on Windows. Orphans survived twice today and
+impersonated a result once (a `next start` that failed EADDRINUSE while the old process
+kept serving stale markup). Always confirm with `Get-NetTCPConnection`, never `pkill`.
 
 ---
 
