@@ -19,24 +19,36 @@ Then continue with this file, then `.claude/CURRENT_TASK.md`.
 **Tip `32613ea`, tree clean, everything PUSHED. CI ✅ · Security CI ✅ · Release ❌
 (Render suspension only — expected, see the Render block below).**
 
-🔴 **OWNER FEEDBACK AT CLOSE: "no matter what username same technical page".**
-UNRESOLVED, and worth an explicit check FIRST. Two candidate causes, and they
-need separating before anything is "fixed":
+🔴 **RESOLVED AT CLOSE — "same technical page no matter what username" WAS A
+CRASH I SHIPPED, not module coverage.** The earlier diagnosis in this file was
+WRONG for `:3001` and is corrected here rather than left to mislead.
 
-1. **Most likely — wrong app.** Real screens are NOT evenly spread:
-   `workshop-web` :3001 has **~80**, `customer-web` :3000 has **5**
-   (`/home/dashboard`, `/my-vehicles/garage`, `/my-vehicles/add-vehicle`,
-   `/service-and-repairs/report-a-problem`, `/parts-and-warranty/parts-orders`),
-   `supplier-web` :3002 has **1** (`/orders-and-delivery/new-orders`).
-   Everything else is the catch-all placeholder BY DESIGN. On :3002 nearly every
-   click is a placeholder and that is correct, not a defect.
-2. **Or sign-in is not taking effect at all**, in which case every viewer falls
-   back to the default tree and the role genuinely does not matter. Distinguish
-   them: if signed-in and signed-out render IDENTICALLY on
-   `:3001/home/dashboard`, it is this, not (1).
+`roleLabel` was exported from `RoleSwitcher.tsx`, a `'use client'` module, and
+called from the SERVER layout. React enforces that boundary at RUNTIME ONLY, so:
 
-⚠️ Do NOT start "fixing" the placeholder until (1) and (2) are separated —
-the placeholder is correct behaviour for an unbuilt module.
+    typecheck 0 · lint 0 · `next build` clean — and EVERY page returned
+    "a server-side exception occurred".
+
+What the owner saw on every route was the ERROR BOUNDARY, not the unbuilt-module
+placeholder. Fixed in `packages/next-shell/src/role-label.ts` — a server-safe
+module with no `'use client'`. Verified by LOADING the pages: `/home/dashboard`,
+`/workshop-floor/job-cards` and `/workshop-floor/repair-staging` all 200 with
+real content, zero errors in the server log.
+
+⚠️ **THE LESSON, ON A DAY SPENT FIXING GATES THAT RAN NOTHING: a clean build is
+not evidence a screen works.** Every gate was green while the app was entirely
+broken. The server/client boundary is only checked when a page is REQUESTED.
+After ANY change to a shell/layout component, load a page — that is what
+`/verify` is for, and skipping it is what happened here.
+
+The module-coverage point still stands for the OTHER apps, and is worth knowing:
+`workshop-web` :3001 has **~80** real screens, `customer-web` :3000 has **5**,
+`supplier-web` :3002 has **1** (`/orders-and-delivery/new-orders`). On :3002
+nearly every click IS the placeholder, correctly.
+
+⚠️ Still unconfirmed: whether signing in changes which routes resolve. If
+signed-in and signed-out render identically on `:3001/home/dashboard`, that is a
+separate auth problem — the crash masked this question entirely.
 
 **▶ RESUME HERE, in order:**
 

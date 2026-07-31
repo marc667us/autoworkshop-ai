@@ -90,18 +90,6 @@ export function RoleSwitcher({
   );
 }
 
-/**
- * Turn `workshop_supervisor` into `Workshop supervisor`.
- *
- * Derived rather than a lookup table on purpose: a table would silently render
- * a NEW role as blank, and a role added to `identity.memberships` must never
- * appear in the switcher as an empty option.
- */
-export function roleLabel(roleName: string): string {
-  const words = roleName.replace(/_/g, ' ').trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
 /** Visually hidden, still announced. Not `display:none`, which removes it. */
 const SR_ONLY: React.CSSProperties = {
   position: 'absolute',

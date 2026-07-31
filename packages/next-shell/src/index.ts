@@ -28,7 +28,10 @@ export type { ApiResult } from './api';
 export type { ViewerDescription, ViewerLabels } from './viewer-contract';
 
 // Role switcher — one login acting as any role it holds, without signing out.
-export { RoleSwitcher, roleLabel } from './RoleSwitcher';
+export { RoleSwitcher } from './RoleSwitcher';
+// Server-safe: a pure string helper the app LAYOUT calls. Must not live in a
+// 'use client' module — see role-label.ts.
+export { roleLabel } from './role-label';
 export type { RoleOption } from './RoleSwitcher';
 export { setActiveRoleAction } from './set-role-action';
 export { activeRoleName, ACTIVE_ROLE_COOKIE } from './active-role';
