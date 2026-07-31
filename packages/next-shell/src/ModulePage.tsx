@@ -76,6 +76,12 @@ export async function renderModulePage(
   const item = group?.items.find((i) => i.href === pathname);
   if (!group || !item) notFound();
 
+  // Everything else in this group the viewer may see. Taken from the FILTERED
+  // tree, so a module hidden from this viewer cannot be named here — the same
+  // rule that makes an unpermitted route 404 rather than render a placeholder
+  // that reveals it exists.
+  const siblings = group.items.filter((i) => i.href !== pathname);
+
   return (
     <>
       <PageHeader
@@ -88,6 +94,76 @@ export async function renderModulePage(
         title={`${item.label} has not been built yet`}
         description="The navigation, routing and breadcrumbs for this screen are working — the screen's own content is scheduled for a later phase. Access control arrives with this module's own API, which enforces it server-side."
       />
+
+      {/*
+        ⚠️ THE SIBLINGS ARE REAL DATA, NOT DECORATION, AND NOT A MOCK.
+        `05.txt` §2 prohibits disconnected mock pages, so nothing invented may
+        appear here. Every entry below comes from the SAME grant-filtered tree
+        that decided this page may be shown at all — so it can never advertise a
+        module the viewer is not permitted to see, and every link resolves
+        (either to a built screen or to this same honest placeholder).
+
+        It exists because the page was previously a DEAD END: the one thing a
+        person reliably wants on reaching an unbuilt screen is the nearest thing
+        that does work, and the side nav is the only route to it. On a phone
+        that nav is behind a menu button.
+      */}
+      {siblings.length > 0 && (
+        <nav
+          aria-labelledby="aw-module-siblings"
+          style={{
+            border: `1px solid ${themeVar.borderDefault}`,
+            borderRadius: primitive.radius.lg,
+            padding: primitive.space[4],
+            background: themeVar.backgroundSecondary,
+            marginBottom: primitive.space[4],
+          }}
+        >
+          <h2
+            id="aw-module-siblings"
+            style={{
+              margin: `0 0 ${primitive.space[2]} 0`,
+              fontSize: primitive.fontSize.base,
+              color: themeVar.textPrimary,
+            }}
+          >
+            Elsewhere in {group.label}
+          </h2>
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(14rem, 1fr))',
+              gap: primitive.space[2],
+            }}
+          >
+            {siblings.map((s) => (
+              <li key={s.href}>
+                {/* A plain anchor, not next/link: these are cross-module
+                    navigations out of a page that renders nothing, so there is
+                    no client state worth preserving and a full document load is
+                    the more predictable behaviour. */}
+                <a
+                  href={s.href}
+                  style={{
+                    display: 'block',
+                    padding: primitive.space[2],
+                    borderRadius: primitive.radius.md,
+                    border: `1px solid ${themeVar.borderDefault}`,
+                    color: themeVar.textPrimary,
+                    textDecoration: 'none',
+                    fontSize: primitive.fontSize.sm,
+                  }}
+                >
+                  {s.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
 
       <section
         style={{
