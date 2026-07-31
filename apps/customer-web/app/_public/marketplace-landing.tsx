@@ -526,11 +526,19 @@ export function MarketplaceLanding({
         }}
       >
         {/* `05.txt` §2 forbids disconnected mock pages, so what is NOT built is
-            named on the page rather than implied by a button that does nothing. */}
+            named on the page rather than implied by a button that does nothing.
+            ⚠️ THIS NOTICE MUST BE RE-READ WHENEVER THE MARKETPLACE GAINS A
+            CAPABILITY. It previously said ordering "is not built yet" while an
+            Add-to-basket button sat on every card above it — the page
+            contradicting itself, which is worse than either statement alone.
+            Ordering landed in migrations 022/023; in-app payment genuinely has
+            not, and saying so is the honest half that remains. */}
         <p style={{ margin: 0 }}>
-          Ordering parts directly from a supplier, in-app payment and supplier-arranged delivery are
-          the next stage of this marketplace and are not built yet. Prices shown are supplier list
-          prices — confirm with the supplier before ordering.
+          Order directly from a supplier — add parts to your basket and check out with an
+          account. You pay the supplier yourself, by cash, bank transfer or mobile money, and
+          record the payment against your order; there is no in-app card payment. Delivery is
+          arranged by each supplier with their own system, so a basket spanning several
+          suppliers becomes one order per supplier. Prices shown are supplier list prices.
         </p>
       </footer>
     </main>
