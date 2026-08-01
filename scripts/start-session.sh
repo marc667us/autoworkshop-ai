@@ -85,9 +85,80 @@ for c in aw-postgres aw-keycloak aw-redis aw-minio aw-nats; do
     esac
   fi
 done
-printf '\n  ⚠️ A container reporting healthy is not proof the service works. Keycloak\n'
-printf '     once answered /health/ready UP with a dead database for 30 hours; it was\n'
-printf '     found by STARTING THE APP, not by reading a status.\n'
+
+# ── 3b. REACHABILITY FROM THE HOST ─────────────────────────────────────────
+#
+# 🔴 THIS SECTION EXISTS BECAUSE THE CHECK ABOVE LIED FOR FIVE DAYS.
+#
+# On 2026-08-01 `docker ps` reported all five containers healthy while Redis,
+# NATS and MinIO were completely unreachable from the host — Docker's port proxy
+# accepted the connection and then closed it without a reply. MinIO answered
+# HTTP 200 INSIDE its container and HTTP 000 from outside. The applications run
+# on the HOST, so all three were unusable, and nothing said so.
+#
+# The cause was stale port-forward wiring: postgres and keycloak had been
+# restarted on 07-28 and worked; redis, nats and minio had been up since 07-27
+# and did not. `docker restart` on the three re-established the mapping.
+#
+# The warning printed here used to say "a container reporting healthy is not
+# proof the service works" — and then the script read container health anyway.
+# The warning was right; the check was the weaker one. These probes complete a
+# REAL protocol exchange from the host, which is the only thing that can tell
+# the difference. No new dependencies: bash /dev/tcp and curl.
+printf '\n'
+bold "3b. Reachable FROM THE HOST (not from Docker's point of view)"
+
+probe_fail=0
+
+# Redis must answer +PONG, not merely accept a socket.
+if reply="$( (exec 3<>/dev/tcp/127.0.0.1/6379 && printf 'PING\r\n' >&3 && timeout 3 head -c 7 <&3; exec 3<&-) 2>/dev/null )" \
+   && [ "${reply#+PONG}" != "$reply" ]; then
+  ok "redis     answered +PONG"
+else
+  fail "redis     did NOT answer PING from the host — try: docker restart aw-redis"
+  probe_fail=1
+fi
+
+# NATS greets every connection with an INFO banner; anything listening on 4222
+# would satisfy a bare connect.
+if reply="$( (exec 3<>/dev/tcp/127.0.0.1/4222 && timeout 3 head -c 5 <&3; exec 3<&-) 2>/dev/null )" \
+   && [ "${reply#INFO}" != "$reply" ]; then
+  ok "nats      sent its INFO banner"
+else
+  fail "nats      sent no INFO banner from the host — try: docker restart aw-nats"
+  probe_fail=1
+fi
+
+# ⚠️ MinIO takes ~20-30s to become reachable after a restart (its IAM refresh
+# runs first), so a single immediate probe reports a false failure.
+if [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://localhost:9000/minio/health/live 2>/dev/null)" = "200" ]; then
+  ok "minio     answered its liveness endpoint"
+else
+  fail "minio     unreachable from the host — try: docker restart aw-minio, then wait ~30s"
+  probe_fail=1
+fi
+
+# ⚠️ THE REALM, NOT THE SERVER. Keycloak's own /health/ready answered UP for 30
+# hours with a dead database. Asking the REALM for its discovery document makes
+# Keycloak read that database.
+if [ "$(curl -s -o /dev/null -m 8 -w '%{http_code}' \
+        http://localhost:8080/realms/autoworkshop/.well-known/openid-configuration 2>/dev/null)" = "200" ]; then
+  ok "keycloak  realm served its discovery document"
+else
+  fail "keycloak  realm did not answer — sign-in will fail. Try: docker restart aw-keycloak"
+  probe_fail=1
+fi
+
+# Postgres is deliberately NOT probed here: section 4 connects to it for real to
+# apply migrations, which is stronger evidence than any handshake this script
+# could fake. A failure there is a Postgres failure.
+printf '  %s\n' "postgres  proved by the migration step below, which really connects"
+
+if [ "$probe_fail" -eq 1 ]; then
+  printf '\n  ⚠️ A dependency is healthy in Docker and unreachable from the host. That is\n'
+  printf '     the 2026-08-01 fault: the app runs on the HOST, so it cannot use it.\n'
+  printf '     `docker restart <name>` re-establishes the port mapping.\n'
+fi
 
 # ── 4. migrations ──────────────────────────────────────────────────────────
 bold "4. Migrations (idempotent by tracking, never by IF NOT EXISTS)"
