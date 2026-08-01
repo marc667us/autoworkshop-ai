@@ -1,27 +1,31 @@
 # Current task
 
-## ▶ NEXT: Slice B — the API layer and the screens
+## ▶ NEXT: Slice C — mechanic directory opt-in screen · SMALL
 
-**The SCHEMA half is done and committed** (migrations 024, 025, 026 — see below).
-What remains is everything above the database:
+Section 3 of `.claude/NEXT_SESSION_START_HERE.md`. A workshop needs a settings
+screen to publish/withdraw its directory listing and edit the consented fields.
+Keep it a COPY, never a view over `core.organization_profile` — the header of
+migration 021 explains why that boundary matters.
 
-1. `apps/api/src/catalogue/` — a supplier-catalogue module on `UserGuard` +
-   `withUser` (copy `apps/api/src/marketplace/`, which is the worked example of a
-   NOT-tenant-scoped module). Endpoints: apply to list a supplier · my suppliers ·
-   part CRUD · fitment CRUD · admin publish/unpublish/verify.
-   ⚠️ The admin routes must set `app.current_role`; they work at the database
-   level now, but only because 025 taught the policies the app's role name.
-2. `apps/supplier-web` — a catalogue screen. The app has exactly ONE real screen
-   today (`/orders-and-delivery/new-orders`); everything else is the placeholder.
-3. `apps/admin-web` — the publish queue: applications and draft parts awaiting a
-   decision, with approve/withdraw.
-4. ⚠️ **A supplier cannot edit fitments on a PUBLISHED part** (026). The screen
-   must say so and offer the reachable path — request withdrawal — or the rule
-   becomes a wall. `verify/026` check 6 walks that path; the UI has to expose it.
+Then Slice D (deferred items): slice 7b variation control · slice 9 QC · MinIO
+evidence upload · `organization_pricing` screen · repo-wide RLS org-scoping.
 
-**Run `bash scripts/start-session.sh` first.** It kills stale dev servers (`pkill` does
-NOT work on Windows), proves the ports are free, checks Docker and applies pending
-migrations. It deliberately starts nothing.
+## Slice B — COMPLETE 2026-08-01 (schema + API + screens)
+
+**A part can now reach the public marketplace without a developer.** Proven end
+to end: supplier adds a draft on screen -> it appears in the admin queue ->
+admin publishes -> an anonymous buyer sees it on `/api/v1/public/parts`.
+
+- API: `apps/api/src/catalogue/` — supplier routes on `UserGuard` + `withUser`,
+  admin routes on `TenantGuard` + `withTenant`.
+  ⚠️ **The guard choice is load-bearing, not stylistic.** `withTenant` is the
+  ONLY path that sets `app.current_role`. An admin route on `UserGuard` would
+  return 200 and change nothing — migration 025's defect, one layer up.
+- Screens: supplier `/products/product-catalogue`, admin
+  `/catalogue-and-content/products`. Neither needed a navigation change; the
+  approved trees already carried both routes.
+- Proofs: `packages/auth/verify/probe-catalogue.mjs` **33/33** ·
+  `apps/e2e/verify/verify-catalogue-screens.mjs` **14/14**.
 
 ## Slice B schema — SHIPPED 2026-08-01, do not rebuild
 

@@ -8,6 +8,7 @@ import { HealthController } from './health/health.controller';
 import { IdentityModule } from './identity/identity.module';
 import { PublicModule } from './public/public.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
+import { CatalogueModule } from './catalogue/catalogue.module';
 import { RepairModule } from './repair/repair.module';
 
 /**
@@ -28,6 +29,7 @@ import { RepairModule } from './repair/repair.module';
     CoreModule,
     PublicModule,
     MarketplaceModule,
+    CatalogueModule,
     RepairModule,
   ],
   controllers: [HealthController],

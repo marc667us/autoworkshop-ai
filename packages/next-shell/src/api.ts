@@ -47,7 +47,13 @@ export type ApiResult<T> =
        */
       reason: 'unauthenticated' | 'forbidden' | 'notFound' | 'invalid' | 'unavailable';
       status?: number;
-      /** Only set for `invalid`. Safe to show: it describes the input, not the system. */
+      /**
+       * Set for `invalid`, and for `forbidden` ON WRITES. Safe to show: these
+       * messages describe the INPUT or the RULE, never the system.
+       *
+       * `forbidden` carries it because a refusal that names no alternative reads
+       * as a broken screen — see the note at the 403 branch in `apiWrite`.
+       */
       message?: string;
     };
 
@@ -235,7 +241,21 @@ async function apiWrite<T>(
       case 401:
         return { ok: false, reason: 'unauthenticated', status: 401 };
       case 403:
-        return { ok: false, reason: 'forbidden', status: 403 };
+        // ⚠️ THE MESSAGE IS CARRIED ON A WRITE-403 TOO, and this was a real gap.
+        // Slice B's most useful refusals are 403s from a column guard, and they
+        // are written to name the way forward — "this part is published, so its
+        // fitments are public and only an administrator may change them. Ask an
+        // administrator to withdraw the part…". Dropping the body turned that
+        // into "you do not have access to this", which states the problem and
+        // hides the solution. A rule whose escape hatch is invisible is a wall,
+        // which is the most expensive defect class in this repository.
+        //
+        // It does NOT loosen the deliberate vagueness of `describeApiFailure`,
+        // which still says nothing specific by default. This only makes the
+        // API's own sentence AVAILABLE to a caller that knows its 403s explain
+        // rules rather than reveal existence — and in this API they cannot
+        // reveal existence, because a row the caller may not see answers 404.
+        return { ok: false, reason: 'forbidden', status: 403, message: detail };
       case 404:
         return { ok: false, reason: 'notFound', status: 404 };
       case 400:
