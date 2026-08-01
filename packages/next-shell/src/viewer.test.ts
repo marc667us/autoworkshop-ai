@@ -11,6 +11,9 @@ import {
   navRoleFor,
   viewerLabels,
   NO_GRANTS,
+  organizationsFromMemberships,
+  rolesFromMemberships,
+  holdsRoleInActiveOrganization,
   type ViewerDescription,
 } from './viewer-contract';
 
@@ -349,5 +352,125 @@ describe('viewerLabels — the signed-out contract the account control depends o
       memberships: [],
     } as never);
     expect(labels.userLabel).toBe('Ama Mensah');
+  });
+});
+
+/**
+ * The two switcher option lists — the pure half of the control group that
+ * `ViewerSwitchers` mounts in all seven apps.
+ *
+ * `organizationsFromMemberships` shipped with T-0016 and had NO test at all
+ * until the role switcher was rolled out beside it, which is worth stating
+ * plainly: the dedupe it exists to perform was never asserted.
+ *
+ * What CANNOT be tested here is the security property, and that is by design —
+ * neither function is the control. `resolveTenantContext` refuses an unheld
+ * organisation or role, and its 8 tests in `apps/api` are where that lives.
+ * These guard the list a human is OFFERED.
+ */
+describe('switcher options — what the viewer is offered', () => {
+  /** `/me` returns one row per organization AND branch AND role. */
+  const memberships = [
+    { organizationId: 'o1', organizationName: 'Abossey Motors', branchId: 'b1', branchName: 'Main', roleName: 'technician' },
+    { organizationId: 'o1', organizationName: 'Abossey Motors', branchId: 'b2', branchName: 'Spintex', roleName: 'technician' },
+    { organizationId: 'o1', organizationName: 'Abossey Motors', branchId: 'b1', branchName: 'Main', roleName: 'workshop_supervisor' },
+    { organizationId: 'o2', organizationName: 'Tema Auto', branchId: null, branchName: null, roleName: 'technician' },
+  ];
+
+  it('offers each organization once, however many branches and roles it holds', () => {
+    // Four rows, two organizations. Feeding the rows straight to a <select>
+    // renders "Abossey Motors" three times, which reads as a bug and makes the
+    // switcher look like it has choices it does not.
+    expect(organizationsFromMemberships(memberships)).toEqual([
+      { id: 'o1', name: 'Abossey Motors' },
+      { id: 'o2', name: 'Tema Auto' },
+    ]);
+  });
+
+  it('offers each role once per organization, not once per branch', () => {
+    // `technician` is held at two branches of o1. It is ONE choice — branch is
+    // not something this control selects. A duplicate option would be a control
+    // whose second copy silently does nothing.
+    expect(rolesFromMemberships(memberships, 'o1')).toEqual([
+      { name: 'technician', label: 'Technician' },
+      { name: 'workshop_supervisor', label: 'Workshop supervisor' },
+    ]);
+  });
+
+  /**
+   * 🔴 THE REGRESSION THIS FUNCTION'S SIGNATURE EXISTS TO PREVENT — found by
+   * Codex on the rollout diff and inherited from the original inline
+   * implementation, which deduplicated across ALL memberships.
+   *
+   * Every request sends `x-organization-id` AND `x-role-name`, and
+   * `resolveTenantContext` requires a membership matching BOTH. Offering a role
+   * held only in ANOTHER organization therefore offers a pair that cannot
+   * exist: choosing it makes every subsequent request refused, by a control
+   * that looks like it worked.
+   */
+  it('SCOPING: never offers a role the viewer holds only in ANOTHER organization', () => {
+    // `workshop_supervisor` is held in o1 only. With o2 active it must not
+    // appear, because (o2, workshop_supervisor) is not a membership.
+    expect(rolesFromMemberships(memberships, 'o2')).toEqual([
+      { name: 'technician', label: 'Technician' },
+    ]);
+  });
+
+  it('SCOPING: an organization the viewer does not hold offers nothing', () => {
+    // Fails closed. The switcher renders nothing rather than every role.
+    expect(rolesFromMemberships(memberships, 'o-not-mine')).toEqual([]);
+  });
+
+  it('labels a role the mapping has never seen rather than dropping it', () => {
+    // A role added to `identity.memberships` must never appear as a blank
+    // option. `roleLabel` derives the text instead of looking it up, so a new
+    // role is readable the day it exists — even one with no navigation tree,
+    // which `navRoleFor` correctly resolves to the workspace default.
+    expect(rolesFromMemberships([{ organizationId: 'o1', roleName: 'brand_new_role' }], 'o1')).toEqual([
+      { name: 'brand_new_role', label: 'Brand new role' },
+    ]);
+  });
+
+  /**
+   * The header pair, found by Codex on the second review pass.
+   *
+   * `x-organization-id` and `x-role-name` were each validated against ANY
+   * membership, so both could pass while the COMBINATION existed nowhere. The
+   * API refuses such a pair — correctly — and the visible result is a shell
+   * that renders normally while every page's data call fails.
+   */
+  describe('holdsRoleInActiveOrganization — the pair, not either half', () => {
+    const viewer = { organizationId: 'o1', memberships };
+
+    it('accepts a role held in the ACTIVE organization', () => {
+      expect(holdsRoleInActiveOrganization(viewer, 'workshop_supervisor')).toBe(true);
+    });
+
+    it('REFUSES a role held only in another organization', () => {
+      // The defect: `workshop_supervisor` is held in o1 only, so with o2 active
+      // the pair (o2, workshop_supervisor) has no membership behind it. A
+      // per-header check passed this, because the role does exist somewhere.
+      expect(holdsRoleInActiveOrganization({ organizationId: 'o2', memberships }, 'workshop_supervisor')).toBe(
+        false,
+      );
+    });
+
+    it('refuses a role the viewer does not hold at all', () => {
+      expect(holdsRoleInActiveOrganization(viewer, 'platform_administrator')).toBe(false);
+    });
+
+    it('refuses everything for a viewer with no memberships', () => {
+      // Fails closed: the header is dropped and the API applies its own
+      // default, rather than a request that is certain to be refused.
+      expect(holdsRoleInActiveOrganization({ organizationId: 'o1', memberships: [] }, 'technician')).toBe(false);
+    });
+  });
+
+  it('returns nothing for a viewer with no memberships', () => {
+    // Below the switchers' own two-option threshold, so nothing renders. A
+    // viewer in this state is signed in but holds no membership — the API
+    // gives them no tenant context either.
+    expect(organizationsFromMemberships([])).toEqual([]);
+    expect(rolesFromMemberships([], 'o1')).toEqual([]);
   });
 });

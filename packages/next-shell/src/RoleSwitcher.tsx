@@ -60,6 +60,25 @@ export function RoleSwitcher({
       <select
         id="aw-role-switcher"
         name="roleName"
+        /**
+         * ⚠️ `key` FORCES A FRESH MOUNT WHEN THE RESOLVED ROLE CHANGES, and
+         * without it this control DISPLAYS THE WRONG ROLE until a hard reload.
+         *
+         * Measured in a browser 2026-08-01: choose "Technician", the action
+         * stores it, the layout revalidates, and the navigation correctly
+         * becomes the technician tree — while this select still read
+         * "Acting as Platform administrator". `defaultValue` initialises an
+         * UNCONTROLLED input at mount; React does not re-apply it to an
+         * existing DOM node, so a re-render restores nothing and the user's own
+         * selection is discarded on reconciliation. A reload built the DOM
+         * fresh and showed the right value, which is what made it look like it
+         * worked.
+         *
+         * A control that names one role while the navigation shows another is
+         * the same nav/router divergence `packages/navigation` exists to
+         * prevent, wearing the badge of the thing that is supposed to fix it.
+         */
+        key={activeRole}
         defaultValue={activeRole}
         onChange={() => formRef.current?.requestSubmit()}
         style={{

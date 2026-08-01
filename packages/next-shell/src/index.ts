@@ -13,7 +13,15 @@ export { currentViewer, viewerGrants, viewerRole } from './viewer';
  * to hardcode the expected values, at which point the test stops testing the
  * model it is meant to guard.
  */
-export { grantsFor, navRoleFor, viewerLabels, NO_GRANTS, organizationsFromMemberships } from './viewer-contract';
+export {
+  grantsFor,
+  navRoleFor,
+  viewerLabels,
+  NO_GRANTS,
+  organizationsFromMemberships,
+  rolesFromMemberships,
+  holdsRoleInActiveOrganization,
+} from './viewer-contract';
 export { viewerHasSession } from './viewer';
 export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
 export { requireWorkspaceAccess } from './require-access';
@@ -33,6 +41,11 @@ export { RoleSwitcher } from './RoleSwitcher';
 // 'use client' module — see role-label.ts.
 export { roleLabel } from './role-label';
 export type { RoleOption } from './RoleSwitcher';
-export { setActiveRoleAction } from './set-role-action';
+export { setActiveRoleAction, setActiveRoleFromFormAction } from './set-role-action';
+/**
+ * Both switchers as ONE server component, so all seven app layouts mount the
+ * identical control group instead of each keeping its own copy.
+ */
+export { ViewerSwitchers } from './ViewerSwitchers';
 export { activeRoleName, ACTIVE_ROLE_COOKIE } from './active-role';
 export { activeRoleHeader } from './viewer';

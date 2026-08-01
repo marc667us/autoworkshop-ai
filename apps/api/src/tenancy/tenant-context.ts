@@ -11,6 +11,10 @@
  * a validated Keycloak token plus a membership lookup. There is deliberately
  * no constructor path that accepts a client-supplied tenant id.
  */
+// Ranks roles for the DEFAULT selection only. Not an authorization decision:
+// everything it ranks is already a membership the server has proved.
+import { rolePrecedence } from '../authz/permission-matrix';
+
 export interface TenantContext {
   readonly tenantId: string;
   readonly organizationId: string;
@@ -140,8 +144,23 @@ export function resolveTenantContext(params: {
     // Picking `active[0]` unsorted would depend on row order, and a viewer whose
     // tenant silently changed between two requests is far worse than an
     // arbitrary-but-fixed choice.
-    selected = [...active].sort((a, b) =>
-      a.organizationId.localeCompare(b.organizationId),
+    //
+    // ⚠️ THE SECOND KEY IS NOT DECORATION. Sorting on the organisation ALONE
+    // left two roles in the SAME organisation comparing equal, and `sort` is
+    // stable, so the winner was database row order — a user holding
+    // `workshop_owner` and `technician` at one workshop could resolve as the
+    // TECHNICIAN and see less than they hold. Ranking by role authority makes
+    // the default the STRONGEST role held, which grants nothing (every
+    // candidate is an already-proved membership) and is what makes stacking
+    // roles on one account safe. The role switcher is how they go the other way.
+    //
+    // ORGANISATION STAYS THE PRIMARY KEY, deliberately: the tie-break may only
+    // choose between roles WITHIN one organisation, never move the request to a
+    // different tenant.
+    selected = [...active].sort(
+      (a, b) =>
+        a.organizationId.localeCompare(b.organizationId) ||
+        rolePrecedence(a.roleName) - rolePrecedence(b.roleName),
     )[0];
   }
 

@@ -111,3 +111,64 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Obj
 export function permissionsForRole(roleName: string): readonly string[] {
   return Object.hasOwn(ROLE_PERMISSIONS, roleName) ? ROLE_PERMISSIONS[roleName]! : [];
 }
+
+/**
+ * Role authority, STRONGEST FIRST — the tie-break for the default selection in
+ * `resolveTenantContext`.
+ *
+ * ⚠️ WHY THIS IS NEEDED, AND WHY IT IS NOT COSMETIC. The default sorts
+ * memberships by ORGANISATION ID ALONE. Two roles in the SAME organisation
+ * therefore compare equal, and `Array.prototype.sort` is stable — so the winner
+ * was whatever order the database returned the rows in. A user holding both
+ * `workshop_owner` and `technician` at one workshop could resolve as the
+ * TECHNICIAN and see less than they hold, with nothing on screen to explain it,
+ * and the result could differ between two identical requests after a VACUUM.
+ *
+ * That is precisely why the owner account was given ONE strong role instead of
+ * several weak ones (2026-07-31). Stacking roles is only safe once the default
+ * is deterministic, which is what this list makes it.
+ *
+ * ⚠️ IT GRANTS NOTHING. Every candidate it ranks is already an active
+ * membership the server proved from the validated token subject. Choosing the
+ * strongest of them cannot reach a role the user does not hold — and the role
+ * switcher exists so they can deliberately act as a weaker one. Compare the
+ * REQUESTED-role path, which throws rather than picking: there a client named
+ * something, and silently substituting would hide an authorization probe. Here
+ * nothing was named, so there is nothing to contradict.
+ *
+ * ORDERING IS SOURCED, not invented: `07.txt` pt2 §50 describes owner as "full
+ * workshop governance, staff, financial and reporting access" and each
+ * subsequent role as a narrower slice. `platform_administrator` leads because
+ * §32 gives it the administration surface in its entirety.
+ *
+ * An UNRANKED role sorts LAST rather than first — a role added to the database
+ * before it is added here must never silently outrank a governance role.
+ */
+export const ROLE_PRECEDENCE: readonly string[] = Object.freeze([
+  'platform_administrator',
+  'workshop_owner',
+  'supplier_owner',
+  'fleet_administrator',
+  'workshop_manager',
+  'workshop_supervisor',
+  'quality_control_inspector',
+  'insurance_assessor',
+  'reception_staff',
+  'cashier',
+  'storekeeper',
+  'technician',
+  'towing_operator',
+  'customer',
+]);
+
+/**
+ * Rank for the tie-break: LOWER IS STRONGER, unknown roles last.
+ *
+ * `Number.MAX_SAFE_INTEGER` rather than `Infinity` so the value survives a JSON
+ * round trip if it is ever logged — `JSON.stringify(Infinity)` is `null`, and a
+ * null in a comparator is a silent zero.
+ */
+export function rolePrecedence(roleName: string): number {
+  const i = ROLE_PRECEDENCE.indexOf(roleName);
+  return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+}

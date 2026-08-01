@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { PERMISSIONS, ROLE_PERMISSIONS, permissionsForRole } from './permission-matrix';
+import {
+  PERMISSIONS,
+  ROLE_PERMISSIONS,
+  ROLE_PRECEDENCE,
+  permissionsForRole,
+  rolePrecedence,
+} from './permission-matrix';
 
 /**
  * Permission matrix (T-0004) — the mapping `viewerGrants()` will finally read.
@@ -98,6 +104,37 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
   it('every grantable role has a matrix entry', () => {
     const missing = GRANTABLE.filter((r) => !(r in ROLE_PERMISSIONS));
     expect(missing, 'grantable roles with no permission-matrix entry').toEqual([]);
+  });
+
+  it('every role in the matrix is RANKED for the default tie-break', () => {
+    // A role with no rank sorts LAST, which fails safe but is silent — and the
+    // symptom at the screen is a user resolving as a weaker role than they
+    // hold, with nothing to explain it. Two lists that must move together are
+    // exactly the pair that drifts, so assert it rather than remember it.
+    const unranked = Object.keys(ROLE_PERMISSIONS).filter((r) => !ROLE_PRECEDENCE.includes(r));
+    expect(unranked, 'roles with a permission entry but no precedence rank').toEqual([]);
+  });
+
+  it('the precedence list ranks no role that does not exist', () => {
+    // The other direction: a rank for a role nobody can hold reads as a
+    // supported configuration and quietly outranks real ones if it is ever
+    // seeded by hand.
+    const phantom = ROLE_PRECEDENCE.filter((r) => !(r in ROLE_PERMISSIONS));
+    expect(phantom, 'ranked roles with no permission-matrix entry').toEqual([]);
+  });
+
+  it('precedence puts governance above execution, not alphabetically', () => {
+    // The ordering is the whole point — a list that happened to be alphabetical
+    // would rank `cashier` above `workshop_owner`. Spot-check the pairs the
+    // owner account actually depends on (`07.txt` pt2 §50).
+    expect(rolePrecedence('platform_administrator')).toBeLessThan(rolePrecedence('workshop_owner'));
+    expect(rolePrecedence('workshop_owner')).toBeLessThan(rolePrecedence('workshop_manager'));
+    expect(rolePrecedence('workshop_manager')).toBeLessThan(rolePrecedence('technician'));
+    expect(rolePrecedence('reception_staff')).toBeLessThan(rolePrecedence('technician'));
+  });
+
+  it('an unknown role ranks LAST, never first', () => {
+    expect(rolePrecedence('not_a_role')).toBeGreaterThan(rolePrecedence('customer'));
   });
 
   it('every matrix entry is a role that can actually be granted', () => {

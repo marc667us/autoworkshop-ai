@@ -6,12 +6,7 @@ import {
   navRoleFor,
   viewerLabels,
   viewerHasSession,
-  OrganizationSwitcher,
-  RoleSwitcher,
-  roleLabel,
-  setActiveRoleAction,
-  setActiveOrganizationAction,
-  organizationsFromMemberships,
+  ViewerSwitchers,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction, switchUserAction } from './sign-out-action';
@@ -65,49 +60,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           switchUserAction={switchUserAction}
           signInHref="/api/auth/signin"
           signedIn={signedIn}
-          // T-0016. The options are the viewer's OWN memberships as the API
-          // reported them, so the list cannot offer an organisation they do not
-          // hold — and the API re-validates the choice regardless, refusing one
-          // that is not theirs rather than silently falling back. The switcher
-          // renders nothing when there is only one membership: a control that
-          // cannot change anything is worse than no control.
-          organizationSwitcher={
-            viewer ? (
-              // BOTH switchers share this slot rather than adding a second prop
-              // to WorkspaceShell, which all seven apps would then have to
-              // thread through. They are one control group to the user: "who am
-              // I acting as, and where".
-              <span style={{ display: 'inline-flex', gap: '0.5rem', alignItems: 'center' }}>
-                <OrganizationSwitcher
-                  organizations={organizationsFromMemberships(viewer.memberships)}
-                  activeId={viewer.organizationId}
-                  action={setActiveOrganizationAction}
-                />
-                {/*
-                  The ROLE switcher — one login acting as any role it holds,
-                  without signing out. Options are the viewer's OWN memberships
-                  as the API reported them, DEDUPLICATED because the same role in
-                  two organisations is one choice here; the organisation switcher
-                  beside it is what picks between them.
-
-                  It renders nothing for a viewer holding a single role, which is
-                  most of them. And it is NOT the control: the API refuses a role
-                  the user does not hold rather than downgrading to one they do.
-                */}
-                <RoleSwitcher
-                  roles={[...new Set(viewer.memberships.map((m) => m.roleName))].map((name) => ({
-                    name,
-                    label: roleLabel(name),
-                  }))}
-                  activeRole={viewer.activeRole}
-                  action={async (formData: FormData) => {
-                    'use server';
-                    await setActiveRoleAction(String(formData.get('roleName') ?? ''));
-                  }}
-                />
-              </span>
-            ) : null
-          }
+          // T-0016 + the 2026-07-31 role switcher, as ONE shared component so
+          // all seven apps mount the identical control group. Both halves list
+          // only the viewer's own memberships and both are re-validated by the
+          // API, which REFUSES an organisation or role the viewer does not hold
+          // rather than downgrading. See `ViewerSwitchers`.
+          organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
           counters={{
             'workshop.tasks.open': 7,
             'workshop.approvals.pending': 3,

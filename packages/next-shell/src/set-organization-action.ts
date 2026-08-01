@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { ACTIVE_ORG_COOKIE } from './active-organization';
+import { ACTIVE_ROLE_COOKIE } from './active-role';
 
 /**
  * Store which organization the viewer is working in — T-0016.
@@ -45,6 +46,24 @@ export async function setActiveOrganizationAction(formData: FormData): Promise<v
     secure: process.env['AUTH_URL']?.startsWith('https://') ?? false,
     maxAge: 60 * 60 * 24 * 365,
   });
+
+  // ⚠️ CHANGING ORGANIZATION CLEARS THE STORED ROLE, and without this the pair
+  // can be left half-changed. The two values travel together on every request
+  // (`x-organization-id` + `x-role-name`) and `resolveTenantContext` requires a
+  // membership matching BOTH — so keeping a role from the organization you just
+  // LEFT makes every subsequent request refused, with a switcher that appears
+  // to have worked.
+  //
+  // The mirror of the fix in `rolesFromMemberships`, which stops the role list
+  // offering a role from another organization. That one guards the role change;
+  // this one guards the organization change. Either alone leaves the other
+  // direction broken.
+  //
+  // Clearing is not a downgrade: the API then takes its own deterministic
+  // default in the new organization, which is the STRONGEST role held there
+  // (`ROLE_PRECEDENCE`). The viewer picks again from a list that now describes
+  // where they actually are.
+  store.delete(ACTIVE_ROLE_COOKIE);
 
   // Every screen is scoped by organization, so all of them are now stale.
   revalidatePath('/', 'layout');

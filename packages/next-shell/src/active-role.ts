@@ -38,3 +38,23 @@ export async function activeRoleName(): Promise<string | undefined> {
   const value = store.get(ACTIVE_ROLE_COOKIE)?.value?.trim();
   return value ? value : undefined;
 }
+
+/**
+ * The header WITHOUT the membership check — for the `/me` call itself.
+ *
+ * ⚠️ THE UNCHECKED VARIANT EXISTS BECAUSE THE CHECK NEEDS `/me`. `activeRoleHeader`
+ * in `viewer.ts` drops a role the viewer no longer holds, and to know that it
+ * must first fetch the viewer — so `/me` cannot use it without calling itself.
+ * Exactly the same reasoning, and the same pair of functions, as
+ * `rawOrganizationHeader`.
+ *
+ * Sending an unchecked value is safe: the API validates `x-role-name` against
+ * memberships proved from the token subject and REFUSES one the user does not
+ * hold. `fetchViewer` retries without the selection when that happens, so a
+ * stale cookie degrades to the API's own default rather than locking the viewer
+ * out of the shell that contains the switcher.
+ */
+export async function rawRoleHeader(): Promise<Record<string, string>> {
+  const role = await activeRoleName();
+  return role ? { 'x-role-name': role } : {};
+}

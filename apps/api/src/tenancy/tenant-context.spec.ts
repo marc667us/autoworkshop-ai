@@ -257,16 +257,79 @@ describe('resolveTenantContext — requestedRoleName', () => {
     ).toThrow(TenantResolutionError);
   });
 
-  it('without a request, behaviour is unchanged — no silent role change', () => {
+  it('without a request, the default is the STRONGEST role held', () => {
     const ctx = resolveTenantContext({
       userId: 'owner',
       memberships: owner,
       correlationId: 'c',
     });
-    // Same-organisation candidates compare equal, so the default is whatever
-    // the old sort produced. Asserting only that it IS one the user holds:
-    // pinning the exact winner would encode the very ambiguity this parameter
-    // exists to let a caller resolve.
-    expect(owner.map((m) => m.roleName)).toContain(ctx.activeRole);
+    // ⚠️ THIS ASSERTION USED TO BE `toContain(...)`, and the weakness was the
+    // point: same-organisation candidates compared EQUAL under a sort keyed on
+    // organisation alone, so the winner was database row order and no exact
+    // value could honestly be pinned. `rolePrecedence` is the second sort key
+    // that makes it answerable — the owner resolves as the administrator, not
+    // as the technician they also happen to be.
+    expect(ctx.activeRole).toBe('platform_administrator');
+  });
+
+  it('the default is stable however the rows arrive', () => {
+    // The defect this closes is invisible in a fixed fixture: `sort` is stable,
+    // so equal keys preserve input order and only a REORDERED input exposes it.
+    // Reversed, the old comparator returned `technician`.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [...owner].reverse(),
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('platform_administrator');
+  });
+
+  it('an UNRANKED role sorts last — it never outranks a governance role', () => {
+    // A role added to `identity.memberships` before it is added to
+    // `ROLE_PRECEDENCE` must fail the SAFE way. Ranking it first would let a
+    // new, unreviewed role name become the default for everyone holding it.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-1', roleName: 'brand_new_role' }),
+        membership({ organizationId: 'org-1', roleName: 'workshop_owner' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('workshop_owner');
+  });
+
+  it('the role tie-break NEVER moves the request to another organisation', () => {
+    // The property that makes the second sort key safe: organisation stays the
+    // PRIMARY key. A stronger role in a different organisation must not drag
+    // the request into that tenant — the caller would silently read another
+    // organisation's data. org-1 sorts first, so org-1's technician wins over
+    // org-2's administrator.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ tenantId: 'tenant-b', organizationId: 'org-2', roleName: 'platform_administrator' }),
+        membership({ tenantId: 'tenant-a', organizationId: 'org-1', roleName: 'technician' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(ctx.organizationId).toBe('org-1');
+    expect(ctx.tenantId).toBe('tenant-a');
+    expect(ctx.activeRole).toBe('technician');
+  });
+
+  it('SECURITY: the default still cannot reach a role the user does not hold', () => {
+    // Precedence RANKS candidates; it never adds one. A user holding only
+    // `technician` resolves as `technician`, however high `workshop_owner`
+    // sits in the list.
+    const ctx = resolveTenantContext({
+      userId: 'tech',
+      memberships: [
+        membership({ organizationId: 'org-1', roleName: 'technician' }),
+        membership({ organizationId: 'org-1', roleName: 'workshop_owner', status: 'revoked' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('technician');
   });
 });

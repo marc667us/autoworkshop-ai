@@ -1,4 +1,9 @@
 import type { PermissionKey, RoleId } from '@autoworkshop/navigation';
+// A pure string helper in its own server-safe module. Importing it here keeps
+// this file free of any client boundary — see the header of `role-label.ts`
+// for what happened the last time a pure function lived in a `'use client'`
+// module and a server component called it.
+import { roleLabel } from './role-label';
 
 /**
  * The viewer contract, as PURE DATA AND PURE FUNCTIONS.
@@ -191,6 +196,85 @@ export function organizationsFromMemberships(
     if (seen.has(m.organizationId)) continue;
     seen.add(m.organizationId);
     out.push({ id: m.organizationId, name: m.organizationName });
+  }
+  return out;
+}
+
+/**
+ * The DISTINCT roles a viewer may act as IN ONE ORGANIZATION.
+ *
+ * ⚠️ SCOPED TO THE ACTIVE ORGANIZATION, AND THAT IS THE WHOLE CORRECTNESS
+ * ARGUMENT. Every API call sends `x-organization-id` AND `x-role-name`
+ * together (`api.ts`), and `resolveTenantContext` requires a membership
+ * matching BOTH — it refuses a role the viewer holds only in a DIFFERENT
+ * organization, which is a rule with its own test. So a switcher listing roles
+ * from across all memberships can offer a pair that cannot exist: pick
+ * `workshop_manager` while `Abossey Motors` is active and every subsequent
+ * request is refused until you also change organization. The refusal is
+ * correct; OFFERING the choice that causes it is not.
+ *
+ * Codex found this on the rollout diff, rated MEDIUM, and it was inherited from
+ * the original inline implementation rather than introduced by the extraction —
+ * the global `new Set(...)` shipped in `workshop-web` on 2026-07-31. It only
+ * became reachable when a second organization existed.
+ *
+ * Deduplicated WITHIN that organization: `/me` returns one row per BRANCH as
+ * well, so a technician at two branches of one workshop is still one choice.
+ *
+ * ⚠️ A USABILITY FILTER, NEVER AN AUTHORIZATION ONE. It reads memberships `/me`
+ * reported, so it cannot offer a role the viewer does not hold — but the API
+ * re-checks against memberships proved from the validated token subject and
+ * REFUSES rather than downgrading. Rendering fewer options protects nothing on
+ * its own (CLAUDE.md §8, `05.txt` "hidden is not secure").
+ *
+ * Pure, so it can be asserted without a Next runtime.
+ */
+/**
+ * Does the viewer hold this role IN THE ORGANIZATION THEY ARE ACTUALLY IN?
+ *
+ * ⚠️ THE PAIR IS THE UNIT, NOT EITHER HALF. Every API call sends
+ * `x-organization-id` and `x-role-name`, and each header used to be validated
+ * on its own: the organization against any membership, the role against any
+ * membership. Both can pass while the COMBINATION exists nowhere — hold
+ * `workshop_manager` in org-2 and `technician` in org-1, select org-1, and
+ * `(org-1, workshop_manager)` is sent and refused by the API.
+ *
+ * Codex found this on the second review pass. It is not reachable through the
+ * UI any more — the switcher only offers roles held in the active organization,
+ * and changing organization clears the stored role — but it is reachable the
+ * way stale selections always are: a membership REVOKED while the user is
+ * signed in. `/me` recovers by retrying without the selection, so the shell
+ * renders and looks healthy while every page's data call is refused. A visibly
+ * working application whose content is all errors is worse than a clear
+ * failure.
+ *
+ * Anchored on the RESOLVED organization (`viewer.organizationId`) rather than
+ * the cookie: that is the organization the API actually chose for this render,
+ * so it is the one the next request will be judged against.
+ *
+ * Pure, so the rule can be asserted without a Next runtime — which is the
+ * reason it lives here rather than inline in `viewer.ts`.
+ */
+export function holdsRoleInActiveOrganization(
+  viewer: Pick<ViewerDescription, 'organizationId' | 'memberships'>,
+  roleName: string,
+): boolean {
+  return viewer.memberships.some(
+    (m) => m.roleName === roleName && m.organizationId === viewer.organizationId,
+  );
+}
+
+export function rolesFromMemberships(
+  memberships: readonly { organizationId: string; roleName: string }[],
+  organizationId: string,
+): Array<{ name: string; label: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ name: string; label: string }> = [];
+  for (const m of memberships) {
+    if (m.organizationId !== organizationId) continue;
+    if (seen.has(m.roleName)) continue;
+    seen.add(m.roleName);
+    out.push({ name: m.roleName, label: roleLabel(m.roleName) });
   }
   return out;
 }

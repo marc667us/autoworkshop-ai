@@ -57,6 +57,19 @@ export function OrganizationSwitcher({
       <select
         id="aw-org-switcher"
         name="organizationId"
+        /**
+         * ⚠️ SAME FIX AS `RoleSwitcher`, AND THE SAME LATENT DEFECT — this one
+         * was simply never exercised, because no account held two organisations
+         * until the seed data grew one.
+         *
+         * `defaultValue` initialises an UNCONTROLLED input at mount only. After
+         * the server action revalidates the layout, React reconciles the
+         * existing node and does not re-apply it, so the select falls back to
+         * the value it was born with and names the organisation the viewer just
+         * LEFT. Re-keying on the resolved id remounts it, so what it displays is
+         * always what the server actually resolved.
+         */
+        key={activeId}
         defaultValue={activeId}
         onChange={() => formRef.current?.requestSubmit()}
         style={{

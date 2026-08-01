@@ -47,3 +47,21 @@ export async function setActiveRoleAction(roleName: string): Promise<void> {
   // to prevent.
   revalidatePath('/', 'layout');
 }
+
+/**
+ * The same action in the shape a `<form action={...}>` needs.
+ *
+ * WHY IT LIVES HERE RATHER THAN IN EACH APP'S LAYOUT. `RoleSwitcher` posts a
+ * form, so it needs `(formData) => …`; `setActiveRoleAction` takes a string
+ * because that is the useful signature for any other caller. The gap was
+ * previously closed by an inline `'use server'` closure written out in
+ * `workshop-web`'s layout — which is exactly the thing that does not survive
+ * being copied into six more layouts, because a rule that exists in seven
+ * places drifts in six of them.
+ *
+ * `setActiveOrganizationAction` already has this shape, so both switchers now
+ * take a plain exported action and the app layouts declare no actions at all.
+ */
+export async function setActiveRoleFromFormAction(formData: FormData): Promise<void> {
+  await setActiveRoleAction(String(formData.get('roleName') ?? ''));
+}

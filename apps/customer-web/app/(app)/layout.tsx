@@ -6,6 +6,7 @@ import {
   navRoleFor,
   viewerLabels,
   viewerHasSession,
+  ViewerSwitchers,
 } from '@autoworkshop/next-shell';
 import { signOutAction } from '../sign-out-action';
 
@@ -50,6 +51,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           signOutAction={signOutAction}
           signInHref="/api/auth/signin"
           signedIn={signedIn}
+          // T-0016 + the 2026-07-31 role switcher, as ONE shared component so
+          // all seven apps mount the identical control group. Both halves list
+          // only the viewer's own memberships and both are re-validated by the
+          // API, which REFUSES an organisation or role the viewer does not hold
+          // rather than downgrading. See `ViewerSwitchers`.
+          organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
             { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },

@@ -14,7 +14,75 @@ Then continue with this file, then `.claude/CURRENT_TASK.md`.
 
 ---
 
-## 📍 SESSION CLOSE 2026-07-31 — READ THIS BLOCK FIRST, IT IS THE NEWEST
+## 📍 SESSION 2026-08-01 — READ THIS BLOCK FIRST, IT IS THE NEWEST
+
+**✅ RENDER PRODUCTION IS BACK.** The free-tier hours reset at 00:00 on 1 Aug exactly as
+the owner said. The Release workflow had been red for ONE reason: Render's deploy API
+answers **400** for a suspended service — `checks` and `image` were green throughout.
+Re-ran the failed deploy job alone (`gh run rerun <id> --failed`) and it went green.
+Measured live: `/` 200, `/home/dashboard` 200 with real content and no server-side
+exception, `/nonexistent-page` 404.
+
+⚠️ **Migrations 008–023 are STILL LOCAL ONLY.** Production has none of the marketplace
+schema. Apply them wherever the production database lives BEFORE opening the marketplace
+screens there, or every marketplace route fails on a missing table.
+⚠️ **`RENDER_API_KEY` still unrotated** since the 07-27 leak.
+
+**✅ ROLE-SWITCHER ROLLOUT COMPLETE — and it was INERT before today.**
+
+Both switchers now live in ONE shared server component,
+`packages/next-shell/src/ViewerSwitchers.tsx`, mounted in **all seven** apps. It replaced
+~35 duplicated lines including an inline `'use server'` closure in `workshop-web`.
+
+🔴 **FOUR DEFECTS, THREE FOUND ONLY BY LOADING A PAGE.** The role switcher shipped
+2026-07-31 did not work, and nothing could have told you: no account held two roles, so
+the control renders nothing and was never exercised.
+
+1. **`/me` never sent `x-role-name`.** It sent `x-organization-id` but not the role, so
+   `viewer.activeRole` was ALWAYS the API's default. The switcher re-rendered showing the
+   old role and `navRoleFor` kept building the old role's navigation. Worse than inert:
+   PAGES resolved as the chosen role while the NAVIGATION resolved as the default — the
+   exact nav/router divergence the organization header was added to prevent.
+2. **`defaultValue` on an uncontrolled `<select>` applies at MOUNT ONLY.** After the
+   action the navigation was the technician tree while the control still read "Acting as
+   Platform administrator"; only a hard reload corrected it. Fixed with `key={activeRole}`
+   — and `OrganizationSwitcher` had the identical latent bug, never exercised.
+3. **The role list ignored the organization** (Codex, MEDIUM). Every request sends org AND
+   role and the API requires a membership matching BOTH, so offering a role held only in
+   another organization offered a pair that cannot exist. Now scoped.
+4. **The two headers were validated independently** (Codex, 2nd pass). Each passed against
+   *any* membership while the PAIR existed nowhere — reachable when a membership is
+   REVOKED mid-session: the shell recovers via the retry and looks healthy while every
+   page's data call is refused. Now `holdsRoleInActiveOrganization` checks the pair.
+
+**Plus the blocker the 07-31 handover documented:** `resolveTenantContext` sorted on
+`organizationId` ALONE, so two roles in one organisation compared equal and the winner fell
+out of database row order — the owner could resolve as the WEAKER of their own roles. Added
+`ROLE_PRECEDENCE` as a second sort key: the default is now the strongest role held.
+Organisation stays the PRIMARY key, so the tie-break can never move a request to another
+tenant. That is what makes stacking roles on one account safe, so `owner@` is now seeded
+into `platform_administrator` + `workshop_owner` + `technician` locally.
+
+**⚠️ A HARNESS BUG NEARLY REPORTED AS A PRODUCT DEFECT.** The first verify run said the
+switcher was missing. It was not — `if (await count())` on the Keycloak button does NOT
+auto-wait, so the run continued as an ANONYMOUS visitor and every assertion failed for the
+wrong reason. `verify-role-switcher.mjs` now `waitFor`s the button AND asserts the session
+is real before measuring. Its `navText` also read the 46-char TOP BAR rather than the
+219-char role tree, so the "did switching change anything" control could never have failed.
+
+**Verified at close:** `pnpm -r lint` 0 · `pnpm -r typecheck` 0 · **596 unit tests** ·
+Playwright **138 passed / 2 skipped** (baseline) · `node verify/verify-role-switcher.mjs`
+**17/17**, driving two identities in two apps. Codex: CRITICAL 0, HIGH 0, LOW 0 across two
+passes; both MEDIUMs fixed. Security review: no HIGH/MEDIUM findings.
+
+**▶ RESUME HERE:** Slice B — supplier + admin catalogue management (section 3).
+
+⚠️ Dev servers LEFT RUNNING at close: API :4000, workshop-web :3001, supplier-web :3002.
+`bash scripts/start-session.sh` kills them and proves the ports are free.
+
+---
+
+## 📍 SESSION CLOSE 2026-07-31 — the previous block
 
 **Tip `32613ea`, tree clean, everything PUSHED. CI ✅ · Security CI ✅ · Release ❌
 (Render suspension only — expected, see the Render block below).**

@@ -1,9 +1,15 @@
 import { cache } from 'react';
 import type { PermissionKey, RoleId, WorkspaceId } from '@autoworkshop/navigation';
 import { apiBaseUrl, workspaceAuth } from '@autoworkshop/auth';
-import { grantsFor, navRoleFor, NO_GRANTS, type ViewerDescription } from './viewer-contract';
+import {
+  grantsFor,
+  holdsRoleInActiveOrganization,
+  navRoleFor,
+  NO_GRANTS,
+  type ViewerDescription,
+} from './viewer-contract';
 import { activeOrganizationId, rawOrganizationHeader } from './active-organization';
-import { activeRoleName } from './active-role';
+import { activeRoleName, rawRoleHeader } from './active-role';
 
 /**
  * WHO THE VIEWER IS — resolved from a validated Keycloak session (T-0005).
@@ -42,7 +48,7 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
   // renewing it. Either way the viewer is unauthenticated for this render.
   if (!accessToken) return null;
 
-  // Two attempts: with the stored organization, then WITHOUT it.
+  // Two attempts: with the stored SELECTION, then WITHOUT it.
   //
   // ⚠️ THE RETRY IS A LOCKOUT FIX, not belt and braces (Codex, HIGH). The API
   // THROWS when a requested organization is not among the viewer's active
@@ -51,8 +57,10 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
   // membership in A is later revoked, and they still belong to B. Every request
   // then carries a now-invalid id, `/me` fails, the shell cannot render, and the
   // switcher they would have used to choose B never appears. Retrying without
-  // the header lets them back in on the API's own default.
-  const attempt = async (withOrg: boolean): Promise<Response> =>
+  // the header lets them back in on the API's own default. The role selection
+  // can go stale the same way — a role revoked mid-session — so it is dropped
+  // by the same retry.
+  const attempt = async (withSelection: boolean): Promise<Response> =>
     fetch(`${apiBaseUrl()}/api/v1/me`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -62,7 +70,24 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
         // organisation while the table below listed another's customers. That
         // is the nav/router divergence this file already exists to prevent,
         // one layer down.
-        ...(withOrg ? await rawOrganizationHeader() : {}),
+        ...(withSelection ? await rawOrganizationHeader() : {}),
+        // ⚠️ AND THE ROLE, FOR EXACTLY THE SAME REASON — this was MISSING, and
+        // its absence made the role switcher INERT in the shell.
+        //
+        // Measured in a browser 2026-08-01, not inferred: selecting a role wrote
+        // `aw.activeRole` and `apiGet` duly sent `x-role-name` on every PAGE
+        // request, but `/me` did not — so `viewer.activeRole` was always the
+        // API's default. The switcher therefore re-rendered showing the OLD
+        // role, `navRoleFor(viewer.activeRole)` kept building the OLD role's
+        // navigation, and the whole control changed nothing visible.
+        //
+        // Worse than inert: the pages resolved as the CHOSEN role while the
+        // navigation resolved as the default one — the precise nav/router
+        // divergence the organization header above was added to prevent.
+        //
+        // It survived a full session because no account held two roles: the
+        // switcher renders nothing below two options, so it was never exercised.
+        ...(withSelection ? await rawRoleHeader() : {}),
       },
       // The viewer's role and permissions are per-request facts. Next caches
       // fetches by default; caching this one would serve one user's grants to
@@ -73,8 +98,11 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
   let response: Response;
   try {
     response = await attempt(true);
-    // Only worth a second call if a selection was actually sent.
-    if (!response.ok && (await activeOrganizationId())) {
+    // Only worth a second call if a selection was actually sent — EITHER of
+    // them. Checking the organization alone left a stale ROLE cookie with no
+    // way back: `/me` would fail on every render and the shell containing the
+    // switcher could never appear.
+    if (!response.ok && ((await activeOrganizationId()) || (await activeRoleName()))) {
       response = await attempt(false);
     }
   } catch {
@@ -208,6 +236,10 @@ export async function activeRoleHeader(
   const viewer = await fetchViewer(workspaceId);
   // No viewer means no session; the call fails on the token regardless.
   if (!viewer) return {};
-  const holds = viewer.memberships.some((m) => m.roleName === role);
-  return holds ? { 'x-role-name': role } : {};
+  // ⚠️ CHECKED AS A PAIR, against the organization the API actually resolved —
+  // NOT against any membership anywhere. Validating the two headers
+  // independently let both pass while the combination existed nowhere, so a
+  // membership revoked mid-session left the shell rendering happily while every
+  // page's data call was refused. See `holdsRoleInActiveOrganization`.
+  return holdsRoleInActiveOrganization(viewer, role) ? { 'x-role-name': role } : {};
 }
