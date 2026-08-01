@@ -299,6 +299,26 @@
       "standardFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "autoworkshop-mobile",
+      "name": "Mobile (Android)",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "redirectUris": [
+        "autoworkshop://auth",
+        "autoworkshop://auth/*",
+        "exp://localhost:8081/*",
+        "exp://127.0.0.1:8081/*"
+      ],
+      "webOrigins": []
     }
   ],
   "eventsEnabled": true,
