@@ -2,16 +2,51 @@
 
 ## ▶ NEXT: Slice D — remaining items
 
-Slice 7b variation control · slice 9 QC (must be done by somebody who did not do
-the work, `2.txt` §563) · MinIO evidence upload (**now unblocked** — MinIO was
-unreachable from the host until `d9845c3`) · repo-wide RLS org-scoping
-(outstanding issue 8).
+**Slice 7b variation control** · **MinIO evidence upload** (unblocked — MinIO was
+unreachable from the host until `d9845c3`) · **repo-wide RLS org-scoping**
+(outstanding issue 8) · **a QC SCREEN** (the API and schema are done; slice 9 has
+no UI yet, so the verdict can only be recorded through the API).
+
+⚠️ Slice 9's independence rule is enforced and proved, but a technician cannot
+yet SEE a quality inspection — `quality_control` is a stage on the board with no
+screen behind it. That is the next front-end piece.
 
 ⚠️ **Org-scoping now has a starting point.** Migration 027 introduced
 `identity.current_organization_id()` for ONE table. The repo-wide change is
 still open and still needs a plan before code — but the helper and its failure
 modes are now proven: unset GUC returns NULL and matches nothing, a non-uuid
 value RAISES rather than matching. Both fail closed.
+
+## Slice D — slice 9 QUALITY CONTROL COMPLETE 2026-08-01 (API + schema)
+
+Migrations **030** + **031**, `QualityService`, `QualityController`.
+`2.txt` §563: an INDEPENDENT inspection verifying the complaint was addressed and
+no new defect introduced.
+
+- 🔴 **Independence is enforced in POSTGRES**, not just the service.
+  `repair.user_worked_on_job_card()` spans four tables (executions, tasks, time
+  entries, parts) — evidence capture EXCLUDED, because photographing a car is
+  not repairing it — and `trg_qc_independence` refuses a self-inspection.
+- 🔴 **A PASS IS DERIVED FROM §563'S TWO ANSWERS**, never supplied by the caller.
+  `ck_qc_decision_consistent` makes "complaint not addressed + passed"
+  unreachable in the database.
+- ⚠️ `Boolean('false')` is TRUE — a coercing parse would turn "not addressed"
+  into a pass. Accepted values are enumerated instead.
+- 🔴 **CODEX FOUND FOUR WAYS ROUND 030, all the same shape — the rule was
+  enforced at the door and nowhere else.** Fixed in **031**: (1) the test session
+  was never tied to the job card, so a worker could name a card they never
+  touched and be checked against that; (2) `trg_qc_after_testing` fired on INSERT
+  only while `test_session_id` stayed updatable; (3) the SECURITY DEFINER
+  predicate was executable by PUBLIC — a cross-tenant "who worked on what"
+  oracle; (4) `ON DELETE CASCADE` erased decided inspections when a job card was
+  deleted, despite DELETE being revoked on the table.
+- Codex also found three gaps in `verify/030` itself. `verify/031` closes them:
+  all four predicate branches are now exercised individually **and a control
+  proves the predicate returns to false**, `UPDATE job_card_id` is tested, and
+  the cascade path is tested.
+- Proof: `verify/030` **13/13** · `verify/031` **14/14** · `quality.spec.ts`
+  **14/14** (including a drift check that `CAN_INSPECT` agrees with
+  `ROLE_TARGET_STAGES`).
 
 ## 🔴 OWNER DECISION NEEDED — pricing is invisible to the seeded owner identity
 

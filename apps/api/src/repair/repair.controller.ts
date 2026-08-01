@@ -22,6 +22,7 @@ import { ProposalService } from './proposal.service';
 import { ExecutionService } from './execution.service';
 import { TestingService } from './testing.service';
 import { PricingService } from './pricing.service';
+import { QualityService } from './quality.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -1246,5 +1247,39 @@ export class PricingController {
   @Put()
   save(@Req() req: AuthenticatedRequest, @Body() body: Record<string, unknown>) {
     return this.pricing.save(req.tenantContext, body ?? {});
+  }
+}
+
+/**
+ * The independent quality inspection — Phase 5 slice 9 (`2.txt` §563).
+ *
+ * ⚠️ `TenantGuard`, because the independence trigger and the tenant policy both
+ * read the context `withTenant` sets. On `UserGuard` these routes would
+ * authenticate, return 200, and change nothing.
+ *
+ * ⚠️ THE INSPECTOR IS NEVER A REQUEST FIELD. It is `ctx.userId`, resolved from a
+ * validated token — accepting one would let anybody record a colleague as having
+ * carried out the check, which is the signature this slice exists to make worth
+ * something.
+ */
+@Controller('quality-inspections')
+@UseGuards(TenantGuard)
+export class QualityController {
+  constructor(private readonly quality: QualityService) {}
+
+  /** Open an inspection against a SUBMITTED test session. */
+  @Post()
+  open(@Req() req: AuthenticatedRequest, @Body() body: { testSessionId?: string }) {
+    return this.quality.open(req.tenantContext, String(body?.testSessionId ?? ''));
+  }
+
+  /** Record the verdict. The status is DERIVED from §563's two answers. */
+  @Patch(':id')
+  decide(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.quality.decide(req.tenantContext, id, body ?? {});
   }
 }
