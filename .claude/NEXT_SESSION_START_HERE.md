@@ -14,7 +14,155 @@ Then continue with this file, then `.claude/CURRENT_TASK.md`.
 
 ---
 
-## 📍 SESSION 2026-08-01 — READ THIS BLOCK FIRST, IT IS THE NEWEST
+## 📍 SESSION CLOSE 2026-08-01 — READ THIS BLOCK FIRST, IT IS THE NEWEST
+
+**Tip pushed, CI ✅ · Security CI ✅ · Release ✅.**
+
+### ▶ THE FIRST THING TO DO — ONE ACTION, AND ONLY THE OWNER CAN DO IT
+
+The live site cannot be logged into. Fixing that starts with ONE command the
+assistant is **classifier-blocked** from running (it creates a managed resource
+on the owner's Render account):
+
+```
+! C:\Users\USER\bin\gh.exe workflow run provision-database.yml -f confirm=CREATE --repo marc667us/autoworkshop-ai
+```
+
+Or: GitHub -> Actions -> **Provision database** -> Run workflow -> type `CREATE`.
+
+⚠️ **If it fails on the PLAN**, Render no longer offers free Postgres and it
+becomes a SPEND decision — the owner's alone (`feedback_zero_cost_no_spend_decisions`).
+Do not propose paying. Solar's DB is `basic_256mb`, i.e. paid.
+
+Everything after that is unblocked and can be done by the assistant.
+
+### 🔴 THE LIVE SITE — WHAT IT ACTUALLY IS
+
+| URL | State |
+|---|---|
+| **https://autoworkshop.aiappinvent.com** | serves, 200 |
+| https://autoworkshop-web.onrender.com | same service |
+| https://autoworkshop-web-staging.onrender.com | staging (dropped 2026-07-28) |
+
+Measured live 2026-08-01 with `apps/e2e/verify/verify-live-site.mjs` — **7/9**:
+
+- ✅ renders, correct title, shell + nav (209 chars), unknown route 404s
+- ❌ **sign-in is dead**: `/api/auth/error?error=Configuration`. Auth.js throws
+  BEFORE redirecting — there is no usable Keycloak issuer configured.
+- ❌ one 500 in the browser console (same cause)
+- 🟢 **T-0044 MAY BE FIXED** — sideways scroll measured **0px at 390 / 768 /
+  1280** on production. It has been on the outstanding list since 07-26 as
+  "51px at 768px on every page". Confirm on a SIGNED-IN page before closing it;
+  only the signed-out shell could be measured.
+
+### 🔴 WHY LOGIN FAILS — NOTHING WAS DELETED, IT WAS NEVER CREATED
+
+The owner believed services had been removed. Checked, and they had not:
+
+- production service `srv-d9ju49id0e5s7389fjlg` -> `suspended: not_suspended`
+- `GET /v1/postgres` -> the account holds **ONE** database, `solarpro-postgres`
+  (Solar's, `basic_256mb`). **`autoworkshop-postgres` does not exist and never did.**
+- `render-drop-staging` ran twice — on **2026-07-28**, and it dropped STAGING.
+- `docs/11-devops/ENVIRONMENTS.md` has always said it: *"Two Render services"*,
+  both the same web image.
+
+The 4-day 503 WAS real — Render free-tier instance hours. That resolved at
+midnight and re-running the failed deploy job fixed it (first green Release
+since the suspension).
+
+**So there is no API service, no database and no Keycloak realm for this app.**
+
+### THE PLAN — determined from Solar's pattern, £0
+
+| Piece | Where | Cost |
+|---|---|---|
+| Keycloak | its own service, sharing the app Postgres (Solar's `deploy-keycloak.yml` shape) | £0 |
+| Postgres | Render free tier | £0 ⚠️ **removed after 30 days** |
+| API | Render web service, same image pipeline | £0 |
+
+⚠️ **D2a forbids sharing Solar's database or realm** — "separate repository,
+database, Keycloak *realm*, deployment, secrets and CI". Test: *if Solar were
+deleted tomorrow, would this still run?*
+
+**The realm already exists as config-as-code:**
+`infrastructure/keycloak/realm-autoworkshop.json` + `import-realm.sh`.
+
+**Steps after the database, in order — each blocks the next:**
+1. apply migrations 001-029
+2. deploy Keycloak + import the realm — needs **`KC_BOOTSTRAP_ADMIN_PASSWORD`**
+   set once by the owner. Keycloak IGNORES it after the first boot; Solar's
+   `deploy-keycloak.yml` documents why.
+3. deploy the API as its own service
+4. repoint the web service (`release.yml` currently sets
+   `API_BASE_URL=http://localhost:4000` — inside the container that is nothing)
+5. seed accounts -> real credentials
+
+### 🔴 A LIVE DEFECT, FIX WRITTEN BUT NOT APPLIED
+
+**Any member of the tenant can rewrite the workshop's labour rate.**
+`repair.organization_pricing` (migration 016) has ONE policy, `FOR ALL`, testing
+only the tenant — no role condition. Measured:
+
+    CONFIRMED: a TECHNICIAN rewrote the labour rate (1 rows, now 1.00)
+
+It is also keyed on TENANT while the table is keyed on ORGANIZATION, so one
+workshop can edit another's prices in the same tenant — reachable, the seed data
+already has two organizations in one tenant.
+
+**`029_pricing_write_scope.sql` is committed but NOT APPLIED** (database is at
+028). It splits read from write: everyone in the tenant may SEE the rates, only
+the owner may CHANGE them. Apply it and write its verify FIRST next session.
+There is still no pricing SCREEN — that was Slice D's remaining work.
+
+### WHAT SHIPPED TODAY
+
+**Role switcher** rolled out to all seven apps — and it had NEVER worked: `/me`
+sent `x-organization-id` but not `x-role-name`, so the nav resolved as the
+default role while pages resolved as the chosen one.
+
+**Slice B** — supplier catalogue: migrations 024/025/026, API module, supplier +
+admin screens. A part now reaches the public marketplace without a developer.
+
+**Slice C** — mechanic directory opt-in: migrations 027/028, API, settings screen
+at BOTH routes.
+
+**Migrations 008-029 are LOCAL ONLY.** Production has none of it.
+
+### ISSUES AND CHALLENGES — carried forward
+
+1. 🔴 **Live login impossible** until the 5 provisioning steps are done.
+2. 🔴 **`RENDER_API_KEY` unrotated** since the 2026-07-27 leak. Rotate BEFORE
+   creating new services with it.
+3. 🔴 **029 not applied** — the pricing hole is live locally.
+4. **Free Postgres expires after 30 days.** Solar's expired 2026-07-09 with no
+   backups. Point the existing backup drill at the new DB before depending on it.
+5. **Staging was dropped 07-28** — `ENVIRONMENTS.md` says production is
+   unreachable unless the same image serves on staging first. Release is green
+   anyway, so that gate is not actually enforced. Worth a look.
+6. **T-0044 needs re-confirming signed-in** before closing.
+7. **No mobile app** has ever been built or deployed. `apps/mobile` is a scaffold.
+
+### THE LESSON OF THE DAY, AND IT IS ABOUT THE HARNESS
+
+**Six product defects were found; ELEVEN of my own measurement bugs were found.**
+Every one passed until it was given a control. The recurring shapes:
+
+- `count()` does not auto-wait -> the run continued signed-OUT and every
+  assertion failed as a "product defect"
+- an endpoint returning a **bare array** while the helper read `.items` -> every
+  public assertion silently empty, including one that "passed" by finding nothing
+- a per-organization row **surviving between runs** already published
+- an error check counting the 404s the script itself triggered
+- a CI wait-loop reading the PREVIOUS commit's runs
+- a body-diff searching without the schema prefix -> "MISSING" for all three
+
+**And twice a COMMENT asserted a safety net that did not exist** — `uniqueSlug`
+claimed error mapping that was not wired, and `directory.service` claimed any
+member could read a listing the policy hid from them. Both found by Codex.
+
+---
+
+## 📍 EARLIER ON 2026-08-01 — role switcher + Render recovery
 
 **✅ RENDER PRODUCTION IS BACK.** The free-tier hours reset at 00:00 on 1 Aug exactly as
 the owner said. The Release workflow had been red for ONE reason: Render's deploy API
