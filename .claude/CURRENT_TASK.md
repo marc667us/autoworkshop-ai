@@ -1,14 +1,44 @@
 # Current task
 
-## ▶ NEXT: Slice C — mechanic directory opt-in screen · SMALL
+## ▶ NEXT: Slice D — the deferred list
 
-Section 3 of `.claude/NEXT_SESSION_START_HERE.md`. A workshop needs a settings
-screen to publish/withdraw its directory listing and edit the consented fields.
-Keep it a COPY, never a view over `core.organization_profile` — the header of
-migration 021 explains why that boundary matters.
+Slice 7b variation control · slice 9 QC (must be done by somebody who did not do
+the work, `2.txt` §563) · MinIO evidence upload · `organization_pricing`
+settings screen · repo-wide RLS org-scoping (outstanding issue 8).
 
-Then Slice D (deferred items): slice 7b variation control · slice 9 QC · MinIO
-evidence upload · `organization_pricing` screen · repo-wide RLS org-scoping.
+⚠️ **Org-scoping now has a starting point.** Migration 027 introduced
+`identity.current_organization_id()` for ONE table. The repo-wide change is
+still open and still needs a plan before code — but the helper and its failure
+modes are now proven: unset GUC returns NULL and matches nothing, a non-uuid
+value RAISES rather than matching. Both fail closed.
+
+## Slice C — COMPLETE 2026-08-01 (mechanic directory opt-in)
+
+Migration **027** + `DirectoryController` + a settings screen at BOTH routes.
+A workshop can now list itself publicly, and take itself back off.
+
+- **The workshop publishes ITSELF here**, unlike parts. A directory entry is the
+  workshop's own consented description of itself; requiring an administrator to
+  approve "we are here, this is our phone number" would make the directory
+  unfillable. `admin_write` still lets an administrator withdraw abuse.
+- **Saving and publishing are separate actions.** `is_published` is absent from
+  the save statement entirely, so editing a live listing cannot withdraw it by
+  accident and editing a draft cannot expose it.
+- ⚠️ **TWO ROUTES, BOTH REQUIRED.** §46's owner tree carries Workshop Profile
+  under `/workshop-management/`; the §34 default tree under `/settings/`.
+  `platform_administrator` may edit AND resolves to the DEFAULT tree, so
+  building only the owner's path left the administrator on a blank page.
+  Slice 4 wrote this trap down and it still caught me.
+- 🔴 **028 — a comment described a rule the database did not implement.**
+  `directory.service.ts` said the listing was readable by any member; 027's
+  single `FOR ALL` policy restricted it to the owner. A manager or technician
+  saw "Not listed" above a pre-filled form for a listing that existed. Found by
+  Codex, reproduced (owner 1 row, manager 0, technician 0), fixed by adding
+  `member_read_own` — the comment was right, the policy was wrong. **Second
+  comment-claims-a-rule-that-does-not-exist defect in two days.**
+- Proof: `verify/027` **12/12** · `verify/028` **6/6** ·
+  `apps/e2e/verify/verify-directory-optin.mjs` **14/14**, driving an owner and a
+  technician.
 
 ## Slice B — COMPLETE 2026-08-01 (schema + API + screens)
 

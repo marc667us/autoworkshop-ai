@@ -15,6 +15,7 @@ import { UserGuard, type UserRequest } from '../auth/user.guard';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { DB_PLATFORM_ADMIN_ROLE_NAMES } from '../authz/permission-matrix';
 import { SupplierCatalogueService } from './supplier-catalogue.service';
+import { DirectoryService } from './directory.service';
 
 /**
  * SUPPLIER-side catalogue management — Slice B.
@@ -174,5 +175,44 @@ export class AdminCatalogueController {
   ) {
     this.assertAdmin(req);
     return this.catalogue.setPartPublication(req.tenantContext, id, Boolean(body?.published));
+  }
+}
+
+/**
+ * The workshop's own public directory listing — Slice C.
+ *
+ * ⚠️ `TenantGuard`, because the predicate is the ORGANIZATION and the ROLE, and
+ * both reach Postgres only through `withTenant`. On `UserGuard` these routes
+ * would authenticate, return 200, and change nothing.
+ *
+ * ⚠️ THE WORKSHOP PUBLISHES ITSELF, unlike the parts catalogue where an
+ * administrator approves. A directory entry is a workshop's own consented
+ * description of itself — requiring approval to say "we are here, this is our
+ * phone number" would make the directory unfillable. An administrator can still
+ * withdraw an abusive listing through `admin_write`.
+ */
+@Controller('directory')
+@UseGuards(TenantGuard)
+export class DirectoryController {
+  constructor(private readonly directory: DirectoryService) {}
+
+  /** The listing plus the profile values a first-time form should offer. */
+  @Get('listing')
+  describe(@Req() req: AuthenticatedRequest) {
+    return this.directory.describe(req.tenantContext);
+  }
+
+  /** Save the consented fields. Deliberately does NOT change publication. */
+  @Patch('listing')
+  save(@Req() req: AuthenticatedRequest, @Body() body: Record<string, unknown>) {
+    return this.directory.save(req.tenantContext, body ?? {});
+  }
+
+  @Patch('listing/publication')
+  setPublication(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { published?: unknown },
+  ) {
+    return this.directory.setPublication(req.tenantContext, Boolean(body?.published));
   }
 }

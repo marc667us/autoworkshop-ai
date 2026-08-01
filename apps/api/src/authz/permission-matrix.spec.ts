@@ -132,11 +132,67 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
       return readFileSync(sqlPath, 'utf8');
     }
 
-    it('is_platform_admin() lists exactly DB_PLATFORM_ADMIN_ROLE_NAMES', () => {
-      const sql = migrationText('025_platform_admin_role_name.sql');
+    /**
+     * ⚠️ THE CANONICAL DEFINITION IS IN 001, NOT 025 — corrected 2026-08-01.
+     *
+     * This test originally read 025, and that was wrong in a way worth
+     * recording: `identity.is_platform_admin()` has existed since migration
+     * 001 and ALWAYS accepted both names. 025 re-declared it with
+     * `CREATE OR REPLACE` and an identical body — a no-op, verified
+     * character-for-character.
+     *
+     * So the real defect in 021-024 was NOT "two vocabularies nobody mapped".
+     * It was that those four migrations IGNORED an existing helper which
+     * already got this right, and hand-rolled `current_role_name() = 'admin'`
+     * instead — while fourteen other migrations called the helper correctly.
+     * A test anchored to 025 would keep passing if somebody edited 001, which
+     * is the file that actually defines behaviour.
+     */
+    function adminNamesIn(sql: string): string[] {
       const body = /current_role_name\(\)\s+IN\s*\(([\s\S]*?)\)/.exec(sql)?.[1] ?? '';
-      const namesInSql = [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string).sort();
-      expect(namesInSql).toEqual([...DB_PLATFORM_ADMIN_ROLE_NAMES].sort());
+      return [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string).sort();
+    }
+
+    it('is_platform_admin() lists exactly DB_PLATFORM_ADMIN_ROLE_NAMES', () => {
+      expect(adminNamesIn(migrationText('001_tenancy_foundation.sql'))).toEqual(
+        [...DB_PLATFORM_ADMIN_ROLE_NAMES].sort(),
+      );
+    });
+
+    it("025's re-declaration still agrees with 001", () => {
+      // Two `CREATE OR REPLACE` bodies for one function is a standing hazard:
+      // whichever migration runs last silently wins. They must not diverge.
+      expect(adminNamesIn(migrationText('025_platform_admin_role_name.sql'))).toEqual(
+        adminNamesIn(migrationText('001_tenancy_foundation.sql')),
+      );
+    });
+
+    it('the catalogue migrations call the helper rather than restating it', () => {
+      // The actual 021-024 defect: a hand-rolled predicate that omitted the
+      // role name the application sets. Anchored here so a future migration
+      // cannot reintroduce it by copying the old shape.
+      for (const name of [
+        '021_public_catalogue.sql',
+        '022_marketplace_orders.sql',
+        '023_supplier_accounts.sql',
+        '024_supplier_catalogue.sql',
+      ]) {
+        // These four are historical and still contain the old text; 025 is what
+        // repointed their POLICIES. What must never happen again is a NEW
+        // migration hand-rolling it — asserted on 025 and 026, the two written
+        // after the lesson.
+        expect(typeof migrationText(name)).toBe('string');
+      }
+      for (const name of ['025_platform_admin_role_name.sql', '026_fitment_publication_guard.sql']) {
+        // ⚠️ COMMENTS STRIPPED FIRST. Both files QUOTE the old predicate while
+        // explaining why it was wrong, and the first version of this assertion
+        // failed on that quotation — flagging the explanation as the defect it
+        // describes. Only executable SQL can hand-roll anything.
+        const executable = migrationText(name).replace(/--[^\n]*/g, '');
+        expect(executable, `${name} should not hand-roll the admin predicate`).not.toContain(
+          "current_role_name() = 'admin'",
+        );
+      }
     });
 
     it('includes the role name a platform administrator actually holds', () => {

@@ -1,8 +1,13 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { IdentityModule } from '../identity/identity.module';
-import { AdminCatalogueController, SupplierCatalogueController } from './catalogue.controller';
+import {
+  AdminCatalogueController,
+  DirectoryController,
+  SupplierCatalogueController,
+} from './catalogue.controller';
 import { SupplierCatalogueService } from './supplier-catalogue.service';
+import { DirectoryService } from './directory.service';
 
 /**
  * Supplier + administrator catalogue management (migrations 024, 025, 026) —
@@ -20,8 +25,8 @@ import { SupplierCatalogueService } from './supplier-catalogue.service';
  */
 @Module({
   imports: [DatabaseModule, IdentityModule],
-  controllers: [SupplierCatalogueController, AdminCatalogueController],
-  providers: [SupplierCatalogueService],
-  exports: [SupplierCatalogueService],
+  controllers: [SupplierCatalogueController, AdminCatalogueController, DirectoryController],
+  providers: [SupplierCatalogueService, DirectoryService],
+  exports: [SupplierCatalogueService, DirectoryService],
 })
 export class CatalogueModule {}
