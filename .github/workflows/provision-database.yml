@@ -1,0 +1,166 @@
+# Provision the production Postgres — the first piece of a live AutoWorkshop.
+#
+# WHY THIS EXISTS. `docs/11-devops/ENVIRONMENTS.md` records the whole current
+# footprint: "Two Render services, one pipeline, zero cost" — a staging web and
+# a production web, both running the same image. There has never been a
+# database, an API service or a Keycloak instance for this app. That is why
+# signing in at autoworkshop.aiappinvent.com answers
+# `/api/auth/error?error=Configuration`: there is nothing to authenticate
+# against, and nothing to read.
+#
+# THE PATTERN IS SOLAR'S, DELIBERATELY (ADR-011 — Solar is the reference
+# implementation, read for patterns, never imported from). Solar's workflows
+# locate `solarpro-postgres` with `GET /v1/postgres?limit=20` and pull
+# connection info per run, so no credential is ever stored in the repo. The one
+# thing Solar does NOT have is a workflow that CREATES the database — its
+# instance was made by hand in the dashboard. This is that missing step, so the
+# same thing can be done twice without remembering how.
+#
+# ⚠️ D2a REQUIRES A SEPARATE DATABASE. AutoWorkshop may not share Solar's
+# Postgres: "separate repository, database, Keycloak realm, deployment, secrets
+# and CI". The acceptance test in CLAUDE.md is "if Solar were deleted tomorrow,
+# would this still build, deploy and run?" — sharing a database fails it.
+#
+# ⚠️ DRY RUN BY DEFAULT. Creating a managed database is not reversible by
+# re-running a workflow, and a dry run that only PREVIEWS is worth less than one
+# that INSPECTS — so the default path lists what already exists and states
+# exactly what it would do. Set `confirm: CREATE` to act.
+#
+# ⚠️ FREE PLAN, AND IT EXPIRES. Render's free Postgres is removed after 30 days.
+# That is recorded against Solar, whose database expired on 2026-07-09 with no
+# backups in place. The plan for this app is zero-cost (CLAUDE.md §1), so free
+# is what it gets — but the expiry is a real date, not a footnote, and the
+# backup drill that already runs in this repo must point at it before anything
+# depends on it.
+
+name: Provision database
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type CREATE to actually create the database. Anything else = inspect only.'
+        required: false
+        default: ''
+      name:
+        description: 'Database service name'
+        required: false
+        default: 'autoworkshop-postgres'
+      region:
+        description: 'Render region (match the web service)'
+        required: false
+        default: 'oregon'
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: ${{ inputs.name }}
+      REGION: ${{ inputs.region }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY is not set on this repository"
+            exit 1
+          fi
+          echo "key present"
+
+      - name: What already exists
+        id: existing
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o /tmp/pg.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/postgres?limit=50")"
+          echo "GET /v1/postgres -> $code"
+          [ "$code" = "200" ] || { echo "::error::could not list databases"; exit 1; }
+
+          python3 - <<'PY'
+          import json, os
+          rows = json.load(open('/tmp/pg.json'))
+          found = ''
+          print('databases visible to this key:')
+          for r in rows:
+              d = r.get('postgres', r)
+              print(f"  - {d.get('name')}  id={d.get('id')}  plan={d.get('plan')} "
+                    f"status={d.get('status')} region={d.get('region')}")
+              if d.get('name') == os.environ['DB_NAME']:
+                  found = d.get('id')
+          # ⚠️ Written to the step output rather than re-derived later: two
+          # lookups of the same fact are two chances to disagree.
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as fh:
+              fh.write(f"id={found}\n")
+          print(f"\n{os.environ['DB_NAME']}: {'EXISTS -> ' + found if found else 'does not exist'}")
+          PY
+
+      - name: Create it
+        if: steps.existing.outputs.id == '' && env.CONFIRM == 'CREATE'
+        run: |
+          set -euo pipefail
+          OWNER="$(curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services/${{ vars.RENDER_WEB_SERVICE_ID }}" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['ownerId'])")"
+          echo "owner: $OWNER"
+
+          # `databaseName` and `databaseUser` are deliberately NOT the service
+          # name: the service name is public-ish (it appears in dashboards and
+          # logs) and the role name is a credential component.
+          cat > /tmp/body.json <<JSON
+          {
+            "type": "postgres",
+            "name": "${DB_NAME}",
+            "ownerId": "${OWNER}",
+            "region": "${REGION}",
+            "plan": "free",
+            "version": "16",
+            "databaseName": "autoworkshop",
+            "databaseUser": "autoworkshop"
+          }
+          JSON
+
+          code="$(curl -s -o /tmp/created.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/body.json \
+            "https://api.render.com/v1/postgres")"
+          echo "POST /v1/postgres -> $code"
+          if [ "$code" != "200" ] && [ "$code" != "201" ]; then
+            echo "::error::creation failed"
+            # The body carries WHY — a plan restriction, a name clash, a region
+            # that does not exist. Printing it is the difference between a fix
+            # and a guess.
+            cat /tmp/created.json
+            exit 1
+          fi
+          python3 -c "import json;d=json.load(open('/tmp/created.json'));print('created:',d.get('id'),d.get('name'),d.get('status'))"
+
+      - name: What to do next
+        run: |
+          set -euo pipefail
+          if [ "${CONFIRM}" != "CREATE" ]; then
+            echo "INSPECT ONLY — nothing was created."
+            echo "Re-run with confirm=CREATE to provision '${DB_NAME}'."
+          fi
+          cat <<'NEXT'
+
+          Remaining steps to a working login, in order — each blocks the next:
+
+            1. this workflow                    -> the database exists
+            2. apply migrations 001-028         -> the schema exists
+            3. deploy Keycloak + import
+               infrastructure/keycloak/realm-autoworkshop.json
+               (needs KC_BOOTSTRAP_ADMIN_PASSWORD, owner-set once — Solar's
+                deploy-keycloak.yml documents why it can only be set on the
+                FIRST boot: Keycloak ignores the env var once an admin exists)
+            4. deploy the API as its own service
+            5. point the web service at the API and the realm
+            6. seed accounts -> real credentials
+
+          NEXT
