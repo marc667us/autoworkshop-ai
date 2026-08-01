@@ -26,7 +26,7 @@ export { viewerHasSession } from './viewer';
 export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
 export { requireWorkspaceAccess } from './require-access';
 export { requireNavRoute } from './require-route';
-export { apiGet, apiPost, apiPatch, apiDelete, describeApiFailure } from './api';
+export { apiGet, apiPost, apiPut, apiPatch, apiDelete, describeApiFailure } from './api';
 export { ApiFailure } from './ApiFailure';
 export { OrganizationSwitcher } from './OrganizationSwitcher';
 export type { OrganizationOption } from './OrganizationSwitcher';

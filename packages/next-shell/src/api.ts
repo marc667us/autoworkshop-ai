@@ -146,6 +146,28 @@ export async function apiPost<T>(
 }
 
 /**
+ * PUT a complete resource as the current viewer.
+ *
+ * ⚠️ `PUT` RATHER THAN `PATCH`, AND THE DIFFERENCE IS LOAD-BEARING FOR ITS FIRST
+ * CALLER. `apiPatch` means "change these fields"; this means "replace the whole
+ * set". The workshop's pricing row is read as a UNIT by `quotation.service.ts`
+ * when a quotation is built, so a partial write would leave a workshop quoting
+ * with a new labour rate against an old tax rate — a combination nobody chose
+ * and nobody can see on screen. The API's `parsePricingInput` requires every
+ * field for the same reason, so a partial body is refused rather than merged.
+ *
+ * Shares `apiWrite` with the others: same auth, same never-throws contract, same
+ * `invalid` pass-through so a screen can render the API's own sentence.
+ */
+export async function apiPut<T>(
+  workspaceId: WorkspaceId | string,
+  path: string,
+  body: unknown,
+): Promise<ApiResult<T>> {
+  return apiWrite<T>('PUT', workspaceId, path, body);
+}
+
+/**
  * PATCH a resource as the current viewer.
  *
  * Identical handling to `apiPost` — same auth, same never-throws contract, same
@@ -193,7 +215,7 @@ export async function apiDelete<T>(
 }
 
 async function apiWrite<T>(
-  method: 'POST' | 'PATCH' | 'DELETE',
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   workspaceId: WorkspaceId | string,
   path: string,
   body: unknown,

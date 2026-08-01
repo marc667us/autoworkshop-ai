@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -20,6 +21,7 @@ import { QuotationService } from './quotation.service';
 import { ProposalService } from './proposal.service';
 import { ExecutionService } from './execution.service';
 import { TestingService } from './testing.service';
+import { PricingService } from './pricing.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -1212,5 +1214,37 @@ export class TestingController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
     return this.testing.submit(req.tenantContext, id);
+  }
+}
+
+/**
+ * The workshop's PRICING — Slice D.
+ *
+ * ⚠️ NOT UNDER `job-cards`, and that is a boundary rather than a filing
+ * preference. Every other controller in this file operates on ONE job card and
+ * takes its id in the path. Pricing is organisation SETTINGS: one row per
+ * workshop, read by `quotation.service.ts` while building any quotation. Nesting
+ * it under a job card would imply a per-job rate, which is precisely what this
+ * table is not.
+ *
+ * ⚠️ `TenantGuard`, because migration 029's policies key on the ORGANIZATION and
+ * the ROLE together, and `withTenant` is the only path that sets either. On
+ * `UserGuard` these routes would authenticate, return 200, and change nothing.
+ */
+@Controller('pricing')
+@UseGuards(TenantGuard)
+export class PricingController {
+  constructor(private readonly pricing: PricingService) {}
+
+  /** Tenant-wide read: everyone who prepares a quotation may see the rates. */
+  @Get()
+  describe(@Req() req: AuthenticatedRequest) {
+    return this.pricing.describe(req.tenantContext);
+  }
+
+  /** Owner-only write. The refusal is migration 029's; this route explains it. */
+  @Put()
+  save(@Req() req: AuthenticatedRequest, @Body() body: Record<string, unknown>) {
+    return this.pricing.save(req.tenantContext, body ?? {});
   }
 }

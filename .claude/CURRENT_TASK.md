@@ -1,16 +1,72 @@
 # Current task
 
-## ▶ NEXT: Slice D — the deferred list
+## ▶ NEXT: Slice D — remaining items
 
 Slice 7b variation control · slice 9 QC (must be done by somebody who did not do
-the work, `2.txt` §563) · MinIO evidence upload · `organization_pricing`
-settings screen · repo-wide RLS org-scoping (outstanding issue 8).
+the work, `2.txt` §563) · MinIO evidence upload (**now unblocked** — MinIO was
+unreachable from the host until `d9845c3`) · repo-wide RLS org-scoping
+(outstanding issue 8).
 
 ⚠️ **Org-scoping now has a starting point.** Migration 027 introduced
 `identity.current_organization_id()` for ONE table. The repo-wide change is
 still open and still needs a plan before code — but the helper and its failure
 modes are now proven: unset GUC returns NULL and matches nothing, a non-uuid
 value RAISES rather than matching. Both fail closed.
+
+## 🔴 OWNER DECISION NEEDED — pricing is invisible to the seeded owner identity
+
+`pricing-rules` exists ONLY in the §46 owner tree
+(`packages/navigation/src/workspaces.ts`). The §34 default tree's Settings group
+has no pricing entry, and `WORKSHOP_ROLE_TREES` maps only `owner` to the tree
+that has one.
+
+**Measured consequence.** `owner@autoworkshop.local` holds THREE active
+memberships — `platform_administrator`, `workshop_owner`, `technician` — and
+`resolveTenantContext` defaults to the strongest by ROLE_PRECEDENCE, which is
+`platform_administrator`. `navRoleFor` returns undefined for that, resolving to
+the DEFAULT tree. **So the person most likely to set the labour rate opens the
+app, finds no Pricing anywhere, and concludes the feature does not exist.** They
+must switch role to `workshop_owner` first. `verify-pricing-screen.mjs` does
+exactly that and records why.
+
+Three options, none taken unilaterally because each is a change to APPROVED
+navigation and `05.txt` §2 prohibits that without review:
+
+1. Add `pricing` to the §34 default tree's Settings group (mirrors Slice C's
+   two-route shape for Workshop Profile).
+2. Leave it — owners use the role switcher, which now works.
+3. Reconsider ROLE_PRECEDENCE so `workshop_owner` outranks
+   `platform_administrator` for a user holding both. ⚠️ Wider blast radius: it
+   changes the default role for every multi-role account, not just this screen.
+
+## Slice D — pricing screen COMPLETE 2026-08-01 (`organization_pricing`)
+
+`PricingController` + `PricingService` + `/workshop-management/pricing-rules`.
+The screen migration 029's header said this slice would add.
+
+- 🔴 **The point of the screen is the ZERO.** With no pricing row,
+  `quotation.service.ts` falls back to `PRICING_DEFAULTS`, whose labour rate is
+  **0** — so a workshop that never opened this page quoted labour at nothing on
+  every job, silently. The screen renders a warning banner over the fallbacks
+  rather than an empty state, because "empty" would imply nothing is happening.
+- **Reads tenant-wide, writes owner-only**, which is 029's split, not this
+  slice's: quotations are prepared by reception, managers and technicians, so
+  narrowing the READ would break quotation preparation for everybody.
+- ⚠️ **`Number('') === 0`.** A cleared field must never become a zero rate. The
+  server action sends every numeric field as a RAW STRING (no `Number(...)`),
+  and `requiredNumber` rejects the empty string before parsing.
+- **`apiPut` added to `packages/next-shell`** — the pricing row is read as a UNIT
+  by quotation building, so a partial write would leave a workshop quoting a new
+  labour rate against an old tax rate.
+- Proof: `pricing.spec.ts` **17/17** · `verify-pricing-screen.mjs` **17/17**,
+  driving an owner AND a technician, and READING THE RATE BACK after a reload
+  (a refused write matches zero rows and raises nothing, so "Saved" is not
+  evidence).
+- **Codex found 2, both fixed:** `parsePricingInput` threw on the FIRST bad field
+  while its docstring promised whole-object validation — the repo's most-repeated
+  defect, a comment claiming a rule that does not exist. Behaviour was fixed to
+  match the promise (all problems reported at once). The spec's "every message"
+  test covered 5 of 13 paths; now covers all 13.
 
 ## Slice C — COMPLETE 2026-08-01 (mechanic directory opt-in)
 
