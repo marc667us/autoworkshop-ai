@@ -113,6 +113,35 @@ export function permissionsForRole(roleName: string): readonly string[] {
 }
 
 /**
+ * The role names Postgres accepts as "the platform administrator".
+ *
+ * 🔴 THIS CONSTANT EXISTS BECAUSE THE TWO VOCABULARIES SILENTLY DISAGREED FOR
+ * FOUR MIGRATIONS. Every admin policy in 021-024 tested
+ * `identity.current_role_name() = 'admin'`, and the application never sets that
+ * string: `tenantSessionStatements` writes `app.current_role` from
+ * `ctx.activeRole`, which is the membership's `role_name` —
+ * `platform_administrator`. Nine policies and three triggers were therefore
+ * unreachable from the running application, and the failure mode was `UPDATE 0`:
+ * no error, no refusal, simply nothing happening. Measured 2026-08-01 and fixed
+ * in migration 025.
+ *
+ * The file already warned that the database and the navigation speak different
+ * role vocabularies and maps between them (`navRoleFor`). Nothing mapped for
+ * SQL, because the policies were written against a name somebody expected the
+ * application to use rather than the one it does.
+ *
+ * `admin` is retained deliberately: seed scripts, migrations and hand-run psql
+ * legitimately act as the platform and all set that literal.
+ *
+ * `permission-matrix.spec` asserts this list against the SQL text of migration
+ * 025, so the two cannot drift apart again without a test failing.
+ */
+export const DB_PLATFORM_ADMIN_ROLE_NAMES: readonly string[] = Object.freeze([
+  'admin',
+  'platform_administrator',
+]);
+
+/**
  * Role authority, STRONGEST FIRST — the tie-break for the default selection in
  * `resolveTenantContext`.
  *

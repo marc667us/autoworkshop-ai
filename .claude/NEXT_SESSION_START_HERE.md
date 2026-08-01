@@ -75,7 +75,35 @@ Playwright **138 passed / 2 skipped** (baseline) · `node verify/verify-role-swi
 **17/17**, driving two identities in two apps. Codex: CRITICAL 0, HIGH 0, LOW 0 across two
 passes; both MEDIUMs fixed. Security review: no HIGH/MEDIUM findings.
 
-**▶ RESUME HERE:** Slice B — supplier + admin catalogue management (section 3).
+**✅ SLICE B — THE SCHEMA HALF IS DONE.** Migrations 024, 025, 026, applied
+locally, 72 verify checks across six scripts with zero failures. Two of the three
+migrations exist because of defects found while building the first one:
+
+- **024** — a supplier writes its own catalogue but cannot publish it. Policies
+  key on membership; the column rules are triggers (RLS selects rows, not
+  columns). "Applying" is just an unpublished supplier row — approval IS
+  publication. `created_by` is load-bearing security: without it, a bootstrap
+  rule of "claim any supplier with no members" hands every administrator-seeded
+  supplier to whoever asks first.
+- **025** — 🔴 **EVERY ADMIN POLICY IN 021–024 WAS UNREACHABLE FROM THE APP.**
+  21 predicates test `identity.current_role_name() = 'admin'`; the application
+  sets `platform_administrator`, from the membership row. Nine policies and three
+  triggers were inert, and the failure mode was `UPDATE 0` — not an error, not a
+  refusal, just nothing happening. Had I built the admin publish endpoint first
+  it would have returned 200 and changed nothing. Measured, not inferred:
+  `platform_administrator → UPDATE 0`, `admin → UPDATE 20`. A drift test now
+  reads the SQL and compares it to `DB_PLATFORM_ADMIN_ROLE_NAMES`.
+- **026** — 🔴 Codex HIGH, reproduced before fixing: a supplier could attach new
+  PUBLIC compatibility claims to its own already-published part. Fitments inherit
+  visibility from the part and 024 guarded only `suppliers` and `parts`. The
+  worst possible field for it — a fitment is "this part fits that car".
+
+⚠️ **A supplier cannot edit fitments on a published part.** The refusal names
+withdraw → edit → republish, and `verify/026` check 6 WALKS that path rather than
+asserting it. The screens must expose it or the rule becomes a wall.
+
+**▶ RESUME HERE:** Slice B's API module and screens — `.claude/CURRENT_TASK.md`
+lists the four steps. Nothing above the database exists yet.
 
 ⚠️ Dev servers LEFT RUNNING at close: API :4000, workshop-web :3001, supplier-web :3002.
 `bash scripts/start-session.sh` kills them and proves the ports are free.

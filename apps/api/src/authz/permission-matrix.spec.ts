@@ -1,8 +1,11 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PERMISSIONS,
   ROLE_PERMISSIONS,
   ROLE_PRECEDENCE,
+  DB_PLATFORM_ADMIN_ROLE_NAMES,
   permissionsForRole,
   rolePrecedence,
 } from './permission-matrix';
@@ -104,6 +107,55 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
   it('every grantable role has a matrix entry', () => {
     const missing = GRANTABLE.filter((r) => !(r in ROLE_PERMISSIONS));
     expect(missing, 'grantable roles with no permission-matrix entry').toEqual([]);
+  });
+
+  /**
+   * 🔴 THE DRIFT THAT MADE NINE POLICIES INERT.
+   *
+   * Reads the SQL rather than restating it. A test that hard-coded the same two
+   * strings would have passed happily throughout the four migrations in which
+   * the database accepted only `admin` — the whole failure was that nobody
+   * compared the two places.
+   */
+  describe('the SQL predicate accepts the role name the application actually sets', () => {
+    function migrationText(name: string): string {
+      let dir = resolve(__dirname);
+      let sqlPath = '';
+      for (let i = 0; i < 8 && sqlPath === ''; i += 1) {
+        const candidate = join(dir, `infrastructure/migrations/${name}`);
+        if (existsSync(candidate)) sqlPath = candidate;
+        dir = dirname(dir);
+      }
+      // Fail loudly rather than skip — a silent skip lets the two drift while
+      // the suite still reports green, which is exactly how this got here.
+      expect(sqlPath, `could not locate ${name}`).not.toBe('');
+      return readFileSync(sqlPath, 'utf8');
+    }
+
+    it('is_platform_admin() lists exactly DB_PLATFORM_ADMIN_ROLE_NAMES', () => {
+      const sql = migrationText('025_platform_admin_role_name.sql');
+      const body = /current_role_name\(\)\s+IN\s*\(([\s\S]*?)\)/.exec(sql)?.[1] ?? '';
+      const namesInSql = [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string).sort();
+      expect(namesInSql).toEqual([...DB_PLATFORM_ADMIN_ROLE_NAMES].sort());
+    });
+
+    it('includes the role name a platform administrator actually holds', () => {
+      // The specific miss. `platform_administrator` is a key of the permission
+      // matrix — the role a real membership row carries — and it must be a name
+      // the database recognises, or an administrator can write nothing.
+      expect(DB_PLATFORM_ADMIN_ROLE_NAMES).toContain('platform_administrator');
+      expect(Object.keys(ROLE_PERMISSIONS)).toContain('platform_administrator');
+    });
+
+    it('does not admit any OTHER role from the matrix', () => {
+      // Widening this list is a privilege escalation across every catalogue and
+      // marketplace table at once, so it is asserted rather than trusted.
+      const admins = new Set(DB_PLATFORM_ADMIN_ROLE_NAMES);
+      const wrongly = Object.keys(ROLE_PERMISSIONS).filter(
+        (r) => admins.has(r) && r !== 'platform_administrator',
+      );
+      expect(wrongly, 'non-administrator roles treated as platform admin in SQL').toEqual([]);
+    });
   });
 
   it('every role in the matrix is RANKED for the default tie-break', () => {
