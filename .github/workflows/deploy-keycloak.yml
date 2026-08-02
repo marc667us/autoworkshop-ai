@@ -294,10 +294,48 @@ jobs:
         if: ${{ inputs.confirm == 'APPLY' }}
         run: |
           set -euo pipefail
-          OWNER="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+          # 🔴 THE POSTGRES OBJECT DOES NOT RELIABLY CARRY `ownerId`. The first
+          # real APPLY run died here with a bare `KeyError: 'ownerId'`, which
+          # says nothing about which of the two API shapes was returned. Render
+          # nests it as `owner.id` on some responses and omits it on others.
+          #
+          # So: try both shapes, then fall back to /v1/owners, and fail with a
+          # message naming the keys actually present rather than a KeyError.
+          # Only key NAMES are printed — never values, since this response
+          # carries connection details.
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H 'Accept: application/json' \
-            "https://api.render.com/v1/postgres/$(cat /tmp/db_id)" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('postgres',d)['ownerId'])")"
+            "https://api.render.com/v1/postgres/$(cat /tmp/db_id)" > /tmp/pg.json
+
+          OWNER="$(python3 -c "
+          import sys, json
+          d = json.load(open('/tmp/pg.json'))
+          d = d.get('postgres', d)
+          print(d.get('ownerId') or (d.get('owner') or {}).get('id') or '')
+          ")"
+
+          if [ -z "$OWNER" ]; then
+            echo "postgres object exposed no ownerId; keys were:"
+            python3 -c "
+          import json
+          d = json.load(open('/tmp/pg.json'))
+          d = d.get('postgres', d)
+          print(' ', sorted(d.keys()))
+          "
+            echo "falling back to /v1/owners"
+            OWNER="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' \
+              "https://api.render.com/v1/owners?limit=1" \
+              | python3 -c "
+          import sys, json
+          rows = json.load(sys.stdin)
+          o = rows[0].get('owner', rows[0]) if rows else {}
+          print(o.get('id', ''))
+          ")"
+          fi
+
+          [ -n "$OWNER" ] || { echo "::error::could not determine the Render ownerId"; exit 1; }
+          echo "owner resolved: $OWNER"
 
           EXISTING="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H 'Accept: application/json' \
