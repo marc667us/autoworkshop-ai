@@ -76,7 +76,7 @@ Operations) need **Switch user → workshop_owner** first.
 
 | # | Issue | State |
 |---|---|---|
-| I1 | **Live sign-in still impossible** — DB exists and is migrated, steps 3-6 remain | **OWNER-GATED**, below |
+| I1 | **Live sign-in still impossible** — DB migrated AND `KC_BOOTSTRAP_ADMIN_PASSWORD` set 2026-08-02. Steps 3-6 remain. | **UNBLOCKED** — deploy Keycloak next |
 | I2 | No web job-card detail page; queue job numbers are plain text | open → item 1 |
 | I3 | 127 menu entries still render "not built yet" | open → item 2 |
 | I4 | Mobile has no offline queue / camera / push | open → item 3 |
@@ -86,15 +86,17 @@ Operations) need **Switch user → workshop_owner** first.
 | I8 | `security-posture.integration.spec` flakes on pool contention in the full run | passes alone; uninvestigated |
 | I9 | `next start` warns `output: standalone` is set but unused | cosmetic, unexamined |
 
-**I1 — the one thing only the owner can do:**
+**I1 — no longer owner-gated.** `KC_BOOTSTRAP_ADMIN_PASSWORD` was generated and
+set on the repo 2026-08-02.
 
-```
-gh secret set KC_BOOTSTRAP_ADMIN_PASSWORD --repo marc667us/autoworkshop-ai
-```
+🔴 **GITHUB SECRETS ARE WRITE-ONLY. The only readable copy of that password
+is `C:\\Users\\USER\\autoworkshop-keycloak-admin.txt`** — outside the repo, never
+printed to a transcript. Without it the Keycloak admin console is unreachable
+and the instance would have to be recreated, because Keycloak reads that
+variable ONLY on a FIRST boot.
 
-Keycloak reads that variable **only on a FIRST boot** — once an admin exists it
-is ignored and the instance must be recreated. Steps 4-6 (deploy the API
-service, point the web service at it, seed accounts) follow after.
+Next: deploy Keycloak + import `infrastructure/keycloak/realm-autoworkshop.json`
+(step 3), then the API service, wire the web service, seed accounts.
 
 ✅ Done this session: database **created**, and migrations **001-034 APPLIED to
 Render** (run `30761632886`, 44 tables). `apply-migrations.yml` dry-runs by
