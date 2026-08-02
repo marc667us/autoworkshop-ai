@@ -50,7 +50,29 @@ Others, same password: `admin@`, `manager@`, `reception@`, `technician@`,
 on the DEFAULT tree. Owner-tree screens (Pricing, Repair Control, Workshop
 Operations) need **Switch user → workshop_owner** first.
 
-### ▶ NEXT PIECE OF WORK, in order
+### ▶ NEXT SESSION — JOB LIST, in order
+
+**J0. Dry-run the Keycloak deploy.** It is built and NEVER RUN.
+`gh workflow run deploy-keycloak.yml --repo marc667us/autoworkshop-ai`
+(no `confirm=APPLY`). Read what it reports, THEN apply. This is the shortest
+path to a live sign-in — everything under it is already done and verified.
+
+**J1. Web job-card detail screen** — see item 1 below. Highest product value.
+
+**J2. Steps 4-6 of the live deploy** — API service, point the web service at
+Keycloak + the API, seed accounts. Only after J0 succeeds.
+
+**J3. More menu entries → real screens** (127 left) — item 2 below.
+
+**J4. Mobile: offline queue, then camera, then push** — item 3 below.
+
+**J5. Evidence upload endpoint + UI** — item 4 below.
+
+**J6. Repo-wide RLS org-scoping** — PLAN BEFORE CODE, item 5 below.
+
+**J7. Rotate `RENDER_API_KEY`** — leaked in a transcript 2026-07-27, still live.
+
+### ▶ DETAIL ON THE PRODUCT ITEMS, in order
 
 1. **The web job-card DETAIL screen.** There is no
    `workshop-floor/job-cards/[id]` page, so the 14 new queue screens render the
