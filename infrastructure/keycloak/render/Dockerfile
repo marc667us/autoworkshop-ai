@@ -66,7 +66,30 @@ ENV KC_DB=postgres \
     KC_HTTP_ENABLED=true \
     KC_PROXY_HEADERS=xforwarded \
     KC_HOSTNAME_STRICT=false \
-    JAVA_OPTS_APPEND="-XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:+UseSerialGC"
+    # 🔴 `-XX:-UseG1GC` IS LOAD-BEARING AND MUST STAY IN FRONT OF `+UseSerialGC`.
+    #
+    # This line previously read `... -XX:+UseSerialGC` with no `-XX:-UseG1GC`,
+    # and THE JVM REFUSED TO START AT ALL:
+    #
+    #     Error occurred during initialization of VM
+    #     Multiple garbage collectors selected
+    #
+    # Keycloak's own entrypoint already puts `-XX:+UseG1GC` in JAVA_OPTS, and
+    # JAVA_OPTS_APPEND is APPENDED to it — so asking for Serial as well asks for
+    # two collectors, which is fatal rather than "last one wins". Keycloak would
+    # never have booted on Render; it was not an OOM risk, it was a dead
+    # container on every single start.
+    #
+    # Caught by the deploy workflow's own "prove the image is a real, optimised
+    # Keycloak" step the first time that workflow was ever run — which is the
+    # whole argument for a step that RUNS the artifact instead of trusting that
+    # it built. Reproduced locally, then verified by reading the flags back:
+    # `UseG1GC = false, UseSerialGC = true`, both `{command line}`.
+    #
+    # Serial is kept rather than simply dropped: on a 512 MiB box it has a
+    # materially smaller footprint than G1, which is the constraint that made
+    # Solar's Keycloak OOM seven times in five days.
+    JAVA_OPTS_APPEND="-XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError -XX:-UseG1GC -XX:+UseSerialGC"
 
 EXPOSE 10000
 
