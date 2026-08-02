@@ -16,6 +16,8 @@ import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { DB_PLATFORM_ADMIN_ROLE_NAMES } from '../authz/permission-matrix';
 import { SupplierCatalogueService } from './supplier-catalogue.service';
 import { DirectoryService } from './directory.service';
+import { validatedBody } from '../common/validation/validated-body';
+import { SetPublicationBody, SetSupplierPublicationBody } from './catalogue.schemas';
 
 /**
  * SUPPLIER-side catalogue management — Slice B.
@@ -156,14 +158,14 @@ export class AdminCatalogueController {
   setSupplierPublication(
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { published?: unknown; verified?: unknown },
+    @Body(validatedBody(SetSupplierPublicationBody)) body: SetSupplierPublicationBody,
   ) {
     this.assertAdmin(req);
     return this.catalogue.setSupplierPublication(
       req.tenantContext,
       id,
-      Boolean(body?.published),
-      body?.verified === undefined ? undefined : Boolean(body.verified),
+      body.published,
+      body.verified,
     );
   }
 
@@ -171,10 +173,10 @@ export class AdminCatalogueController {
   setPartPublication(
     @Req() req: AuthenticatedRequest,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { published?: unknown },
+    @Body(validatedBody(SetPublicationBody)) body: SetPublicationBody,
   ) {
     this.assertAdmin(req);
-    return this.catalogue.setPartPublication(req.tenantContext, id, Boolean(body?.published));
+    return this.catalogue.setPartPublication(req.tenantContext, id, body.published);
   }
 }
 
@@ -211,8 +213,8 @@ export class DirectoryController {
   @Patch('listing/publication')
   setPublication(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { published?: unknown },
+    @Body(validatedBody(SetPublicationBody)) body: SetPublicationBody,
   ) {
-    return this.directory.setPublication(req.tenantContext, Boolean(body?.published));
+    return this.directory.setPublication(req.tenantContext, body.published);
   }
 }

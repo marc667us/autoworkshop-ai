@@ -25,7 +25,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const USER = 'technician@autoworkshop.local';
 /**
  * ⚠️ THE DIAGNOSIS SHEET HAS MORE HIDDEN LABELS THAN THE INSPECTION SHEET, which is

@@ -7,7 +7,7 @@
  * because Keycloak honours its own SSO session and the app never ended it.
  */
 import { chromium } from '@playwright/test';
-const BASE = 'http://localhost:3001', PASSWORD = 'Change_me_locally1!';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001', PASSWORD = 'Change_me_locally1!';
 let fails = 0;
 const check = (l, ok, d) => { console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${l}`); if (!ok) { fails++; if (d) console.log(`        ${d}`); } };
 

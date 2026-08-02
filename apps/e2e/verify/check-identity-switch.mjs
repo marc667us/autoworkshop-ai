@@ -7,7 +7,7 @@
  * the menu is then quietly the wrong one and nothing says so.
  */
 import { chromium } from '@playwright/test';
-const BASE = 'http://localhost:3001';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const PASSWORD = 'Change_me_locally1!';
 
 const b = await chromium.launch();

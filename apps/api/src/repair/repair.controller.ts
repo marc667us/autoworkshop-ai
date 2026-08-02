@@ -24,6 +24,43 @@ import { TestingService } from './testing.service';
 import { PricingService } from './pricing.service';
 import { QualityService } from './quality.service';
 import { VariationService } from './variation.service';
+import { validatedBody } from '../common/validation/validated-body';
+import {
+  AddFindingBody,
+  AddQuotationLineBody,
+  AddRepairTaskBody,
+  AddResourceBody,
+  ApproveCriticalOverrideBody,
+  ChangeStageBody,
+  CompleteExecutionBody,
+  CreateJobCardBody,
+  DecisionBody,
+  MoveTaskBody,
+  OpenQualityInspectionBody,
+  ProposalDecisionBody,
+  RecordDiagnosisSummaryBody,
+  RecordEvidenceBody,
+  RecordInspectionItemsBody,
+  RecordPartUsedBody,
+  RecordProposalNarrativeBody,
+  RecordQuotationDetailsBody,
+  RecordReadinessBody,
+  RecordRepairPlanDetailsBody,
+  RecordRoadTestBody,
+  RecordScanBody,
+  RecordTestResultBody,
+  ReviewVariationBody,
+  SetTaskStatusBody,
+  StartDiagnosisBody,
+  StartExecutionBody,
+  StartInspectionBody,
+  StartRepairPlanBody,
+  StartTimeEntryBody,
+  UpdateFindingBody,
+  UpdateQuotationLineBody,
+  UpdateRepairTaskBody,
+  UpdateResourceBody,
+} from './repair.schemas';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -75,15 +112,7 @@ export class JobCardController {
   @Post()
   create(
     @Req() req: AuthenticatedRequest,
-    @Body()
-    body: {
-      vehicleId: string;
-      complaint: string;
-      priority?: string;
-      expectedCompletionOn?: string;
-      mileageAtIntake?: number;
-      assignedTechnicianId?: string;
-    },
+    @Body(validatedBody(CreateJobCardBody)) body: CreateJobCardBody,
   ) {
     return this.jobCards.create(req.tenantContext, body);
   }
@@ -102,7 +131,7 @@ export class JobCardController {
   changeStage(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { toStage: string; note?: string; overrideReason?: string },
+    @Body(validatedBody(ChangeStageBody)) body: ChangeStageBody,
   ) {
     return this.jobCards.changeStage(req.tenantContext, id, body);
   }
@@ -129,7 +158,7 @@ export class JobCardController {
   startInspection(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { mileageReading?: number },
+    @Body(validatedBody(StartInspectionBody)) body: StartInspectionBody,
   ) {
     return this.inspections.start(req.tenantContext, id, body ?? {});
   }
@@ -155,7 +184,7 @@ export class JobCardController {
   startDiagnosis(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { summary?: string },
+    @Body(validatedBody(StartDiagnosisBody)) body: StartDiagnosisBody,
   ) {
     return this.diagnoses.start(req.tenantContext, id, body ?? {});
   }
@@ -187,13 +216,7 @@ export class JobCardController {
   startRepairPlan(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      repairProcedure?: string;
-      safetyPrecautions?: string;
-      postRepairTests?: string;
-      notes?: string;
-    },
+    @Body(validatedBody(StartRepairPlanBody)) body: StartRepairPlanBody,
   ) {
     return this.repairPlans.start(req.tenantContext, id, body ?? {});
   }
@@ -267,7 +290,7 @@ export class JobCardController {
   startExecution(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { serviceBay?: string; readinessNote?: string },
+    @Body(validatedBody(StartExecutionBody)) body: StartExecutionBody,
   ) {
     return this.executions.start(req.tenantContext, id, body ?? {});
   }
@@ -342,12 +365,7 @@ export class InspectionController {
   recordItems(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      items?: Array<{ checkpointCode: string; result: string; note?: string }>;
-      mileageReading?: number;
-      summary?: string;
-    },
+    @Body(validatedBody(RecordInspectionItemsBody)) body: RecordInspectionItemsBody,
   ) {
     return this.inspections.recordItems(req.tenantContext, id, body ?? {});
   }
@@ -415,19 +433,7 @@ export class DiagnosisController {
   addFinding(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      faultCode?: string;
-      faultDescription?: string;
-      affectedSystem?: string;
-      observedSymptom?: string;
-      testPerformed?: string;
-      expectedResult?: string;
-      actualResult?: string;
-      interpretation?: string;
-      findingStatus?: string;
-      additionalInspectionRequired?: boolean;
-    },
+    @Body(validatedBody(AddFindingBody)) body: AddFindingBody,
   ) {
     return this.diagnoses.addFinding(req.tenantContext, id, body ?? {});
   }
@@ -444,19 +450,7 @@ export class DiagnosisController {
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('findingId', new ParseUUIDPipe()) findingId: string,
-    @Body()
-    body: {
-      faultCode?: string | null;
-      faultDescription?: string;
-      affectedSystem?: string;
-      observedSymptom?: string | null;
-      testPerformed?: string | null;
-      expectedResult?: string | null;
-      actualResult?: string | null;
-      interpretation?: string | null;
-      findingStatus?: string;
-      additionalInspectionRequired?: boolean;
-    },
+    @Body(validatedBody(UpdateFindingBody)) body: UpdateFindingBody,
   ) {
     return this.diagnoses.updateFinding(req.tenantContext, id, findingId, body ?? {});
   }
@@ -483,7 +477,7 @@ export class DiagnosisController {
     @Param('id', new ParseUUIDPipe()) id: string,
     // `null` clears the notes; an absent key is a 400. The column is nullable, so
     // refusing to clear it would be a rule the database does not have.
-    @Body() body: { summary?: string | null },
+    @Body(validatedBody(RecordDiagnosisSummaryBody)) body: RecordDiagnosisSummaryBody,
   ) {
     return this.diagnoses.recordSummary(req.tenantContext, id, body ?? {});
   }
@@ -514,7 +508,7 @@ export class DiagnosisController {
   review(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { decision?: string; note?: string },
+    @Body(validatedBody(DecisionBody)) body: DecisionBody,
   ) {
     return this.diagnoses.review(req.tenantContext, id, body ?? {});
   }
@@ -568,13 +562,7 @@ export class RepairPlanController {
   recordDetails(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      repairProcedure?: string | null;
-      safetyPrecautions?: string | null;
-      postRepairTests?: string | null;
-      notes?: string | null;
-    },
+    @Body(validatedBody(RecordRepairPlanDetailsBody)) body: RecordRepairPlanDetailsBody,
   ) {
     return this.repairPlans.recordDetails(req.tenantContext, id, body ?? {});
   }
@@ -590,16 +578,7 @@ export class RepairPlanController {
   addTask(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      findingId?: string | null;
-      title?: string;
-      description?: string;
-      requiredSkill?: string;
-      serviceBay?: string;
-      assignedTechnicianId?: string;
-      estimatedLabourHours?: number;
-    },
+    @Body(validatedBody(AddRepairTaskBody)) body: AddRepairTaskBody,
   ) {
     return this.repairPlans.addTask(req.tenantContext, id, body ?? {});
   }
@@ -616,16 +595,7 @@ export class RepairPlanController {
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('taskId', new ParseUUIDPipe()) taskId: string,
-    @Body()
-    body: {
-      findingId?: string | null;
-      title?: string;
-      description?: string | null;
-      requiredSkill?: string | null;
-      serviceBay?: string | null;
-      assignedTechnicianId?: string | null;
-      estimatedLabourHours?: number | null;
-    },
+    @Body(validatedBody(UpdateRepairTaskBody)) body: UpdateRepairTaskBody,
   ) {
     return this.repairPlans.updateTask(req.tenantContext, id, taskId, body ?? {});
   }
@@ -643,7 +613,7 @@ export class RepairPlanController {
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('taskId', new ParseUUIDPipe()) taskId: string,
-    @Body() body: { direction?: string },
+    @Body(validatedBody(MoveTaskBody)) body: MoveTaskBody,
   ) {
     return this.repairPlans.moveTask(req.tenantContext, id, taskId, body?.direction ?? '');
   }
@@ -669,16 +639,7 @@ export class RepairPlanController {
   addResource(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      taskId?: string;
-      resourceKind?: string;
-      name?: string;
-      reference?: string;
-      quantity?: number;
-      unit?: string;
-      note?: string;
-    },
+    @Body(validatedBody(AddResourceBody)) body: AddResourceBody,
   ) {
     return this.repairPlans.addResource(req.tenantContext, id, body ?? {});
   }
@@ -689,16 +650,7 @@ export class RepairPlanController {
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('resourceId', new ParseUUIDPipe()) resourceId: string,
-    @Body()
-    body: {
-      taskId?: string | null;
-      resourceKind?: string;
-      name?: string;
-      reference?: string | null;
-      quantity?: number;
-      unit?: string | null;
-      note?: string | null;
-    },
+    @Body(validatedBody(UpdateResourceBody)) body: UpdateResourceBody,
   ) {
     return this.repairPlans.updateResource(req.tenantContext, id, resourceId, body ?? {});
   }
@@ -739,7 +691,7 @@ export class RepairPlanController {
   review(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { decision?: string; note?: string },
+    @Body(validatedBody(DecisionBody)) body: DecisionBody,
   ) {
     return this.repairPlans.review(req.tenantContext, id, body ?? {});
   }
@@ -784,16 +736,7 @@ export class QuotationController {
   recordDetails(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      discountAmount?: number;
-      discountReason?: string | null;
-      validUntil?: string | null;
-      warrantyTerms?: string | null;
-      completionConditions?: string | null;
-      recommendedRepair?: string | null;
-      alternativeOptions?: string | null;
-    },
+    @Body(validatedBody(RecordQuotationDetailsBody)) body: RecordQuotationDetailsBody,
   ) {
     return this.quotations.recordDetails(req.tenantContext, id, body ?? {});
   }
@@ -803,15 +746,7 @@ export class QuotationController {
   addLine(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      lineKind?: string;
-      description?: string;
-      quantity?: number;
-      unit?: string;
-      unitPrice?: number;
-      isOptional?: boolean;
-    },
+    @Body(validatedBody(AddQuotationLineBody)) body: AddQuotationLineBody,
   ) {
     return this.quotations.addLine(req.tenantContext, id, body ?? {});
   }
@@ -822,15 +757,7 @@ export class QuotationController {
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('lineId', new ParseUUIDPipe()) lineId: string,
-    @Body()
-    body: {
-      lineKind?: string;
-      description?: string;
-      quantity?: number;
-      unit?: string | null;
-      unitPrice?: number;
-      isOptional?: boolean;
-    },
+    @Body(validatedBody(UpdateQuotationLineBody)) body: UpdateQuotationLineBody,
   ) {
     return this.quotations.updateLine(req.tenantContext, id, lineId, body ?? {});
   }
@@ -858,7 +785,7 @@ export class QuotationController {
   review(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { decision?: string; note?: string },
+    @Body(validatedBody(DecisionBody)) body: DecisionBody,
   ) {
     return this.quotations.review(req.tenantContext, id, body ?? {});
   }
@@ -903,13 +830,7 @@ export class ProposalController {
   recordNarrative(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      expectedResult?: string | null;
-      riskAndLimitations?: string | null;
-      uncertainties?: string | null;
-      presentationNote?: string | null;
-    },
+    @Body(validatedBody(RecordProposalNarrativeBody)) body: RecordProposalNarrativeBody,
   ) {
     return this.proposals.recordNarrative(req.tenantContext, id, body ?? {});
   }
@@ -938,14 +859,7 @@ export class ProposalController {
   recordDecision(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      decision?: string;
-      approvedOption?: string;
-      decidedByName?: string;
-      decisionChannel?: string;
-      note?: string;
-    },
+    @Body(validatedBody(ProposalDecisionBody)) body: ProposalDecisionBody,
   ) {
     return this.proposals.recordDecision(req.tenantContext, id, body ?? {});
   }
@@ -985,16 +899,7 @@ export class ExecutionController {
   recordReadiness(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      customerApprovalConfirmed?: boolean;
-      partsAvailableConfirmed?: boolean;
-      toolsAvailableConfirmed?: boolean;
-      bayAvailableConfirmed?: boolean;
-      safetyConfirmed?: boolean;
-      serviceBay?: string | null;
-      readinessNote?: string | null;
-    },
+    @Body(validatedBody(RecordReadinessBody)) body: RecordReadinessBody,
   ) {
     return this.executions.recordReadiness(req.tenantContext, id, body ?? {});
   }
@@ -1005,7 +910,7 @@ export class ExecutionController {
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Param('taskId', new ParseUUIDPipe()) taskId: string,
-    @Body() body: { status?: string; statusNote?: string },
+    @Body(validatedBody(SetTaskStatusBody)) body: SetTaskStatusBody,
   ) {
     return this.executions.setTaskStatus(req.tenantContext, id, taskId, body ?? {});
   }
@@ -1021,8 +926,7 @@ export class ExecutionController {
   startTimeEntry(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: { entryKind?: string; executionTaskId?: string; serviceBay?: string; note?: string },
+    @Body(validatedBody(StartTimeEntryBody)) body: StartTimeEntryBody,
   ) {
     return this.executions.startTimeEntry(req.tenantContext, id, body ?? {});
   }
@@ -1041,16 +945,7 @@ export class ExecutionController {
   recordPartUsed(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      description?: string;
-      partNumber?: string;
-      quantity?: number;
-      unit?: string;
-      note?: string;
-      executionTaskId?: string;
-      repairPlanResourceId?: string;
-    },
+    @Body(validatedBody(RecordPartUsedBody)) body: RecordPartUsedBody,
   ) {
     return this.executions.recordPartUsed(req.tenantContext, id, body ?? {});
   }
@@ -1060,14 +955,7 @@ export class ExecutionController {
   recordEvidence(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      evidenceKind?: string;
-      description?: string;
-      recordedValue?: string;
-      externalReference?: string;
-      executionTaskId?: string;
-    },
+    @Body(validatedBody(RecordEvidenceBody)) body: RecordEvidenceBody,
   ) {
     return this.executions.recordEvidence(req.tenantContext, id, body ?? {});
   }
@@ -1082,7 +970,7 @@ export class ExecutionController {
   complete(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { completionNote?: string; unexpectedFindings?: string },
+    @Body(validatedBody(CompleteExecutionBody)) body: CompleteExecutionBody,
   ) {
     return this.executions.complete(req.tenantContext, id, body ?? {});
   }
@@ -1122,21 +1010,7 @@ export class TestingController {
   recordResult(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      testCategory?: string;
-      testName?: string;
-      testProcedure?: string;
-      testEquipment?: string;
-      equipmentIdentifier?: string;
-      calibrationStatus?: string;
-      expectedResult?: string;
-      actualResult?: string;
-      unitOfMeasurement?: string;
-      outcome?: string;
-      evidenceId?: string;
-      comments?: string;
-    },
+    @Body(validatedBody(RecordTestResultBody)) body: RecordTestResultBody,
   ) {
     return this.testing.recordResult(req.tenantContext, id, body ?? {});
   }
@@ -1155,18 +1029,7 @@ export class TestingController {
   recordScan(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      scanPerformed?: boolean;
-      preRepairFaultCodes?: string | null;
-      codesCleared?: string | null;
-      codesRemaining?: string | null;
-      newCodes?: string | null;
-      liveDataChecks?: string | null;
-      systemReadiness?: string | null;
-      warningLightStatus?: string | null;
-      criticalFaultsRemain?: boolean;
-    },
+    @Body(validatedBody(RecordScanBody)) body: RecordScanBody,
   ) {
     return this.testing.recordScan(req.tenantContext, id, body ?? {});
   }
@@ -1176,19 +1039,7 @@ export class TestingController {
   recordRoadTest(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body()
-    body: {
-      roadTestPerformed?: boolean;
-      roadTestDriver?: string | null;
-      roadTestStartMileage?: number;
-      roadTestEndMileage?: number;
-      roadTestRoute?: string | null;
-      roadTestWeather?: string | null;
-      roadTestRoadCondition?: string | null;
-      roadTestInitialSymptom?: string | null;
-      roadTestOutcome?: string | null;
-      roadTestNotes?: string | null;
-    },
+    @Body(validatedBody(RecordRoadTestBody)) body: RecordRoadTestBody,
   ) {
     return this.testing.recordRoadTest(req.tenantContext, id, body ?? {});
   }
@@ -1204,7 +1055,7 @@ export class TestingController {
   approveCriticalOverride(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { reason?: string },
+    @Body(validatedBody(ApproveCriticalOverrideBody)) body: ApproveCriticalOverrideBody,
   ) {
     return this.testing.approveCriticalOverride(req.tenantContext, id, body ?? {});
   }
@@ -1284,7 +1135,7 @@ export class QualityController {
 
   /** Open an inspection against a SUBMITTED test session. */
   @Post()
-  open(@Req() req: AuthenticatedRequest, @Body() body: { testSessionId?: string }) {
+  open(@Req() req: AuthenticatedRequest, @Body(validatedBody(OpenQualityInspectionBody)) body: OpenQualityInspectionBody,) {
     return this.quality.open(req.tenantContext, String(body?.testSessionId ?? ''));
   }
 
@@ -1339,7 +1190,7 @@ export class VariationController {
   review(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { send?: unknown },
+    @Body(validatedBody(ReviewVariationBody)) body: ReviewVariationBody,
   ) {
     return this.variations.review(req.tenantContext, id, Boolean(body?.send));
   }

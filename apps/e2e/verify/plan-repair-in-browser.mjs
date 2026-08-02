@@ -29,7 +29,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 /** §49 — where a technician reaches this screen. */
 const TECH_QUEUE = '/plan-work/repair-planning';
 /**

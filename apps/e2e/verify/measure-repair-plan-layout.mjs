@@ -33,7 +33,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const QUEUE = '/plan-work/repair-planning';
 /** A page from the same shell with no slice-4 content — the baseline for T-0044. */
 const CONTROL = '/home/dashboard';

@@ -20,7 +20,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const USER = 'technician@autoworkshop.local';
 const PASSWORD = process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!';
 

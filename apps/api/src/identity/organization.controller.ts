@@ -9,7 +9,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
+import { validatedBody } from '../common/validation/validated-body';
 import { OrganizationService } from './organization.service';
+import { CreateOrganizationBody } from './organization.schemas';
 
 /**
  * Thin by design.
@@ -40,7 +42,7 @@ export class OrganizationController {
   @Post()
   create(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { name: string; orgType: string },
+    @Body(validatedBody(CreateOrganizationBody)) body: CreateOrganizationBody,
   ) {
     return this.organizations.create(req.tenantContext, body);
   }

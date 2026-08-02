@@ -17,7 +17,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const WORKSHOP = 'http://localhost:3001';
+const WORKSHOP = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 /**
  * ⚠️ THE ADMINISTRATOR'S ROUTE, NOT THE OWNER'S. `owner@autoworkshop.local`
  * resolves as `platform_administrator` (the strongest role it holds, by

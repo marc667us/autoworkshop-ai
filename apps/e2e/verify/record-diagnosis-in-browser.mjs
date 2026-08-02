@@ -24,7 +24,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const QUEUE = '/record-work/diagnostic-results';
 /**
  * Where a `workshop_supervisor` actually reaches this screen.

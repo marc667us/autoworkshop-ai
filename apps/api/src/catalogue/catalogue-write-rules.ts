@@ -56,6 +56,27 @@ export class CatalogueInputError extends Error {
   }
 }
 
+/**
+ * A real boolean, never a coercion.
+ *
+ * 🔴 `Boolean('false') === true`. `inStock` was read with `Boolean(raw['inStock'])`,
+ * so a client marking a part OUT OF STOCK with the string `"false"` — the exact
+ * thing a form post or a loosely-typed API client sends — set it IN STOCK.
+ * `Boolean('0')`, `Boolean({})` and `Boolean([])` are all `true` too, so every
+ * near-miss failed in the direction that keeps a part on sale.
+ *
+ * Found by Codex after the same bug was fixed on the three publication routes;
+ * this one had been missed. Same trap as slice 9's quality gate, where a
+ * coercing parse would have turned "the complaint was NOT addressed" into a
+ * pass. Enumerate what is accepted; never reinterpret.
+ */
+export function strictBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new CatalogueInputError(`${field} must be true or false`);
+  }
+  return value;
+}
+
 function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -214,7 +235,7 @@ export function parsePart(raw: Record<string, unknown>): PartInput {
     currency: cleanCurrency(raw['currency']),
     // Absent means IN STOCK, matching the column default. A supplier adding a
     // part is adding something they have.
-    inStock: raw['inStock'] === undefined ? true : Boolean(raw['inStock']),
+    inStock: raw['inStock'] === undefined ? true : strictBoolean(raw['inStock'], 'inStock'),
   };
 }
 
@@ -240,7 +261,7 @@ export function parsePartPatch(raw: Record<string, unknown>): Partial<PartInput>
   }
   if ('price' in raw) patch.price = cleanPrice(raw['price']);
   if ('currency' in raw) patch.currency = cleanCurrency(raw['currency']);
-  if ('inStock' in raw) patch.inStock = Boolean(raw['inStock']);
+  if ('inStock' in raw) patch.inStock = strictBoolean(raw['inStock'], 'inStock');
   return patch;
 }
 

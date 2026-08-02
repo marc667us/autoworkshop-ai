@@ -15,6 +15,8 @@ import { BranchService } from './branch.service';
 import { MembershipService } from './membership.service';
 import { MeService } from './me.service';
 import { UserService } from './user.service';
+import { validatedBody } from '../common/validation/validated-body';
+import { CreateBranchBody, GrantMembershipBody, WithdrawMembershipBody } from './identity.schemas';
 
 /**
  * Identity controllers — T-0003.
@@ -47,7 +49,7 @@ export class BranchController {
   @Post()
   create(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { organizationId: string; name: string; location?: string; operatingHours?: string },
+    @Body(validatedBody(CreateBranchBody)) body: CreateBranchBody,
   ) {
     return this.branches.create(req.tenantContext, body);
   }
@@ -86,7 +88,7 @@ export class MembershipController {
   @Post()
   grant(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { userId: string; organizationId: string; branchId?: string | null; roleName: string },
+    @Body(validatedBody(GrantMembershipBody)) body: GrantMembershipBody,
   ) {
     return this.memberships.grant(req.tenantContext, body);
   }
@@ -100,7 +102,7 @@ export class MembershipController {
   withdraw(
     @Req() req: AuthenticatedRequest,
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: { status: 'suspended' | 'revoked' },
+    @Body(validatedBody(WithdrawMembershipBody)) body: WithdrawMembershipBody,
   ) {
     return this.memberships.withdraw(req.tenantContext, id, body.status);
   }

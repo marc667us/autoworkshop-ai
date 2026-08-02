@@ -12,6 +12,8 @@ import {
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { CustomerService } from './customer.service';
 import { VehicleService } from './vehicle.service';
+import { validatedBody } from '../common/validation/validated-body';
+import { CreateCustomerBody, CreateVehicleBody } from './core.schemas';
 
 /**
  * Thin by design, exactly like `OrganizationController`.
@@ -64,16 +66,7 @@ export class CustomerController {
   @Post()
   create(
     @Req() req: AuthenticatedRequest,
-    @Body()
-    body: {
-      displayName: string;
-      customerType?: string;
-      email?: string;
-      phone?: string;
-      preferredContact?: string;
-      location?: string;
-      notes?: string;
-    },
+    @Body(validatedBody(CreateCustomerBody)) body: CreateCustomerBody,
   ) {
     return this.customers.create(req.tenantContext, body);
   }
@@ -130,24 +123,7 @@ export class VehicleController {
   @Post()
   create(
     @Req() req: AuthenticatedRequest,
-    @Body()
-    body: {
-      customerId: string;
-      registrationNumber: string;
-      makeId: string;
-      modelId?: string;
-      vin?: string;
-      variant?: string;
-      modelYear?: number;
-      engineType?: string;
-      transmissionType?: string;
-      fuelType?: string;
-      currentMileageKm?: number;
-      colour?: string;
-      insurerName?: string;
-      insurancePolicyNo?: string;
-      insuranceExpiresOn?: string;
-    },
+    @Body(validatedBody(CreateVehicleBody)) body: CreateVehicleBody,
   ) {
     return this.vehicles.create(req.tenantContext, body);
   }

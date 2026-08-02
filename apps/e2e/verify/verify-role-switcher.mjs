@@ -39,7 +39,7 @@
  */
 import { chromium } from '@playwright/test';
 
-const WORKSHOP = 'http://localhost:3001';
+const WORKSHOP = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const SUPPLIER = 'http://localhost:3002';
 const PASSWORD = process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!';
 
