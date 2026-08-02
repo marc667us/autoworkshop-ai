@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   Pressable,
   RefreshControl,
@@ -14,6 +15,8 @@ import * as AuthSession from 'expo-auth-session';
 import { CLIENT_ID, DISCOVERY, SCOPES } from './src/auth/config';
 import { currentAccessToken, exchangeCode, redirectUri, signOut } from './src/auth/session';
 import { apiGet, describeFailure, type ApiFailure } from './src/api/client';
+import { JobCardDetailScreen } from './src/screens/JobCardDetailScreen';
+import { humanStage } from './src/screens/stage-display';
 
 /**
  * AutoWorkshop mobile — the first screen, Android first.
@@ -57,6 +60,15 @@ type Screen =
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: 'checking' });
+  // ⚠️ A ONE-LEVEL STACK HELD IN STATE, NOT A NAVIGATION LIBRARY.
+  // `@react-navigation` would add three packages and two native modules to
+  // move between two screens. The app already models its screens as a
+  // discriminated union; this is one more axis on the same idea. When the
+  // app grows a third level or needs deep links, swap it for the library —
+  // that is a real threshold, and this is not yet at it.
+  const [openJobCardId, setOpenJobCardId] = useState<string | null>(null);
+
+
   const [refreshing, setRefreshing] = useState(false);
 
   // ⚠️ `usePKCE: true` STATED EXPLICITLY, though it is the library default.
@@ -136,6 +148,25 @@ export default function App() {
     setRefreshing(false);
   }, [loadJobs]);
 
+  // 🔴 THE ANDROID BACK BUTTON IS PART OF NAVIGATION, NOT AN EXTRA. Raised by
+  // Codex: holding the stack in one state field means nothing else implements
+  // back semantics, so pressing the system Back button on a job card would have
+  // EXITED THE APP instead of returning to the list. On an Android-first app
+  // that reads as a crash.
+  //
+  // Returning `true` marks the press handled. The listener is only registered
+  // while a card is open, so at the list the button keeps its normal meaning
+  // (leave the app) rather than trapping the user inside.
+  useEffect(() => {
+    if (!openJobCardId) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setOpenJobCardId(null);
+      void onRefresh();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [openJobCardId, onRefresh]);
+
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar style="auto" />
@@ -154,7 +185,27 @@ export default function App() {
           </Pressable>
         )}
       </View>
-      <Body screen={screen} onSignIn={onSignIn} canSignIn={Boolean(request)} refreshing={refreshing} onRefresh={onRefresh} />
+      {openJobCardId ? (
+        <JobCardDetailScreen
+          jobCardId={openJobCardId}
+          onBack={() => {
+            setOpenJobCardId(null);
+            // Re-read the list on the way back: a stage moved on the detail
+            // screen would otherwise leave the list showing the old one, and a
+            // board that disagrees with the card is worse than a slow board.
+            void onRefresh();
+          }}
+        />
+      ) : (
+        <Body
+          screen={screen}
+          onSignIn={onSignIn}
+          canSignIn={Boolean(request)}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          onOpen={setOpenJobCardId}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -165,12 +216,14 @@ function Body({
   canSignIn,
   refreshing,
   onRefresh,
+  onOpen,
 }: {
   screen: Screen;
   onSignIn: () => void;
   canSignIn: boolean;
   refreshing: boolean;
   onRefresh: () => void;
+  onOpen: (id: string) => void;
 }) {
   // Every state is rendered. `05.txt` §2 requires loading, empty AND error
   // states per module, and this is the module.
@@ -236,17 +289,27 @@ function Body({
       keyExtractor={(j) => j.id}
       contentContainerStyle={styles.list}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      renderItem={({ item }) => (
-        <View style={styles.card} accessible accessibilityRole="summary">
-          <Text style={styles.cardTitle}>
-            {item.jobNumber ?? item.job_number ?? item.id.slice(0, 8)}
-          </Text>
-          <Text style={styles.muted}>
-            {item.vehicleRegistration ?? item.vehicle_registration ?? 'Vehicle not recorded'}
-          </Text>
-          <Text style={styles.badge}>{item.stage ?? item.status ?? 'unknown stage'}</Text>
-        </View>
-      )}
+      renderItem={({ item }) => {
+        const number = item.jobNumber ?? item.job_number ?? item.id.slice(0, 8);
+        const stage = item.stage ?? item.status;
+        return (
+          <Pressable
+            style={styles.card}
+            onPress={() => onOpen(item.id)}
+            accessibilityRole="button"
+            // The whole row is the target. A tap area smaller than the card is
+            // the single most common complaint about a list on a phone held in
+            // a gloved hand.
+            accessibilityLabel={`Open job card ${number}`}
+          >
+            <Text style={styles.cardTitle}>{number}</Text>
+            <Text style={styles.muted}>
+              {item.vehicleRegistration ?? item.vehicle_registration ?? 'Vehicle not recorded'}
+            </Text>
+            <Text style={styles.badge}>{stage ? humanStage(stage) : 'unknown stage'}</Text>
+          </Pressable>
+        );
+      }}
     />
   );
 }
