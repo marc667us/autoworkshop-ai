@@ -146,6 +146,21 @@ services:
       KC_DB_USERNAME: ${POSTGRES_USER:-autoworkshop}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
       KC_HEALTH_ENABLED: "true"
+      # 🔴 REQUIRED THE MOMENT KEYCLOAK IS REACHED THROUGH AN HTTPS PROXY
+      # (a cloudflared preview tunnel, or any reverse proxy).
+      #
+      # `start-dev` derives a token's `iss` from the REQUEST, and without this
+      # it ignores `X-Forwarded-Proto` and mints `http://<host>/realms/...`
+      # while the browser and the API both know the origin as `https://`. The
+      # API validates `jwt.verify({ issuer })` byte for byte against its own
+      # KEYCLOAK_URL, so every token is rejected — and the failure is the
+      # confusing one recorded on 2026-08-02: the Auth.js session cookie stays
+      # valid, so the page renders "Sign out" AND "Not signed in" at once,
+      # `/me` 401s, and the viewer is null.
+      #
+      # Harmless for plain-http LAN access: the header is simply absent, so
+      # nothing changes there.
+      KC_PROXY_HEADERS: xforwarded
       # Solar's Keycloak OOM'd on a constrained free host. Cap the heap here so
       # the same failure cannot repeat silently.
       JAVA_OPTS_APPEND: "-Xms256m -Xmx512m"

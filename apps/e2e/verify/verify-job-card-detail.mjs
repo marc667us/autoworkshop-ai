@@ -242,13 +242,22 @@ try {
   // without it this would silently re-test identity 1.
   const switched = await switchRole(owner.page, 'workshop_owner', '/home/dashboard');
   check('owner: the role switch to workshop_owner took', switched, 'everything below would measure the wrong tree');
-  // ⚠️ A QUEUE WITH ROWS IN IT. `/workshop-operations/repair-requests` filters
-  // to the three intake stages, and the seeded cards are all past them — so it
-  // renders its empty state and proves nothing about links.
+  /**
+   * ⚠️ THE OWNER'S SURFACE HERE IS THEIR JOB-CARD LIST, NOT ONE OF THEIR QUEUES,
+   * AND THAT IS DELIBERATE — it is the only owner-tree surface that ALWAYS has
+   * rows. Every §46/§47 queue filters to a slice of the lifecycle, so which of
+   * them is populated depends on where the seeded cards happen to sit, and
+   * step 7 below deliberately moves one to a terminal stage. An assertion whose
+   * subject can empty itself is an assertion that fails for the wrong reason.
+   *
+   * Queue linking is still proven twice over, by identities whose surface IS a
+   * queue: the platform administrator on `/home/tasks` and reception on
+   * `/home/my-tasks`, both of which show every stage.
+   */
   await openFromQueue(
     'workshop_owner',
     owner.page,
-    '/repair-control/ready-for-collection',
+    '/workshop-operations/job-cards',
     '/workshop-operations/job-cards',
   );
 
