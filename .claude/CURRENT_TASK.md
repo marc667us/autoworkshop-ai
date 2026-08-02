@@ -2,14 +2,46 @@
 
 ## ▶ NEXT: Slice D — remaining items
 
-**Slice 7b variation control** · **MinIO evidence upload** (unblocked — MinIO was
-unreachable from the host until `d9845c3`) · **repo-wide RLS org-scoping**
-(outstanding issue 8) · **a QC SCREEN** (the API and schema are done; slice 9 has
-no UI yet, so the verdict can only be recorded through the API).
+**MinIO evidence upload** (unblocked — MinIO was unreachable from the host until
+`d9845c3`) · **repo-wide RLS org-scoping** (outstanding issue 8) ·
+**a VARIATION SCREEN** (slice 7b's schema and API are done; no UI yet).
 
-⚠️ Slice 9's independence rule is enforced and proved, but a technician cannot
-yet SEE a quality inspection — `quality_control` is a stage on the board with no
-screen behind it. That is the next front-end piece.
+⚠️ Slice 7b is enforced end to end in the database but a technician cannot yet
+RAISE a variation from a screen — it is API-only. That is the next front-end
+piece. The QC screen is DONE (`037c548`, 3 routes).
+
+## Slice D — slice 7b VARIATION CONTROL COMPLETE 2026-08-01 (API + schema)
+
+Migrations **032 + 033 + 034**, `VariationService`, `VariationController`.
+`07.txt` §14 + §3766 step 12: **"the technician PAUSES CHARGEABLE ADDITIONAL WORK
+UNTIL APPROVAL IS RECEIVED."**
+
+- 🔴 **The money rule is structural.** `work_authorized_at` is the ONE flag
+  execution code consults, and `ck_variation_authorization` refuses it on
+  anything but an approved variation.
+- **Lifecycle:** draft → internally_reviewed → sent_to_customer → approved /
+  rejected / modified. A trigger refuses every skip, on INSERT **and** UPDATE.
+- **Consent needs a name and a channel** when chargeable — but NOT when free, or
+  staff would record £0 variations as nothing at all and lose the record.
+- **Content freezes when SENT**, not when decided, so the number the customer
+  approves is the number the row holds.
+- 🔴 **CODEX FOUND FOUR HOLES IN 032, one CRITICAL — and the first was the SAME
+  defect 030 shipped and 031 fixed: the rule enforced on UPDATE and nowhere
+  else.** Twice in one day. A direct INSERT could create a variation already
+  approved and already authorised. Fixed in **033**, with the internal review's
+  role AND identity moved into the database, an append-only
+  `variation_decisions` history (§3792), and the content freeze moved earlier.
+- 🔴 **`verify/032` WALKED THROUGH THE HOLE AND CALLED IT A PASS** — it performed
+  the internal review as the technician who raised the variation, exactly what
+  §3792 forbids. 033 made it fail; that is how the gap was found. Corrected to
+  use an independent supervisor.
+- **034** loosened one notch: 033 froze `work_authorized_at` so hard that an
+  approved variation lacking it could NEVER be authorised — approved is terminal,
+  so the work would be permanently blocked. Filling a NULL is a COMPLETION;
+  changing a set value is a REWRITE. Only the second is refused. The consent
+  fields keep the stricter rule, because a name added later fabricates consent.
+- Proof: `verify/032` **16/16** · `verify/033` **14/14** · `variation.spec.ts`
+  **18/18**.
 
 ⚠️ **Org-scoping now has a starting point.** Migration 027 introduced
 `identity.current_organization_id()` for ONE table. The repo-wide change is

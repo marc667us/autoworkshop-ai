@@ -23,6 +23,7 @@ import { ExecutionService } from './execution.service';
 import { TestingService } from './testing.service';
 import { PricingService } from './pricing.service';
 import { QualityService } from './quality.service';
+import { VariationService } from './variation.service';
 
 /**
  * Thin by design, like every controller here. The rules — who may read which
@@ -1295,5 +1296,57 @@ export class QualityController {
     @Body() body: Record<string, unknown>,
   ) {
     return this.quality.decide(req.tenantContext, id, body ?? {});
+  }
+}
+
+/**
+ * The repair variation flow — Phase 5 slice 7b (`07.txt` §14, §3766 step 12).
+ *
+ * ⚠️ `TenantGuard`, because migration 032's policy and triggers read the context
+ * `withTenant` sets. On `UserGuard` these routes would authenticate, return 200,
+ * and change nothing.
+ *
+ * ⚠️ THE CUSTOMER'S DECISION IS RECORDED BY STAFF, NOT SUBMITTED BY THE
+ * CUSTOMER. A customer is often not a system user at all — they answer the
+ * phone. So `decidedByName` and `decisionChannel` are what carry the consent,
+ * and a chargeable approval is refused without them.
+ */
+@Controller('variations')
+@UseGuards(TenantGuard)
+export class VariationController {
+  constructor(private readonly variations: VariationService) {}
+
+  @Get()
+  list(@Req() req: AuthenticatedRequest, @Query('jobCardId') jobCardId: string) {
+    return this.variations.listForCard(req.tenantContext, jobCardId);
+  }
+
+  /** §3764 step 11 — the technician found more work. */
+  @Post()
+  raise(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { executionId?: string } & Record<string, unknown>,
+  ) {
+    return this.variations.raise(req.tenantContext, String(body?.executionId ?? ''), body ?? {});
+  }
+
+  /** §3792 — reviewed internally, then optionally sent to the customer. */
+  @Patch(':id/review')
+  review(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: { send?: unknown },
+  ) {
+    return this.variations.review(req.tenantContext, id, Boolean(body?.send));
+  }
+
+  /** The customer's answer — and, for an approval, the authorisation with it. */
+  @Patch(':id/decision')
+  decide(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.variations.decide(req.tenantContext, id, body ?? {});
   }
 }

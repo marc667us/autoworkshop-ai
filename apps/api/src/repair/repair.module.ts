@@ -11,6 +11,7 @@ import {
   TestingController,
   PricingController,
   QualityController,
+  VariationController,
 } from './repair.controller';
 import { DiagnosisService } from './diagnosis.service';
 import { RepairPlanService } from './repair-plan.service';
@@ -20,6 +21,7 @@ import { ExecutionService } from './execution.service';
 import { TestingService } from './testing.service';
 import { PricingService } from './pricing.service';
 import { QualityService } from './quality.service';
+import { VariationService } from './variation.service';
 import { InspectionService } from './inspection.service';
 import { JobCardService } from './job-card.service';
 
@@ -46,6 +48,7 @@ import { JobCardService } from './job-card.service';
     TestingController,
     PricingController,
     QualityController,
+    VariationController,
   ],
   providers: [
     JobCardService,
@@ -58,6 +61,7 @@ import { JobCardService } from './job-card.service';
     TestingService,
     PricingService,
     QualityService,
+    VariationService,
   ],
   exports: [
     JobCardService,
@@ -70,6 +74,7 @@ import { JobCardService } from './job-card.service';
     TestingService,
     PricingService,
     QualityService,
+    VariationService,
   ],
 })
 export class RepairModule {}
