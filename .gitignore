@@ -105,3 +105,15 @@ infrastructure/backup/.lock-*/
 # the directory, not the two filenames it happens to hold today — the lesson
 # recorded above the `.verify-*cookies*` line applies identically here.
 apps/mobile/.expo/
+
+# 🔴 REAL ENVIRONMENT FILES. `.env` holds POSTGRES_PASSWORD, DATABASE_URL and
+# AUTH_SECRET. Until now NOTHING in this file protected it — it stayed out of
+# the repo by discipline alone, and a single `git add -A` would have committed
+# live credentials. This repo has already had that near-miss once (see the
+# `.verify-*cookies*` note above), so the rule is a PATTERN, not a filename:
+# any future `.env.local`, `.env.production` etc. is covered the day it is made.
+# `.env.example` is the documented template and carries placeholders only, so it
+# is explicitly re-included.
+.env
+.env.*
+!.env.example
