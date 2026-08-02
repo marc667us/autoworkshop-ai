@@ -356,7 +356,7 @@ jobs:
           else
             echo "updating ${SERVICE_NAME} ($EXISTING)"
             SVC="$EXISTING"
-            # ⚠️ A SINGLE PUT of the whole env-var set. Solar learned that每 a
+            # ⚠️ A SINGLE PUT of the whole env-var set. Solar learned that a
             # partial or repeated env change triggers a redeploy each time, and
             # a boot that misses the health-check window leaves the service
             # stuck at `update_in_progress`, BLOCKING every later deploy.

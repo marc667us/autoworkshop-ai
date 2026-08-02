@@ -95,8 +95,22 @@ printed to a transcript. Without it the Keycloak admin console is unreachable
 and the instance would have to be recreated, because Keycloak reads that
 variable ONLY on a FIRST boot.
 
-Next: deploy Keycloak + import `infrastructure/keycloak/realm-autoworkshop.json`
-(step 3), then the API service, wire the web service, seed accounts.
+**Step 3 is BUILT BUT NEVER RUN.** `.github/workflows/deploy-keycloak.yml`,
+`infrastructure/keycloak/render/{Dockerfile,build-prod-realm.mjs}` and migration
+035 (Keycloak schema + role, applied locally AND on Render) are all in place.
+
+⚠️ The workflow has NOT been executed, not even a dry run. Its YAML parses; that
+is all that is verified. **Run it without `confirm=APPLY` first.**
+
+```
+gh workflow run deploy-keycloak.yml --repo marc667us/autoworkshop-ai
+```
+
+Verified separately: the realm builder strips all 9 dev redirect URIs and
+refuses a wildcard or a baked-in user (control passes); `keycloak_app` is denied
+on identity/core/repair/audit and can only use its own schema.
+
+Then steps 4-6: deploy the API service, point the web service at it, seed accounts.
 
 ✅ Done this session: database **created**, and migrations **001-034 APPLIED to
 Render** (run `30761632886`, 44 tables). `apply-migrations.yml` dry-runs by
