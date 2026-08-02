@@ -3,12 +3,17 @@
 ## ▶ NEXT: Slice D — remaining items
 
 **MinIO evidence upload** (unblocked — MinIO was unreachable from the host until
-`d9845c3`) · **repo-wide RLS org-scoping** (outstanding issue 8) ·
-**a VARIATION SCREEN** (slice 7b's schema and API are done; no UI yet).
+`d9845c3`) · **repo-wide RLS org-scoping** (outstanding issue 8 — needs a plan
+before code).
 
-⚠️ Slice 7b is enforced end to end in the database but a technician cannot yet
-RAISE a variation from a screen — it is API-only. That is the next front-end
-piece. The QC screen is DONE (`037c548`, 3 routes).
+✅ Slice 7b's SCREEN is done (4 tree routes). QC screen done (`037c548`).
+
+⚠️ **Two e2e runs need a fixture first**, because each consumes what it tests:
+```
+bash scripts/seed-qc-fixture.sh          # before verify-quality-control.mjs
+bash scripts/seed-variation-fixture.sh   # before verify-variation-screen.mjs
+```
+Without them both report a clean pass while never exercising the main path.
 
 ## Slice D — slice 7b VARIATION CONTROL COMPLETE 2026-08-01 (API + schema)
 

@@ -1316,9 +1316,13 @@ export class QualityController {
 export class VariationController {
   constructor(private readonly variations: VariationService) {}
 
+  /** The organisation's variations, or one job card's when named. */
   @Get()
-  list(@Req() req: AuthenticatedRequest, @Query('jobCardId') jobCardId: string) {
-    return this.variations.listForCard(req.tenantContext, jobCardId);
+  list(@Req() req: AuthenticatedRequest, @Query('jobCardId') jobCardId?: string) {
+    // An empty string is what an absent query parameter looks like on some
+    // paths; normalised to undefined so it means "the whole queue" rather than
+    // becoming a uuid cast of ''.
+    return this.variations.list(req.tenantContext, jobCardId || undefined);
   }
 
   /** §3764 step 11 — the technician found more work. */

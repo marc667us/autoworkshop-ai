@@ -68,8 +68,20 @@ export class VariationService {
     }
   }
 
-  /** Variations on a job card, newest first. */
-  async listForCard(ctx: TenantContext, jobCardId: string) {
+  /**
+   * Variations on one job card, or the whole organisation's when no card is
+   * named.
+   *
+   * ⚠️ THE UNFILTERED FORM IS THE QUEUE, and it is not a convenience: a
+   * supervisor's job here is "what is waiting on me", which is a question about
+   * the ORGANISATION, not about a job card they would have to already know. The
+   * job-card form is what a job sheet uses.
+   *
+   * Both go through the same tenant policy, so the unfiltered form is scoped by
+   * RLS exactly as the filtered one is — it returns more ROWS, never a wider
+   * TENANT.
+   */
+  async list(ctx: TenantContext, jobCardId?: string) {
     return this.db.withTenant(ctx, async (client) => {
       const { rows } = await client.query(
         `SELECT v.*, j.job_number,
@@ -80,9 +92,13 @@ export class VariationService {
              ON j.id = v.job_card_id AND j.tenant_id = v.tenant_id
            LEFT JOIN identity.users rb ON rb.id = v.created_by
            LEFT JOIN identity.users ir ON ir.id = v.internally_reviewed_by
-          WHERE v.job_card_id = $1 AND v.tenant_id = $2 AND v.organization_id = $3
-          ORDER BY v.variation_no DESC`,
-        [jobCardId, ctx.tenantId, ctx.organizationId],
+          WHERE v.tenant_id = $1 AND v.organization_id = $2
+            AND ($3::uuid IS NULL OR v.job_card_id = $3::uuid)
+          -- Open ones first: a queue is ordered by what needs doing, and a
+          -- decided variation is history the reader scrolls to, not acts on.
+          ORDER BY (v.status IN ('draft','internally_reviewed','sent_to_customer')) DESC,
+                   v.created_at DESC`,
+        [ctx.tenantId, ctx.organizationId, jobCardId ?? null],
       );
       return rows.map((r) => VariationService.toVariation(r as Record<string, unknown>, ctx));
     });
@@ -136,9 +152,17 @@ export class VariationService {
 
       // The originally approved work, from the approved repair plan.
       const approved = await client.query(
-        `SELECT string_agg(t.description, '; ' ORDER BY t.position) AS work
+        // ⚠️ `plan_id`, NOT `repair_plan_id`, and `title` alongside the
+        // description. Both were assumed from the table's name and both were
+        // wrong: the INSERT failed with "column t.repair_plan_id does not
+        // exist" — a 500 on every attempt to raise a variation. Checked against
+        // information_schema rather than inferred the second time.
+        //
+        // COALESCE because `description` is nullable while `title` is not; a
+        // task with no description would otherwise blank the whole aggregate.
+        `SELECT string_agg(COALESCE(t.description, t.title), '; ' ORDER BY t.position) AS work
            FROM repair.repair_plan_tasks t
-           JOIN repair.repair_plans p ON p.id = t.repair_plan_id
+           JOIN repair.repair_plans p ON p.id = t.plan_id
           WHERE p.job_card_id = $1 AND p.tenant_id = $2 AND p.status = 'approved'`,
         [exec.job_card_id, ctx.tenantId],
       );

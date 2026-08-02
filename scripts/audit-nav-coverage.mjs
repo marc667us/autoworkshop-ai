@@ -160,6 +160,11 @@ const FEATURES = [
   { cap: 'CAN_CREATE_VEHICLE',  dedicated: true, frag: ['register-vehicle','add-vehicle'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
   { cap: 'CAN_INSPECT (QC)',    dedicated: false, frag: ['quality-control','quality-control-queue'], roles: ['quality_control_inspector','workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
   { cap: 'PRICING (029 owner)', dedicated: true, frag: ['pricing-rules','pricing'], roles: ['workshop_owner','platform_administrator'] },
+  // Raising is the technician's step (§3764 step 11); reviewing is the
+  // supervisor's (§3792). Both are `dedicated: false` because the same screen
+  // serves both — a technician sees the raise form, a reviewer sees the queue.
+  { cap: 'CAN_RAISE_VARIATION',  dedicated: false, frag: ['variations','variation-requests'], roles: ['technician','workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
+  { cap: 'CAN_REVIEW_VARIATION', dedicated: false, frag: ['variations','variation-requests'], roles: ['workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
   { cap: 'CAN_CREATE_JOB',      dedicated: false, frag: ['job-cards','create-job-card','new-job-card'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
   { cap: 'CAN_GRANT_MEMBERSHIP',dedicated: false, frag: ['staff','staff-and-roles','users-and-roles','roles-and-permissions'], roles: ['platform_administrator','workshop_owner'] },
   { cap: 'CAN_CREATE_BRANCH',   dedicated: false, frag: ['branches'], roles: ['platform_administrator','workshop_owner'] },

@@ -587,6 +587,11 @@ const workshopOwnerGroups: NavGroup[] = [
     ['repairs-in-progress', 'Repairs in Progress'],
     ['testing', 'Testing'],
     ['quality-control', 'Quality Control'],
+    // Added with the variation screen. CAN_RAISE_VARIATION and
+    // CAN_REVIEW_VARIATION both include workshop_owner, and the §46 tree carried
+    // no variation entry at all — the same gap class the navigation audit was
+    // built for, caught by that audit rather than by accident this time.
+    ['variations', 'Variations'],
     ['ready-for-collection', 'Ready for Collection'],
   ]),
   group('parts-and-suppliers', 'Parts and Suppliers', 'box', [
@@ -675,6 +680,9 @@ const workshopManagerGroups: NavGroup[] = [
     ['repair-progress', 'Repair Progress'],
     ['testing-queue', 'Testing Queue'],
     ['quality-control-queue', 'Quality-Control Queue'],
+    // As the owner tree: workshop_manager holds both variation capabilities and
+    // had no entry.
+    ['variations', 'Variations'],
   ]),
   group('parts', 'Parts', 'box', [
     ['parts-status', 'Parts Status'],
