@@ -1,19 +1,48 @@
 # Current task
 
-## ▶ NEXT: Slice D — remaining items
+## ▶ NEXT: the web job-card DETAIL screen
 
-**MinIO evidence upload** (unblocked — MinIO was unreachable from the host until
-`d9845c3`) · **repo-wide RLS org-scoping** (outstanding issue 8 — needs a plan
-before code).
+`apps/workshop-web` has **no `workshop-floor/job-cards/[id]` page**. The 14 job
+queues shipped 2026-08-02 therefore render the job number as PLAIN TEXT — a link
+would send the user's most obvious click straight into the "not built yet"
+catch-all, and a dead primary action teaches people the screen is broken.
 
-✅ Slice 7b's SCREEN is done (4 tree routes). QC screen done (`037c548`).
+**The mobile app already has this screen** (`apps/mobile/src/screens/
+JobCardDetailScreen.tsx` + `stage-display.ts`): it reads `/job-cards/:id`,
+renders the fields, and offers `allowedStages` as buttons that PATCH
+`/job-cards/:id/stage` and then RE-READ rather than update optimistically.
+Follow its shape.
 
-⚠️ **Two e2e runs need a fixture first**, because each consumes what it tests:
-```
-bash scripts/seed-qc-fixture.sh          # before verify-quality-control.mjs
-bash scripts/seed-variation-fixture.sh   # before verify-variation-screen.mjs
-```
-Without them both report a clean pass while never exercising the main path.
+⚠️ The field is `allowedStages`, NOT `stageOptions`. Writing the wrong name does
+not throw — the list is empty and the screen says "your role cannot move this
+job", which is a confident falsehood shown to owners too. A drift test in the
+mobile app guards it; the web one will need its own.
+
+## Then
+
+1. More menu entries → real screens. 127 remain;
+   `node scripts/audit-menu-coverage.mjs --all` lists them. Build the ones whose
+   API already exists (catalogue/parts, customers, vehicles, memberships); the
+   rest need their API first.
+2. Mobile: offline queue, camera capture, push — all still empty.
+3. Evidence upload: `POST /evidence/upload-url` + `storage_key` wiring + UI.
+4. Repo-wide RLS org-scoping — PLAN BEFORE CODE.
+
+## Done 2026-08-02 — do not rebuild
+
+- **Mobile app made to actually run** (`5cf6fe8`) — three defects stopped it
+  bundling; its Keycloak client was missing from the RUNNING realm.
+- **Canonical Keycloak host** (`53ebcea`) — `scripts/start-local.sh`; fixes the
+  issuer mismatch that rendered "Sign out" and "Not signed in" together.
+- **Runtime input validation** (`2f4c56e`) — Zod at the boundary on 43
+  endpoints; fixed `Boolean('false') === true` on the 3 publication routes.
+- **start-local drives every web app** (`948ea3d`) — APPS list, real guards.
+- **Migrations 001-034 APPLIED TO RENDER** (`65a7d59`, `5c9da4f`) — 44 tables.
+- **Mobile job-card detail + stage transitions** (`1143fde`) — 35 mobile tests.
+- **14 menu entries became real screens** (`217a648`) — job queues, 14/14 in a
+  browser, menu coverage 141 → 127 dead entries.
+
+---
 
 ## Slice D — slice 7b VARIATION CONTROL COMPLETE 2026-08-01 (API + schema)
 

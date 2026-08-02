@@ -11,6 +11,144 @@ below), applies pending migrations, and prints what to run next.
 
 Then this file, then `.claude/CURRENT_TASK.md`.
 
+**To bring the whole local stack up (one command):**
+
+```bash
+APPS="workshop:3001 supplier:3002 admin:3006" bash scripts/start-local.sh
+# then, from apps/mobile:
+MOBILE_HOST=<your LAN ip> npx expo start --lan
+```
+
+`start-local.sh` derives ONE canonical host, registers each app's Keycloak
+redirect URI, REFUSES a stale `.next`, asserts the ports are really free, and
+proves `/me` still rejects an anonymous and a foreign-issuer token before it
+reports ready.
+
+---
+
+## 📍 SESSION CLOSE 2026-08-02 — READ THIS BLOCK FIRST
+
+**Tip `217a648`, pushed, tree clean.** Owner's instruction mid-session:
+*"i need only the web and mobile app"* — no deployment work after that point.
+
+### Local URLs and the login
+
+| | |
+|---|---|
+| Workshop web | `http://<LAN>:3001` |
+| Supplier web | `http://<LAN>:3002` |
+| Admin web | `http://<LAN>:3006` |
+| Mobile | `exp://<LAN>:8081` (Expo Go) |
+
+```
+owner@autoworkshop.local / Change_me_locally1!     (FULL EMAIL, plain http)
+```
+Others, same password: `admin@`, `manager@`, `reception@`, `technician@`,
+`supervisor@`, `customer@autoworkshop.local`.
+
+⚠️ `owner@` defaults to **platform_administrator** by ROLE_PRECEDENCE and lands
+on the DEFAULT tree. Owner-tree screens (Pricing, Repair Control, Workshop
+Operations) need **Switch user → workshop_owner** first.
+
+### ▶ NEXT PIECE OF WORK, in order
+
+1. **The web job-card DETAIL screen.** There is no
+   `workshop-floor/job-cards/[id]` page, so the 14 new queue screens render the
+   job number as PLAIN TEXT — a link would send the user's most obvious click
+   into the "not built yet" catch-all. **Highest value next slice**: it unblocks
+   the primary action on 14 screens. The MOBILE app already has a detail screen
+   with stage transitions (`apps/mobile/src/screens/`) to follow.
+2. **More menu entries → real screens.** 127 still hit the placeholder;
+   `node scripts/audit-menu-coverage.mjs --all` lists every one. Buildable NOW
+   are those whose API exists: catalogue/parts, customers, vehicles,
+   memberships. The rest need their API first (finance, reports, communication,
+   knowledge, learning, technical tools).
+3. **Mobile: offline queue, camera capture, push.** All three empty;
+   `packages/offline-sync` is an empty directory. A workshop phone loses signal
+   constantly, so the offline queue changes how the app feels most.
+4. **Evidence upload.** Storage layer done and proven against MinIO (`06ccf8d`);
+   still needs `POST /evidence/upload-url`, `storage_key` wiring, and the UI.
+5. **Repo-wide RLS org-scoping** — needs a PLAN before code. Migration 027's
+   `identity.current_organization_id()` is the start; both failure modes fail
+   closed (unset GUC → NULL matches nothing, non-uuid → RAISE).
+
+### 🔴 ISSUE LOG
+
+| # | Issue | State |
+|---|---|---|
+| I1 | **Live sign-in still impossible** — DB exists and is migrated, steps 3-6 remain | **OWNER-GATED**, below |
+| I2 | No web job-card detail page; queue job numbers are plain text | open → item 1 |
+| I3 | 127 menu entries still render "not built yet" | open → item 2 |
+| I4 | Mobile has no offline queue / camera / push | open → item 3 |
+| I5 | `RENDER_API_KEY` unrotated since the 07-27 transcript leak | treat as compromised |
+| I6 | T-0044 — document scrolls 51px sideways at 768px, every page | open, pre-existing |
+| I7 | `record-diagnosis-in-browser` and `plan-repair-in-browser` CONSUME their fixtures | seed first; diagnosis has NO seeder |
+| I8 | `security-posture.integration.spec` flakes on pool contention in the full run | passes alone; uninvestigated |
+| I9 | `next start` warns `output: standalone` is set but unused | cosmetic, unexamined |
+
+**I1 — the one thing only the owner can do:**
+
+```
+gh secret set KC_BOOTSTRAP_ADMIN_PASSWORD --repo marc667us/autoworkshop-ai
+```
+
+Keycloak reads that variable **only on a FIRST boot** — once an admin exists it
+is ignored and the instance must be recreated. Steps 4-6 (deploy the API
+service, point the web service at it, seed accounts) follow after.
+
+✅ Done this session: database **created**, and migrations **001-034 APPLIED to
+Render** (run `30761632886`, 44 tables). `apply-migrations.yml` dry-runs by
+default and CALLS `infrastructure/migrations/run.sh` rather than reimplementing
+the ledger.
+
+### WHAT CHANGED — the load-bearing parts
+
+**The mobile app had never actually run.** Three defects stopped it booting and
+no test caught any of them: `vitest` exercises modules, and `expo start` prints
+"Waiting on :8081" without building anything. **Requesting the bundle found all
+three.** Its Keycloak client also existed in the committed realm and NOT in the
+running one — a realm imports ONCE, on first boot.
+
+⚠️ The Metro config deliberately does NOT set `disableHierarchicalLookup`,
+contrary to Expo's monorepo guide: that guide assumes npm/yarn hoisting, and
+pnpm needs the walk-up lookup to resolve a package's own dependencies.
+
+**The auth failure that shows two contradictory things at once.** Keycloak
+derives a token's `iss` from the request Host; the API validates
+`jwt.verify({issuer})` against its own KEYCLOAK_URL. A LAN sign-in against an
+API expecting localhost rejected every token — while the session cookie stayed
+valid, so the page rendered **"Sign out" AND "Not signed in" together**.
+
+**`.gitignore` had no env rule at all.** `.env` holds `POSTGRES_PASSWORD`,
+`DATABASE_URL` and `AUTH_SECRET`, kept out of the repo by discipline alone.
+
+**Input validation was never enforced** — every write body was a TypeScript
+type, erased at runtime. 43 endpoints now validated with Zod at the boundary.
+A global `ValidationPipe` was REJECTED: without DTOs it validates nothing while
+making every controller look guarded.
+
+### TRAPS THAT BIT THIS SESSION
+
+- 🔴 **A field name that would have lied to every user.** The mobile detail
+  screen was written against `stageOptions`; the API returns `allowedStages`.
+  Nothing throws — the list is empty and the screen says *"your role cannot move
+  this job"*, shown to owners included.
+- 🔴 **Same class in the web queues:** `awaiting_internal_review` is a BOARD
+  COLUMN key, not a stage. The drift test caught it on its first run.
+- 🔴 **My own verification lied twice.** The queue check reported 1/14 (thirteen
+  CORRECT `requireNavRoute` refusals — it drove every route as a platform
+  administrator), then 0/14 from a corrupted regex while all fourteen worked.
+  **Drive each route as the role whose tree owns it.**
+- 🔴 **`Boolean('false')` is `true`** — found in `inStock` AFTER fixing the same
+  bug on the three publication routes. Enumerate accepted values, never coerce.
+- ⚠️ **`|| true` on a `find` is load-bearing** in `start-local.sh`: not every app
+  has `src/`, and under `set -euo pipefail` a missing path killed the script
+  SILENTLY after the API had already started.
+- ⚠️ **`MSYS_NO_PATHCONV=1`** before any node script taking `/routes` as argv.
+- ⚠️ **The Bash tool's cwd persists between calls** — several commands failed on
+  a leftover `cd apps/x`.
+- ⚠️ **`cmd | head -N && echo ok`** reports `head`'s exit code, not `cmd`'s.
+
 ---
 
 ## 📍 SESSION CLOSE 2026-08-01 pt2 — READ THIS BLOCK FIRST
