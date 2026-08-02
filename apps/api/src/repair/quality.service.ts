@@ -73,6 +73,98 @@ export class QualityService {
     }
   }
 
+  /**
+   * Repairs waiting for a quality inspection.
+   *
+   * ⚠️ EACH ROW CARRIES `mayInspect` FOR *THIS* VIEWER, and that is the whole
+   * reason this endpoint is more than a list. §563's independence rule means the
+   * queue is not the same for two people: a card you worked on is one you may
+   * never sign off. Computing it here — with the same
+   * `repair.user_worked_on_job_card()` the trigger uses — lets the screen say so
+   * on the card itself, instead of letting an inspector open it, fill it in, and
+   * only then be refused.
+   *
+   * ⚠️ IT IS NOT A SECURITY CONTROL. The flag decides what the screen ENABLES;
+   * the trigger decides what the database ACCEPTS, and it would refuse a
+   * self-inspection with this method deleted.
+   *
+   * ⚠️ THE COMPLAINT IS SELECTED DELIBERATELY. §563 asks the inspector to verify
+   * "the ORIGINAL COMPLAINT has been addressed" — an inspector who cannot see
+   * what the customer originally reported cannot answer the question they are
+   * being asked, and would be reduced to guessing from the repair notes.
+   */
+  async queue(ctx: TenantContext) {
+    return this.db.withTenant(ctx, async (client) => {
+      const { rows } = await client.query(
+        `SELECT s.id            AS test_session_id,
+                j.id            AS job_card_id,
+                j.job_number,
+                j.complaint,
+                j.stage,
+                s.submitted_at,
+                q.id            AS inspection_id,
+                q.attempt_no,
+                -- ⚠️ WHO HOLDS THE OPEN INSPECTION. decide() refuses anyone but
+                -- the inspector who opened it — the signature is the entire value
+                -- of an independent check — so without this the screen would show
+                -- a second inspector a form that could only ever 403 on submit.
+                q.inspector_id  AS inspection_inspector_id,
+                iu.display_name AS inspection_inspector_name,
+                -- Prior FAILED attempts, so the inspector knows this car has
+                -- been round before and what for.
+                (SELECT count(*) FROM repair.quality_inspections f
+                  WHERE f.test_session_id = s.id AND f.status = 'failed') AS failed_attempts,
+                repair.user_worked_on_job_card(j.id, $3) AS viewer_worked_on_it
+           FROM repair.repair_test_sessions s
+           JOIN repair.job_cards j
+             ON j.id = s.job_card_id AND j.tenant_id = s.tenant_id
+           -- The OPEN inspection, if there is one. A LEFT JOIN, because a repair
+           -- with no inspection yet is exactly what this queue is for.
+           LEFT JOIN repair.quality_inspections q
+             ON q.test_session_id = s.id AND q.status = 'in_progress'
+           -- Reached THROUGH the tenant-isolated inspection row, never selected
+           -- directly: identity.users has no RLS of its own.
+           LEFT JOIN identity.users iu ON iu.id = q.inspector_id
+          WHERE s.tenant_id = $1 AND s.organization_id = $2
+            AND s.status = 'submitted'
+            -- ⚠️ ALREADY-PASSED REPAIRS ARE EXCLUDED, and a NOT EXISTS is used
+            -- rather than a join condition: a LEFT JOIN does not filter, it only
+            -- adds columns. This repository has already shipped a count that
+            -- included rows it meant to exclude for exactly that reason.
+            AND NOT EXISTS (
+              SELECT 1 FROM repair.quality_inspections p
+               WHERE p.test_session_id = s.id AND p.status = 'passed')
+          ORDER BY s.submitted_at ASC NULLS LAST`,
+        [ctx.tenantId, ctx.organizationId, ctx.userId],
+      );
+
+      return {
+        mayInspectAtAll: mayInspect(ctx.activeRole),
+        items: rows.map((r) => {
+          const row = r as Record<string, unknown>;
+          return {
+            testSessionId: String(row['test_session_id']),
+            jobCardId: String(row['job_card_id']),
+            jobNumber: String(row['job_number']),
+            complaint: (row['complaint'] as string | null) ?? null,
+            stage: String(row['stage']),
+            submittedAt: row['submitted_at'] === null ? null : String(row['submitted_at']),
+            inspectionId: row['inspection_id'] === null ? null : String(row['inspection_id']),
+            attemptNo: row['attempt_no'] === null ? null : Number(row['attempt_no']),
+            // True only when the OPEN inspection is this viewer's own.
+            inspectionIsMine: row['inspection_inspector_id'] === ctx.userId,
+            inspectionInspectorName:
+              (row['inspection_inspector_name'] as string | null) ?? null,
+            failedAttempts: Number(row['failed_attempts'] ?? 0),
+            // Both halves of §563, resolved per row for this viewer.
+            mayInspect: mayInspect(ctx.activeRole) && row['viewer_worked_on_it'] !== true,
+            viewerWorkedOnIt: row['viewer_worked_on_it'] === true,
+          };
+        }),
+      };
+    });
+  }
+
   /** Inspections on a job card, newest attempt first. */
   async listForCard(ctx: TenantContext, jobCardId: string): Promise<QualityInspection[]> {
     return this.db.withTenant(ctx, async (client) => {

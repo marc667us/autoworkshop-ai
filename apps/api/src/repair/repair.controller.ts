@@ -1267,6 +1267,20 @@ export class PricingController {
 export class QualityController {
   constructor(private readonly quality: QualityService) {}
 
+  /**
+   * Repairs waiting for a quality inspection, each flagged with whether THIS
+   * viewer may inspect it.
+   *
+   * ⚠️ DECLARED BEFORE ANY `:id` ROUTE AND IT MUST STAY THERE. Nest matches in
+   * declaration order, so a `@Get(':id')` added above this would swallow
+   * `/queue` as an id and answer 400 on a UUID pipe. `JobCardController` carries
+   * the same note for the same reason.
+   */
+  @Get('queue')
+  queue(@Req() req: AuthenticatedRequest) {
+    return this.quality.queue(req.tenantContext);
+  }
+
   /** Open an inspection against a SUBMITTED test session. */
   @Post()
   open(@Req() req: AuthenticatedRequest, @Body() body: { testSessionId?: string }) {
