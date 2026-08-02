@@ -1,0 +1,183 @@
+# Apply the migration set to the Render Postgres.
+#
+# WHY THIS EXISTS. `provision-database.yml` created `autoworkshop-postgres` and
+# its own closing output names this as step 2 of six before the live site can be
+# signed into. There was no workflow for it: migrations 001-034 had only ever
+# been applied to the LOCAL container, which is why every session close has
+# carried the line "migrations are LOCAL ONLY".
+#
+# 🔴 IT USES `infrastructure/migrations/run.sh`, NOT A COPY OF IT. The ledger,
+# the ordering and the checksum drift-guard are the whole value of that script.
+# A second implementation here would be a second set of those rules, and the
+# first time the two disagreed the live schema would diverge from the migration
+# history — the precise failure this repo bans CREATE-IF-NOT-EXISTS to avoid.
+# The runner grew a `DATABASE_URL` mode for exactly this caller.
+#
+# ⚠️ DRY RUN BY DEFAULT, AND THE DRY RUN INSPECTS. It connects to the real
+# database, creates only the bookkeeping ledger, and reports which migrations
+# are genuinely PENDING there. A preview that merely prints SQL would not have
+# told you whether the database was already migrated.
+#
+# ⚠️ REHEARSED BEFORE IT WAS WRITTEN. All 34 migrations were applied to a
+# freshly created empty database on 2026-08-02 through the same `DATABASE_URL`
+# path this workflow uses: 34 applied, 45 tables across 6 schemas, and a re-run
+# was a clean no-op. An empty database is the production case, so that rehearsal
+# is the real one rather than an approximation.
+
+name: Apply migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually run the migrations. Anything else = inspect only.'
+        required: false
+        default: ''
+      database:
+        description: 'Render Postgres service name'
+        required: false
+        default: 'autoworkshop-postgres'
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: ${{ inputs.database }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY is not set on this repository"
+            exit 1
+          fi
+
+      # ⚠️ ABSOLUTE PATH, AND THE VERSION IS ASSERTED. Solar lost a run to a job
+      # that installed postgresql-client-18 and then called bare `psql`, which
+      # PATH resolved to Ubuntu's bundled 16.x. Echoing a version is not a check
+      # — this fails if the binary is not the one that was installed.
+      - name: Install a matching psql
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          test -x "$PSQL" || { echo "::error::$PSQL is not executable"; exit 1; }
+          "$PSQL" --version
+          "$PSQL" --version | grep -q ' 17\.' || {
+            echo "::error::psql at $PSQL is not the installed 17.x"; exit 1; }
+          echo "PSQL_BIN=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Find the database and read its connection string
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /tmp/pg.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?limit=50")"
+          echo "GET /v1/postgres -> $code"
+          [ "$code" = "200" ] || { echo "::error::could not list databases"; exit 1; }
+
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          print('databases visible to this key:')
+          found = ''
+          for r in rows:
+              d = r.get('postgres', r)
+              print(f"  - {d.get('name')}  status={d.get('status')}")
+              if d.get('name') == want:
+                  found = d.get('id')
+                  status = d.get('status')
+          if not found:
+              sys.exit(f"::error::no database named {want}")
+          # A database that is still creating cannot be migrated, and the error
+          # psql would give ("could not connect") names the symptom rather than
+          # this cause.
+          if status not in ('available', 'creating'):
+              sys.exit(f"::error::{want} is '{status}', not available")
+          if status == 'creating':
+              print(f"::warning::{want} is still creating; the connection may not be ready")
+          open('/tmp/db_id', 'w').write(found)
+          PY
+          ID="$(cat /tmp/db_id)"
+          echo "database id: $ID"
+
+          # The connection string is fetched PER RUN and never stored in the
+          # repo — Solar's pattern. It is written to a file rather than an env
+          # var so it cannot land in a command line or in the step log.
+          code="$(curl -sS -o /tmp/conn.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}/connection-info")"
+          [ "$code" = "200" ] || { echo "::error::could not read connection info ($code)"; exit 1; }
+
+          python3 - <<'PY'
+          import json
+          info = json.load(open('/tmp/conn.json'))
+          url = info.get('externalConnectionString') or info.get('internalConnectionString')
+          if not url:
+              raise SystemExit('::error::no connection string in the response')
+          open('/tmp/dburl', 'w').write(url)
+          # Never print the URL. Only its shape, so a failure is diagnosable.
+          print('connection string acquired:', url.split('@')[-1].split('/')[0][:4] + '…')
+          PY
+          chmod 600 /tmp/dburl
+
+      - name: Inspect (always) and apply (only on APPLY)
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          export PSQL_BIN="${PSQL_BIN}"
+
+          echo "::group::pending migrations"
+          DRY_RUN=1 bash infrastructure/migrations/run.sh
+          echo "::endgroup::"
+
+          if [ "${CONFIRM}" != "APPLY" ]; then
+            echo
+            echo "INSPECT ONLY — nothing was written."
+            echo "Re-run with confirm=APPLY to apply the pending migrations above."
+            exit 0
+          fi
+
+          echo "::group::applying"
+          bash infrastructure/migrations/run.sh
+          echo "::endgroup::"
+
+      - name: Prove the schema is really there
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          # Reading the ledger back is not enough: it is a table this workflow
+          # writes. The check that matters is that the SCHEMA exists, so it
+          # counts real tables per schema and fails if the core ones are absent.
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$DATABASE_URL" -tA -c "
+            SELECT table_schema || '=' || count(*)
+            FROM information_schema.tables
+            WHERE table_schema IN ('identity','core','repair','catalogue','audit')
+            GROUP BY table_schema ORDER BY table_schema;" | tee /tmp/counts
+          for s in identity core repair catalogue audit; do
+            grep -q "^${s}=" /tmp/counts || {
+              echo "::error::schema '${s}' has no tables after applying migrations"; exit 1; }
+          done
+          echo "schema verified"
+
+      - name: Always remove the credential
+        if: always()
+        run: rm -f /tmp/dburl /tmp/conn.json
