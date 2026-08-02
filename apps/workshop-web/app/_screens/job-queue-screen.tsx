@@ -1,7 +1,9 @@
 import { Suspense } from 'react';
-import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+import Link from 'next/link';
+import { ApiFailure, apiGet, viewerRole } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, StatusBadge } from '@autoworkshop/ui';
 import { navLabelFor } from './nav-label';
+import { jobCardDetailHrefFor } from './job-card-detail-href';
 
 /**
  * A job queue — the same job cards, narrowed to one point in the lifecycle.
@@ -100,7 +102,21 @@ export async function JobQueueScreen({ route, queue }: { route: string; queue: J
 }
 
 async function QueueTable({ queue }: { queue: JobQueue }) {
-  const result = await apiGet<JobCard[]>('workshop', '/job-cards');
+  /**
+   * Resolved together: the rows and WHERE THIS VIEWER MAY OPEN ONE.
+   *
+   * 🔴 The detail route differs per role tree, and a hardcoded href would 404
+   * the technician and the receptionist on the primary action of their own
+   * queue — the trees put job cards in four different places and one of them
+   * has no job-cards route at all. `jobCardDetailHrefFor` holds that map and a
+   * drift test proves every entry is a route that role's tree really carries.
+   * `viewerRole` is the same function `requireNavRoute` uses to pick the tree,
+   * so the link and the gate cannot resolve differently.
+   */
+  const [result, role] = await Promise.all([
+    apiGet<JobCard[]>('workshop', '/job-cards'),
+    viewerRole('workshop'),
+  ]);
 
   if (!result.ok) {
     // ⚠️ THE SHARED FAILURE COMPONENT, not a hand-written message. It already
@@ -138,15 +154,14 @@ async function QueueTable({ queue }: { queue: JobQueue }) {
         {rows.map((c) => (
           <tr key={c.id}>
             {/*
-              ⚠️ PLAIN TEXT, NOT A LINK — DELIBERATELY, AND ONLY FOR NOW.
-              Raised by Codex: there is no `workshop-floor/job-cards/[id]` page
-              in this app, so linking the job number sent the user's most
-              obvious next click straight into the "not built yet" catch-all.
-              A dead link on the primary action is worse than no link: it
-              teaches people the queue is broken. The web detail screen is the
-              next slice; the MOBILE app already has one.
+              THE PRIMARY ACTION OF THE SCREEN, and now a real one. It was
+              plain text until the detail screen existed, because a link into
+              the "not built yet" catch-all teaches people the queue is broken.
+              The href is per-role — see `jobCardDetailHrefFor`.
             */}
-            <Td>{c.jobNumber}</Td>
+            <Td>
+              <Link href={jobCardDetailHrefFor(role, c.id)}>{c.jobNumber}</Link>
+            </Td>
             <Td>
               {c.registrationNumber}
               {c.vehicleDescription ? ` — ${c.vehicleDescription}` : ''}

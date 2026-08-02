@@ -1,8 +1,10 @@
 import { Suspense } from 'react';
-import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+import Link from 'next/link';
+import { ApiFailure, apiGet, viewerRole } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
+import { jobCardDetailHrefFor } from './job-card-detail-href';
 
 /**
  * Job cards — `1.txt` §322, the record the whole repair lifecycle hangs off.
@@ -100,7 +102,13 @@ export async function JobCardsScreen({ route }: { route: string }) {
 }
 
 async function JobCardsTable() {
-  const result = await apiGet<JobCard[]>('workshop', '/job-cards');
+  // The rows, and WHERE THIS VIEWER MAY OPEN ONE — the detail route differs per
+  // role tree. See `job-card-detail-href.ts` for why a single href would refuse
+  // the technician and reception on their own list.
+  const [result, role] = await Promise.all([
+    apiGet<JobCard[]>('workshop', '/job-cards'),
+    viewerRole('workshop'),
+  ]);
 
   if (!result.ok) {
     return <ApiFailure reason={result.reason} workspaceId="workshop" />;
@@ -157,7 +165,9 @@ async function JobCardsTable() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {j.jobNumber}
+                {/* The row header IS the link — opening the card is what this
+                    list is for, and the job number is what people read out. */}
+                <Link href={jobCardDetailHrefFor(role, j.id)}>{j.jobNumber}</Link>
               </th>
               <td style={{ padding: primitive.space[3], color: themeVar.textPrimary, whiteSpace: 'nowrap' }}>
                 <span style={{ fontFamily: primitive.fontFamily.mono }}>{j.registrationNumber}</span>

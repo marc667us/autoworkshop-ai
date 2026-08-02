@@ -1,24 +1,61 @@
 # Current task
 
-## ▶ NEXT: the web job-card DETAIL screen
+## ✅ DONE 2026-08-03 — the web job-card DETAIL screen
 
-`apps/workshop-web` has **no `workshop-floor/job-cards/[id]` page**. The 14 job
-queues shipped 2026-08-02 therefore render the job number as PLAIN TEXT — a link
-would send the user's most obvious click straight into the "not built yet"
-catch-all, and a dead primary action teaches people the screen is broken.
+Shipped. `JobCardDetailScreen` + **four** `[id]` routes + the job number is a
+LINK on every queue and both job-card lists. Proven in a browser as four
+identities: **52/52** in `apps/e2e/verify/verify-job-card-detail.mjs`.
 
-**The mobile app already has this screen** (`apps/mobile/src/screens/
-JobCardDetailScreen.tsx` + `stage-display.ts`): it reads `/job-cards/:id`,
-renders the fields, and offers `allowedStages` as buttons that PATCH
-`/job-cards/:id/stage` and then RE-READ rather than update optimistically.
-Follow its shape.
+🔴 **THE SHAPE THAT MATTERS: ONE SCREEN, FOUR ROUTES, AND THE HREF IS PER-ROLE.**
+The five navigation trees disagree about where job cards live, and every page
+opens with `requireNavRoute`, which 404s a route the viewer's tree does not
+carry. A single hardcoded href would have worked perfectly for whoever wrote it
+and refused the two roles that live in these queues all day:
 
-⚠️ The field is `allowedStages`, NOT `stageOptions`. Writing the wrong name does
-not throw — the list is empty and the screen says "your role cannot move this
-job", which is a confident falsehood shown to owners too. A drift test in the
-mobile app guards it; the web one will need its own.
+| tree | job-card list route | why |
+|---|---|---|
+| §34 default + §47 manager | `/workshop-floor/job-cards` | as before |
+| §46 owner | `/workshop-operations/job-cards` | owner files them under Operations |
+| §49 technician | `/home/my-assigned-work` | **has NO job-cards route at all** |
+| §48 reception | `/home/my-tasks` | **has no job-card LIST at all** — the queue is their list |
 
-## Then
+The map is `app/_screens/job-card-detail-href.ts`; `job-card-detail-href.spec.ts`
+resolves the REAL navigation model and fails if any role's href is not in that
+role's own tree, and asserts a detail page exists on disk behind each one.
+**Never hardcode a job-card href.** Use `jobCardDetailHrefFor(role, id)`.
+
+### What the gates found
+
+- **Codex, 3 findings, all real, all fixed.** The one that mattered: the screen
+  branched on `closed` FIRST and said *"this job is closed, so it has no next
+  stage"* — but `closed_at` is stamped at `completed` and the lifecycle permits
+  `completed → warranty_follow_up`, so a closed card can legitimately carry a
+  move. It suppressed a real action behind a false sentence. **Branch on the
+  data (`allowedStages`), let `closed` choose only the WORDS.** Also: a comment
+  claiming `viewerRole()` returns undefined for supervisor/storekeeper/QC/
+  cashier — it does not, they map to real `RoleId`s and reach the default tree
+  through `workspaceForRole`, a different door. Fourth comment-claims-a-rule
+  defect in this repo.
+- **Supervisor `/security-review`: no findings.** It independently read
+  `check-page-gates.sh` rather than trusting the comment citing it.
+
+### 🔴 MY OWN VERIFICATION LIED TWICE BEFORE IT WAS RIGHT — again
+
+1. It reported "the job number is still plain text" for the owner and for
+   reception. Both screens were CORRECT and rendering their empty state: the
+   owner's queue filters to stages no seeded card was at, and **reception lands
+   on `Alpha Parts Supply`**, which owns no job cards. The script now proves
+   there are ROWS before it judges a link, and switches reception's organisation.
+2. It reported "the detail screen did not render" for two pages that had
+   rendered — `body.textContent()` includes the inline `<style>` block, and a
+   loose `/404/` test matched **a hex colour**. Assert on `main`, never `body`.
+
+⚠️ **`verify-job-card-detail.mjs` step 7 CONSUMES ITS FIXTURE** — it moves a card
+to `completed` to prove the closed-card case. Re-seed with
+`bash scripts/seed-dev-core.sh`. It reports a SKIP, never a pass, when the
+fixture is gone.
+
+## ▶ NEXT
 
 1. More menu entries → real screens. 127 remain;
    `node scripts/audit-menu-coverage.mjs --all` lists them. Build the ones whose
@@ -27,6 +64,14 @@ mobile app guards it; the web one will need its own.
 2. Mobile: offline queue, camera capture, push — all still empty.
 3. Evidence upload: `POST /evidence/upload-url` + `storage_key` wiring + UI.
 4. Repo-wide RLS org-scoping — PLAN BEFORE CODE.
+
+⚠️ **`scripts/guardrails/check-page-gates.sh` is RED on master — 17 FAILs, all
+pre-existing and all apparently FALSE.** Verified identical with and without
+this slice. Two causes, both script limitations: a page that gates via a
+`const ROUTE = '...'` indirection rather than a string literal
+(`solution-and-approval/variations`), and customer-web's Next **route groups**
+(`(app)`), whose parentheses are not part of the URL. Worth a session: a Stage-0
+guardrail that cries wolf 17 times is one nobody reads.
 
 ## Done 2026-08-02 — do not rebuild
 
