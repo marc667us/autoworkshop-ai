@@ -131,7 +131,27 @@ const workshopGroups: NavGroup[] = [
   ]),
   group('customer-reception', 'Customer Reception', 'users', [
     ['customers', 'Customers'],
+    // ⚠️ GATED, WHERE THE OWNER AND MANAGER TREES' COPIES ARE NOT — and the
+    // difference is the whole point. Those trees are reached by ONE role each,
+    // and that role holds `CAN_CREATE_CUSTOMER`. This tree is the FALLBACK for
+    // five: platform_administrator, workshop_supervisor,
+    // quality_control_inspector, storekeeper and cashier — and only the first
+    // of them may create a customer.
+    //
+    // Ungated, this entry offered the other four a menu item that could only
+    // ever be refused, which is the exact mirror of the defect this change was
+    // made to fix. Caught by Codex; it falsified the "grants nothing new" claim.
+    //
+    // `organization.admin` is the right key because among those five roles ONLY
+    // `platform_administrator` holds it (permission-matrix.ts) — so the entry
+    // resolves to precisely the set that can use it. `workshop_manager` holds no
+    // permissions at all, which is why the manager tree's copy must stay
+    // ungated: gating it there would hide it from the one role it is for.
+    ['register-customer', 'Register Customer', { permission: 'organization.admin' }],
     ['vehicles', 'Vehicles'],
+    // Same reasoning. `CAN_CREATE_VEHICLE` additionally includes `customer`,
+    // who is in a different WORKSPACE entirely and never sees this tree.
+    ['register-vehicle', 'Register Vehicle', { permission: 'organization.admin' }],
     ['new-complaints', 'New Complaints', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['vehicle-intake', 'Vehicle Intake'],
@@ -201,6 +221,7 @@ const workshopGroups: NavGroup[] = [
     'settings',
     [
       ['workshop-profile', 'Workshop Profile'],
+      ['pricing', 'Pricing'],
       ['branches', 'Branches'],
       ['staff-and-roles', 'Staff and Roles'],
       ['workflow-rules', 'Workflow Rules'],
@@ -543,7 +564,9 @@ const workshopOwnerGroups: NavGroup[] = [
   ]),
   group('customers-and-vehicles', 'Customers and Vehicles', 'users', [
     ['customers', 'Customers'],
+    ['register-customer', 'Register Customer'],
     ['vehicles', 'Vehicles'],
+    ['register-vehicle', 'Register Vehicle'],
     ['repair-history', 'Repair History'],
     ['customer-feedback', 'Customer Feedback'],
   ]),
@@ -629,6 +652,8 @@ const workshopManagerGroups: NavGroup[] = [
     ['workshop-calendar', 'Workshop Calendar'],
   ]),
   group('requests-and-reception', 'Requests and Reception', 'users', [
+    ['register-customer', 'Register Customer'],
+    ['register-vehicle', 'Register Vehicle'],
     ['repair-request-inbox', 'Repair Request Inbox'],
     ['customer-complaint-inbox', 'Customer Complaint Inbox', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],

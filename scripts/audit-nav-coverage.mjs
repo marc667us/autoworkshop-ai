@@ -61,15 +61,50 @@ function block(name) {
 
 /** group('slug', ... [ ['entry', 'Label'], ... ]) → "group/entry" paths. */
 function routesIn(src) {
-  const out = new Set();
+  const out = new Map(); // route -> required permission (or null)
   const groupRe = /group\(\s*'([a-z0-9-]+)'/g;
   const groups = [...src.matchAll(groupRe)].map((m) => ({ slug: m[1], at: m.index }));
   for (let g = 0; g < groups.length; g++) {
     const from = groups[g].at;
     const to = g + 1 < groups.length ? groups[g + 1].at : src.length;
     const body = src.slice(from, to);
-    for (const m of body.matchAll(/\[\s*'([a-z0-9-]+)'\s*,\s*'/g)) {
-      out.add(`/${groups[g].slug}/${m[1]}`);
+    // ⚠️ THE PER-ENTRY PERMISSION IS CAPTURED, not just the slug. Without it
+    // this audit false-PASSED on its own change: it saw
+    // /customer-reception/register-customer in the DEFAULT tree and called the
+    // capability covered, while four of the five roles landing on that tree
+    // could not create a customer at all. Codex found the defect the audit
+    // should have. Coverage means "a role that HOLDS the capability can SEE the
+    // entry", and visibility depends on the gate.
+    // ⚠️ THE GROUP GATE IS FOUND BY BALANCING THE ENTRIES ARRAY, not by a
+    // non-greedy regex. The regex version stopped at the FIRST `]` — the end of
+    // the first entry — and so never saw the trailing permission argument. It
+    // reported the DEFAULT `settings` group as ungated, which made `Pricing`
+    // look like it was offered to four roles that in fact cannot see it: a
+    // false alarm from the very check meant to catch false alarms.
+    const groupPerm = (() => {
+      const open = body.indexOf('[');
+      if (open < 0) return null;
+      let depth = 0;
+      for (let j = open; j < body.length; j++) {
+        if (body[j] === '[') depth++;
+        else if (body[j] === ']') {
+          depth--;
+          if (depth === 0) {
+            // Whatever follows the entries array, up to the group's closing `)`.
+            const tail = body.slice(j + 1, body.indexOf('),', j) + 1);
+            return /'([a-z]+\.[a-z]+)'/.exec(tail)?.[1] ?? null;
+          }
+        }
+      }
+      return null;
+    })();
+    for (const m of body.matchAll(/\[\s*'([a-z0-9-]+)'\s*,\s*'[^']*'(?:\s*,\s*\{([^}]*)\})?/g)) {
+      const entryPerm = /permission:\s*'([a-z.]+)'/.exec(m[2] ?? '');
+      // ⚠️ `groupPerm` is a STRING, not a match array — indexing `[1]` on it
+      // yielded the single character 'r' from 'organization.admin', and the
+      // report then claimed a permission called "r" was hiding the entry. It
+      // read as a real finding; it was a leftover from when this was a regex.
+      out.set(`/${groups[g].slug}/${m[1]}`, entryPerm?.[1] ?? groupPerm ?? null);
     }
   }
   return out;
@@ -81,6 +116,24 @@ const TREES = {
   'manager (§47)': routesIn(block('workshopManagerGroups')),
   'reception (§48)': routesIn(block('workshopReceptionGroups')),
   'technician (§49)': routesIn(block('workshopTechnicianGroups')),
+};
+
+/**
+ * Each role's permission grants, mirrored from the API's permission matrix.
+ * Restated here rather than imported because this script reads source text
+ * rather than running the app; the drift risk is accepted and small, and a
+ * mismatch shows up as a nonsense result rather than a silent pass.
+ */
+const ROLE_PERMS = {
+  platform_administrator: ['platform.admin', 'organization.admin', 'finance.read'],
+  workshop_owner: ['finance.read', 'organization.admin'],
+  workshop_manager: [],
+  reception_staff: ['finance.read'],
+  workshop_supervisor: [],
+  technician: [],
+  storekeeper: [],
+  quality_control_inspector: [],
+  cashier: ['finance.read'],
 };
 
 /** Which roles land on which tree (from the audit). */
@@ -96,15 +149,20 @@ const TREE_ROLES = {
  * A capability, the roles that hold it, and the route slug FRAGMENT that would
  * satisfy it. Matched on the last path segment so a tree naming it differently
  * (`quality-control` vs `quality-control-queue`) still counts.
+ *
+ * `dedicated: true` means the route exists ONLY to perform this action, so a
+ * role that can see it and cannot use it is a defect. `dedicated: false` marks
+ * a shared screen — a list many roles read and some may act from — where that
+ * reverse check does not apply and would cry wolf.
  */
 const FEATURES = [
-  { cap: 'CAN_CREATE_CUSTOMER', frag: ['register-customer'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
-  { cap: 'CAN_CREATE_VEHICLE',  frag: ['register-vehicle','add-vehicle'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
-  { cap: 'CAN_INSPECT (QC)',    frag: ['quality-control','quality-control-queue'], roles: ['quality_control_inspector','workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
-  { cap: 'PRICING (029 owner)', frag: ['pricing-rules','pricing'], roles: ['workshop_owner','platform_administrator'] },
-  { cap: 'CAN_CREATE_JOB',      frag: ['job-cards','create-job-card','new-job-card'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
-  { cap: 'CAN_GRANT_MEMBERSHIP',frag: ['staff','staff-and-roles','users-and-roles','roles-and-permissions'], roles: ['platform_administrator','workshop_owner'] },
-  { cap: 'CAN_CREATE_BRANCH',   frag: ['branches'], roles: ['platform_administrator','workshop_owner'] },
+  { cap: 'CAN_CREATE_CUSTOMER', dedicated: true, frag: ['register-customer'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
+  { cap: 'CAN_CREATE_VEHICLE',  dedicated: true, frag: ['register-vehicle','add-vehicle'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
+  { cap: 'CAN_INSPECT (QC)',    dedicated: false, frag: ['quality-control','quality-control-queue'], roles: ['quality_control_inspector','workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
+  { cap: 'PRICING (029 owner)', dedicated: true, frag: ['pricing-rules','pricing'], roles: ['workshop_owner','platform_administrator'] },
+  { cap: 'CAN_CREATE_JOB',      dedicated: false, frag: ['job-cards','create-job-card','new-job-card'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
+  { cap: 'CAN_GRANT_MEMBERSHIP',dedicated: false, frag: ['staff','staff-and-roles','users-and-roles','roles-and-permissions'], roles: ['platform_administrator','workshop_owner'] },
+  { cap: 'CAN_CREATE_BRANCH',   dedicated: false, frag: ['branches'], roles: ['platform_administrator','workshop_owner'] },
 ];
 
 console.log('ROUTES PER TREE (counts):');
@@ -117,10 +175,39 @@ for (const f of FEATURES) {
   for (const [tree, roles] of Object.entries(TREE_ROLES)) {
     const holders = roles.filter((r) => f.roles.includes(r));
     if (holders.length === 0) continue;
-    const has = [...TREES[tree]].some((route) =>
-      f.frag.some((fr) => route.endsWith(`/${fr}`)),
-    );
-    if (!has) missing.push(`${tree} — blocks ${holders.join(', ')}`);
+    // The matching entry, and what it costs to see it.
+    let entry = null;
+    for (const [route, perm] of TREES[tree]) {
+      if (f.frag.some((fr) => route.endsWith(`/${fr}`))) { entry = { route, perm }; break; }
+    }
+    if (!entry) {
+      missing.push(`${tree} — NO ROUTE, blocks ${holders.join(', ')}`);
+      continue;
+    }
+    // 🔴 VISIBILITY, NOT MERE EXISTENCE. A holder gated out of the entry cannot
+    // reach it, so the gap is not closed for them.
+    const blind = entry.perm ? holders.filter((r) => !(ROLE_PERMS[r] ?? []).includes(entry.perm)) : [];
+    if (blind.length) {
+      missing.push(`${tree} — route exists but '${entry.perm}' hides it from ${blind.join(', ')}`);
+    }
+    // And the mirror: a role that SEES it but cannot use it gets a guaranteed
+    // refusal. That is the defect Codex found in this very change.
+    //
+    // ⚠️ ONLY FOR DEDICATED ACTION ROUTES. A screen like `/workshop-floor/job-cards`
+    // is a LIST that many roles legitimately read while only some may create
+    // from it, so "offered to somebody outside the create set" is not a defect
+    // there — it is the normal case. Running this check against shared screens
+    // produced three false alarms on its first version. It applies only where
+    // the route exists to perform the action and nothing else.
+    if (f.dedicated) {
+      const seers = (TREE_ROLES[tree] ?? []).filter(
+        (r) => !entry.perm || (ROLE_PERMS[r] ?? []).includes(entry.perm),
+      );
+      const cannotUse = seers.filter((r) => !f.roles.includes(r));
+      if (cannotUse.length) {
+        missing.push(`${tree} — OFFERED to ${cannotUse.join(', ')} who CANNOT use it`);
+      }
+    }
   }
   if (missing.length) {
     gaps += missing.length;
@@ -144,14 +231,16 @@ PARSER FAILURE: ${tree} parsed as ZERO routes. The gaps above are meaningless.`)
   }
 }
 
+// ⚠️ ENFORCING, NOT ADVISORY. The seven known gaps were closed on 2026-08-01
+// (proposal Option A, owner-approved), so ANY gap now is a NEW one — a
+// capability whose permitted roles cannot reach it by clicking. That is exactly
+// the regression this script exists to stop, and it arrived four times by
+// accident before anyone looked.
 if (gaps > 0) {
   console.error(
-    `
-${gaps} navigation gap(s). See docs/03-ui-ux/NAVIGATION-GAPS-PROPOSAL.md — ` +
-      'these are pending an owner decision, so this script is advisory until they are closed.',
+    `\n${gaps} navigation gap(s): a role may do something it cannot reach by clicking.\n` +
+      'Either add the entry to that tree (with a page behind it), or narrow the\n' +
+      'capability in the API. See docs/03-ui-ux/NAVIGATION-GAPS-PROPOSAL.md.',
   );
 }
-// Advisory for now: the known gaps are documented and awaiting a decision.
-// Flip to `process.exit(gaps > 0 ? 1 : 0)` once the proposal is applied, so a
-// NEW gap fails the build.
-process.exit(0);
+process.exit(gaps > 0 ? 1 : 0);

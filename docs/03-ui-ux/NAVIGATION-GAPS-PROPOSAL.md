@@ -1,8 +1,19 @@
 # Proposal — the navigation trees and the API disagree about who does what
 
 **Date:** 2026-08-01
-**Status:** PROPOSED — needs the owner's decision. `05.txt` §2 prohibits changing
-approved navigation without review, so nothing here has been applied.
+**Status:** ✅ **APPLIED** — Option A, owner-approved 2026-08-01. All seven gaps
+closed; the audit script is now ENFORCING (exit 1 on any gap).
+
+⚠️ **The first attempt introduced the mirror defect and Codex caught it.** The
+two DEFAULT-tree entries were added UNGATED, but that tree is the fallback for
+five roles and only `platform_administrator` among them holds
+`CAN_CREATE_CUSTOMER` — so supervisors, storekeepers, QC inspectors and cashiers
+were offered a menu item that could only ever be refused. That falsified the
+"grants nothing new" claim this proposal was approved on. Both entries are now
+gated on `organization.admin`, which among those five roles exactly one holds.
+The audit was extended to catch the same class in future, and
+`verify-nav-gaps-closed.mjs` asserts both directions: the blocked roles can now
+reach each screen, and a supervisor is offered none of them.
 **Audit script:** `scripts/audit-nav-coverage.mjs` (re-run it; do not trust this
 document's numbers on their own)
 
