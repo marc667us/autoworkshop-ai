@@ -166,4 +166,7 @@ Both were added because the run reported green while the main path never ran.
 | admin-web | :3006 |
 | customer-web | :3000 — the **Abossey Okai marketplace landing** (signed out) |
 
-⚠️ Servers were left RUNNING. Migrations **008-034 are LOCAL ONLY**.
+⚠️ Servers were left RUNNING.
+✅ Migrations **001-034 are now on RENDER** as well as locally (2026-08-02).
+`apply-migrations.yml` is the workflow; it dry-runs by default and calls
+`infrastructure/migrations/run.sh` rather than reimplementing the ledger.

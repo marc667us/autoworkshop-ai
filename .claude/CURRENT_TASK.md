@@ -207,7 +207,10 @@ admin publishes -> an anonymous buyer sees it on `/api/v1/public/parts`.
 **72 verify checks across six scripts, zero failures.** Re-run any with:
 `docker exec -i aw-postgres psql -U autoworkshop -d autoworkshop -v ON_ERROR_STOP=1 -f - < infrastructure/migrations/verify/NNN_*.sql`
 
-⚠️ **Migrations 008–026 are LOCAL ONLY.**
+✅ **Migrations 001–034 are APPLIED TO RENDER** (2026-08-02, run 30761632886) —
+34 applied, 0 skipped, schema verified by counting real tables per schema
+(identity 5, core 5, repair 24, catalogue 9, audit 1). Re-check or extend with
+`gh workflow run apply-migrations.yml` (dry run) / `-f confirm=APPLY`.
 
 ## Done 2026-08-01 — do not rebuild
 
