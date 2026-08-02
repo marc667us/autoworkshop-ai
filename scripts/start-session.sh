@@ -45,9 +45,72 @@ printf '  list, and the traps. The second carries the next slice, in steps.\n'
 
 # ── 2. stale dev servers ───────────────────────────────────────────────────
 bold "2. Killing stale dev servers (pkill does NOT work here)"
+#
+# 🔴 THE PORT LIST IS DERIVED, NOT TYPED. It used to be the literal
+# `3000,3001,3002,4000`, which covered three of the SEVEN web apps. A stale
+# admin-web on 3006 therefore survived this step twice — on 08-01 it served
+# HTTP 200 with none of the session's content, and on 08-02 a process from the
+# previous afternoon was still holding the port. Both times the app looked
+# built and broken rather than not-restarted.
+#
+# Reading the ports out of each app's `start` script removes the second list
+# there was to remember. 4000 (API) and 8081 (Expo Metro) are appended because
+# they are not Next apps and have no `start` script to read.
+#
+# ⚠️ AND IT SAYS SO WHEN IT CANNOT READ ONE. Codex pointed out that the first
+# version of this claimed adding an app "cannot silently omit it" while only
+# matching the exact form `next start -p <port>` — so `--port`, `PORT=… next
+# start`, or any non-Next server would have been dropped silently, which is the
+# original bug wearing a derived-list costume. An app whose start script exists
+# but yields no port is now NAMED, because a list that is quietly short is
+# exactly what cost two sessions.
+PORT_SCAN="$(python - <<'PY'
+import glob, json, os, re
+
+# The two apps whose port cannot be read from their start script, because they
+# are not Next apps: the API takes its port from the environment and Metro owns
+# 8081 by convention. Listed HERE rather than appended to the result, so they
+# are covered without also being reported as unparsable every single session —
+# a warning that fires on a known-good case teaches people to ignore it.
+KNOWN = {'api': 4000, 'mobile': 8081}
+
+ports, unparsed = set(KNOWN.values()), []
+for path in sorted(glob.glob('apps/*/package.json')):
+    app = os.path.basename(os.path.dirname(path))
+    if app in KNOWN:
+        continue
+    try:
+        with open(path, encoding='utf-8') as fh:
+            pkg = json.load(fh)
+    except (OSError, ValueError):
+        continue
+    start = (pkg.get('scripts') or {}).get('start')
+    if not start:
+        continue
+    # -p 3001 | --port 3001 | --port=3001 | PORT=3001
+    m = re.search(r'(?:-p|--port)[=\s]+(\d{2,5})\b', start) or \
+        re.search(r'\bPORT=(\d{2,5})\b', start)
+    if m:
+        ports.add(int(m.group(1)))
+    else:
+        unparsed.append('%s -> %s' % (app, start))
+
+print(','.join(str(p) for p in sorted(ports)))
+for u in unparsed:
+    print('UNPARSED ' + u)
+PY
+)"
+DEV_PORTS="$(printf '%s' "$PORT_SCAN" | head -1)"
+
+printf '%s\n' "$PORT_SCAN" | grep '^UNPARSED ' | while read -r _ app rest; do
+  warn "no port found in ${app}'s start script — it will NOT be killed: ${rest}"
+done
+
 if command -v powershell.exe >/dev/null 2>&1; then
-  powershell.exe -NoProfile -Command '
-    foreach ($p in @(3000,3001,3002,4000)) {
+  powershell.exe -NoProfile -Command "
+    \$ports = @(${DEV_PORTS})
+  "'
+    foreach ($p in $ports) {
       Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
         $pr = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
         if ($pr) {
@@ -57,12 +120,12 @@ if command -v powershell.exe >/dev/null 2>&1; then
       }
     }
     Start-Sleep -Seconds 2
-    foreach ($p in @(3000,3001,3002,4000)) {
+    foreach ($p in $ports) {
       $n = (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count
       if ($n -gt 0) { Write-Output ("  [FAIL] port {0} STILL has {1} listener(s)" -f $p, $n) }
     }
   ' 2>/dev/null | sed 's/^/ /'
-  ok "ports 3000/3001/3002/4000 free (anything still listening is printed above)"
+  ok "ports ${DEV_PORTS} free (anything still listening is printed above)"
 else
   warn "powershell.exe not on PATH — kill dev servers by hand before building"
 fi

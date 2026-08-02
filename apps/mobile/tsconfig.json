@@ -6,6 +6,15 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": false,
     "jsx": "react-jsx",
+    // See the note in config.spec.ts: expo/tsconfig.base leaves `module` on a
+    // value that REJECTS dynamic import, and CI failed with TS1323 on the spec
+    // that re-imports the module to re-read a mocked expo-constants. It passed
+    // locally only because I typechecked before adding the spec.
+    //
+    // esnext + bundler is what Metro actually IS, so this describes the real
+    // build rather than bending the config to suit a test.
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "types": ["react", "expo"]
   },
   "include": ["**/*.ts", "**/*.tsx"],

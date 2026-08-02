@@ -15,7 +15,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.aiappinvent.autoworkshop"
     },
-    "plugins": ["expo-secure-store", "expo-web-browser"],
+    "plugins": ["expo-secure-store"],
     "extra": {
       "keycloakUrl": "http://10.0.2.2:8080",
       "keycloakRealm": "autoworkshop",
