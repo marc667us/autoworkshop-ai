@@ -100,8 +100,13 @@ for (const [label, blockName] of Object.entries(TREES)) {
 }
 
 console.log(`\nDistinct menu entries with NO page anywhere: ${deadEverywhere.size}`);
-console.log('\nA few of them:');
-[...deadEverywhere.keys()].slice(0, 12).forEach((d) => console.log(`  ${d}`));
+// `--all` prints every one. A 12-line sample is fine for a progress read, but
+// BUILDING them needs the whole list — and re-deriving it by hand is exactly
+// how a sweep misses the entries nobody happened to paste into a chat.
+const showAll = process.argv.includes('--all');
+console.log(showAll ? '\nEvery one of them:' : '\nA few of them:');
+const dead = [...deadEverywhere.keys()];
+(showAll ? dead : dead.slice(0, 12)).forEach((d) => console.log(`  ${d}`));
 
 // Reporting only: menu coverage is a progress measure, not a correctness one.
 // A build must never fail because a later phase has not been written yet.
