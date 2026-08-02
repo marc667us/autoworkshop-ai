@@ -30,6 +30,45 @@ The live site cannot be signed into. It needs a database, and the assistant is
 If it fails on the PLAN, Render no longer offers free Postgres → that is a SPEND
 decision, the owner's alone. Unchanged from the previous session.
 
+### 🔴 OWNER DECISION WAITING — the menu promises 3x what it delivers
+
+**Raised by the owner 2026-08-01: "all these pages and dont see all at the front
+end." They were right, and the progress figure I gave was misleading.**
+
+Re-measure any time: `node scripts/audit-menu-coverage.mjs`
+
+| Role | Menu entries | Built | Placeholder |
+|---|---|---|---|
+| Owner §46 | 64 | **17 (27%)** | 47 |
+| Default §34 (supervisor, QC, storekeeper, cashier, platform admin) | 56 | **18 (32%)** | 38 |
+| Technician §49 | 42 | **14 (33%)** | 28 |
+| Manager §47 | 36 | **13 (36%)** | 23 |
+| Reception §48 | 29 | **7 (24%)** | 22 |
+
+**141 distinct menu entries have no page anywhere.** An owner signing in finds
+roughly three of every four clicks render *"the screen's own content is scheduled
+for a later phase."*
+
+⚠️ **CORRECTION TO THE PROGRESS REPORT.** I said "99 screens in workshop-web" /
+"115 total". That counted every `page.tsx` FILE — including `[id]` detail
+variants and one screen mounted at several role-tree routes. **The honest figure
+is 61 distinct built routes in workshop-web, ~30% menu coverage, Phase 5 of 11.**
+
+**WHY:** the navigation trees were written from the FULL 11-phase spec up front;
+pages are built phase by phase. Much of the emptiness is correct — parts depot,
+finance, AI, knowledge are Phases 6-9. But entries like appointments, vehicle
+intake, technicians, service bays, calendar and tasks sit beside finished Phase 5
+work and read as broken.
+
+**TWO OPTIONS — the owner's call, because it is a navigation change (`05.txt` §2):**
+1. **Hide unbuilt entries.** The app feels complete at every stage. Cost: the
+   visible roadmap goes, and the trees stop matching the approved spec docs.
+2. **Keep them, MARK them** — a visible "Phase 6" style marker in the menu, so
+   nothing surprises anyone after they click. **← recommended:** honest, keeps
+   the approved navigation intact, stops the app reading as broken.
+
+Nothing applied. No navigation was changed for this.
+
 ### ▶ NEXT PIECE OF WORK — finish the evidence upload
 
 `06ccf8d` shipped the STORAGE LAYER only, proven against real MinIO (presigned
