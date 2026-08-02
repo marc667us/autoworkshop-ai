@@ -19,8 +19,8 @@
  */
 import { chromium } from '@playwright/test';
 
-const SUPPLIER_WEB = 'http://localhost:3002';
-const ADMIN_WEB = 'http://localhost:3006';
+const SUPPLIER_WEB = process.env['SUPPLIER_WEB_URL'] ?? 'http://localhost:3002';
+const ADMIN_WEB = process.env['ADMIN_WEB_URL'] ?? 'http://localhost:3006';
 const PASSWORD = process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!';
 const STAMP = `E2E-${Date.now().toString(36).toUpperCase()}`;
 

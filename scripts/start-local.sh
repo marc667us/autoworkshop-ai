@@ -37,7 +37,8 @@
 # nothing but Keycloak. That is a real reduction and NOT a complete fix, and it
 # is written down rather than papered over.
 #
-#   bash scripts/start-local.sh              # detect the LAN address
+#   bash scripts/start-local.sh                        # workshop only
+#   APPS="workshop:3001 supplier:3002 admin:3006" bash scripts/start-local.sh
 #   MOBILE_HOST=192.168.0.124 bash scripts/start-local.sh
 set -euo pipefail
 
@@ -47,9 +48,19 @@ REALM="${KEYCLOAK_REALM:-autoworkshop}"
 CONTAINER="${KC_CONTAINER:-aw-keycloak}"
 KC_ADMIN="${KEYCLOAK_ADMIN:-admin}"
 KC_ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-change_me_locally}"
-WEB_PORT=3001
 API_PORT=4000
 KC_PORT=8080
+
+# ⚠️ THE ISSUER PROBLEM IS NOT SPECIFIC TO ONE APP. Every one of the seven web
+# apps signs in against the same realm, so every one needs the canonical host
+# and its own registered redirect. This started as a workshop-only script and
+# `verify-catalogue-screens` immediately needed supplier and admin as well —
+# so the list is a parameter rather than a fourth place to hardcode a port.
+#
+# `<workspace>:<port>`. The Keycloak client id is DERIVED as
+# `autoworkshop-<workspace>-web`, exactly as `clientIdForWorkspace` derives it
+# in packages/auth, so the two cannot disagree.
+APPS="${APPS:-workshop:3001}"
 
 if [ ! -f .env ]; then
   echo "REFUSING: .env is missing. Copy .env.example and fill it in." >&2
@@ -105,16 +116,14 @@ fi
 
 # 🔴 THE ONE VALUE. Everything below is derived from it; nothing re-states it.
 CANONICAL_KC="http://${HOST_IP}:${KC_PORT}"
-WEB_URL="http://${HOST_IP}:${WEB_PORT}"
 
 echo "==> canonical host  : $HOST_IP"
 echo "==> Keycloak issuer : ${CANONICAL_KC}/realms/${REALM}"
-echo "==> web             : $WEB_URL"
+echo "==> apps            : $APPS"
 
 # ── 1. the web client must accept a redirect back to the LAN origin ────────
 kcadm() { MSYS_NO_PATHCONV=1 docker exec -i "$CONTAINER" /opt/keycloak/bin/kcadm.sh "$@"; }
 
-echo "==> registering ${WEB_URL} on the workshop-web client"
 # See the SECRETS note at the top for exactly what this protects and what it
 # does not. The password crosses as a `docker exec -e` variable and is expanded
 # by a shell INSIDE the container, keeping it out of the host process list.
@@ -122,43 +131,91 @@ MSYS_NO_PATHCONV=1 docker exec -i -e KC_PW="$KC_ADMIN_PASS" "$CONTAINER" sh -c \
   '/opt/keycloak/bin/kcadm.sh config credentials --server "$1" --realm master --user "$2" --password "$KC_PW"' \
   _ "http://localhost:${KC_PORT}" "$KC_ADMIN" >/dev/null
 
-WEB_CLIENT_UUID="$(kcadm get clients -r "$REALM" --fields id,clientId --format json 2>/dev/null \
-  | python -c "
-import json,sys
-for c in json.load(sys.stdin):
-    if c.get('clientId') == 'autoworkshop-workshop-web':
-        print(c['id']); break
-")"
-if [ -z "$WEB_CLIENT_UUID" ]; then
-  echo "REFUSING: autoworkshop-workshop-web is not in the running realm." >&2
-  echo "  The realm is imported once, on Keycloak's FIRST boot; a client added" >&2
-  echo "  to realm-autoworkshop.json afterwards exists only on disk." >&2
-  exit 1
-fi
+CLIENTS_JSON="$(kcadm get clients -r "$REALM" --fields id,clientId --format json 2>/dev/null)"
 
-# Merged, never replaced — and built by a JSON encoder so a value cannot change
-# the shape of the document.
-kcadm get "clients/$WEB_CLIENT_UUID" -r "$REALM" --format json 2>/dev/null \
-  | python -c "
+# The workspaces that actually exist, DERIVED from the directories rather than
+# typed, so adding an app covers it automatically. Raised by Codex: `ws` becomes
+# a directory path (`apps/<ws>-web`) and a log filename, so an entry containing
+# `/` or `..` would read and write outside the intended set. A port-only check
+# left that open.
+KNOWN_WS="$(ls -d apps/*-web 2>/dev/null | sed 's|apps/||; s|-web$||' | tr '\n' ' ')"
+
+for entry in $APPS; do
+  ws="${entry%%:*}"; port="${entry##*:}"
+  if ! printf '%s' "$port" | grep -Eq '^[0-9]{1,5}$' || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    echo "REFUSING: '$entry' is not <workspace>:<port> with a port in 1-65535." >&2
+    exit 1
+  fi
+  case " $KNOWN_WS " in
+    *" $ws "*) ;;
+    *)
+      echo "REFUSING: '$ws' is not a workspace in this repo." >&2
+      echo "  Known: $KNOWN_WS" >&2
+      exit 1
+      ;;
+  esac
+  # Derived exactly as packages/auth derives it, so the two cannot disagree.
+  client="autoworkshop-${ws}-web"
+  url="http://${HOST_IP}:${port}"
+
+  uuid="$(printf '%s' "$CLIENTS_JSON" | python -c "
+import json,sys
+want = sys.argv[1]
+for c in json.load(sys.stdin):
+    if c.get('clientId') == want:
+        print(c['id']); break
+" "$client")"
+  if [ -z "$uuid" ]; then
+    echo "REFUSING: $client is not in the running realm." >&2
+    echo "  The realm is imported once, on Keycloak's FIRST boot; a client added" >&2
+    echo "  to realm-autoworkshop.json afterwards exists only on disk." >&2
+    exit 1
+  fi
+
+  # Merged, never replaced — and built by a JSON encoder so a value cannot
+  # change the shape of the document.
+  kcadm get "clients/$uuid" -r "$REALM" --format json 2>/dev/null \
+    | python -c "
 import json, sys
 web = sys.argv[1]
 c = json.load(sys.stdin)
-patch = {
+print(json.dumps({
     'redirectUris': sorted(set(c.get('redirectUris', []) + [web + '/*'])),
     'webOrigins':   sorted(set(c.get('webOrigins', [])   + [web])),
-}
-print(json.dumps(patch))
-" "$WEB_URL" | kcadm update "clients/$WEB_CLIENT_UUID" -r "$REALM" -f - >/dev/null
-echo "    registered"
+}))
+" "$url" | kcadm update "clients/$uuid" -r "$REALM" -f - >/dev/null
+  echo "    registered ${url} on ${client}"
+done
 
 # ── 2. free the ports ──────────────────────────────────────────────────────
-echo "==> freeing ports ${API_PORT} and ${WEB_PORT}"
+APP_PORT_LIST="$API_PORT"
+for entry in $APPS; do APP_PORT_LIST="${APP_PORT_LIST},${entry##*:}"; done
+echo "==> freeing ports ${APP_PORT_LIST}"
 powershell.exe -NoProfile -Command "
-  foreach (\$p in @(${API_PORT},${WEB_PORT})) {
+  foreach (\$p in @(${APP_PORT_LIST})) {
     Get-NetTCPConnection -LocalPort \$p -State Listen -ErrorAction SilentlyContinue |
       ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force -ErrorAction SilentlyContinue }
   }" 2>/dev/null || true
 sleep 2
+
+# 🔴 ASSERT THE PORTS ARE ACTUALLY FREE. Raised by Codex, and it is the defect
+# this whole file was written to avoid. The kill above swallows every failure
+# with `|| true`, so if PowerShell is missing or the listener belongs to another
+# user, the new `next start` dies with EADDRINUSE while the STALE server keeps
+# answering — and a readiness probe that only asks "does something reply?" would
+# report success against yesterday's build. Exactly the hour lost on 07-30.
+STILL_HELD="$(powershell.exe -NoProfile -Command "
+  @(${APP_PORT_LIST}) | ForEach-Object {
+    if (Get-NetTCPConnection -LocalPort \$_ -State Listen -ErrorAction SilentlyContinue) { \$_ }
+  }" 2>/dev/null | tr -d '\r' | tr '\n' ' ')"
+if [ -n "$(printf '%s' "$STILL_HELD" | tr -d ' ')" ]; then
+  echo "REFUSING: these ports are STILL held after the kill: $STILL_HELD" >&2
+  echo "  Starting now would leave a stale server answering while the new one" >&2
+  echo "  fails with EADDRINUSE, and everything below would look healthy." >&2
+  echo "  Find the owner:  Get-NetTCPConnection -LocalPort <p> -State Listen |" >&2
+  echo "                     ForEach-Object { Get-Process -Id \$_.OwningProcess }" >&2
+  exit 1
+fi
 
 # ── 3. the API, with the canonical issuer ──────────────────────────────────
 # `.env` supplies the database and Redis credentials. KEYCLOAK_URL is
@@ -177,24 +234,74 @@ echo "==> starting API on ${API_PORT}"
 # ⚠️ NODE_ENV IS FORCED TO production. `.env` sets it to `development`, and a
 # `next start` inheriting that serves the DEV React runtime against a
 # production build — the defect that crashed prerender on 07-30.
-echo "==> starting web on ${WEB_PORT}"
-(
-  cd apps/workshop-web &&
-  NODE_ENV=production \
-  AUTH_URL="$WEB_URL" \
-  AUTH_TRUST_HOST=true \
-  KEYCLOAK_URL="$CANONICAL_KC" \
-  nohup ./node_modules/.bin/next start -p "$WEB_PORT" -H 0.0.0.0 </dev/null >/tmp/aw-web.log 2>&1 &
-) </dev/null
+for entry in $APPS; do
+  ws="${entry%%:*}"; port="${entry##*:}"
+  dir="apps/${ws}-web"
+  # 🔴 REFUSE A STALE BUILD, NOT MERELY A MISSING ONE. The first version of
+  # this checked that `.next` EXISTED and the comment claimed it stopped stale
+  # builds — it did not, and Codex called that out. A `.next` from days ago
+  # passes an existence test and `next start` serves it happily, which is how
+  # three stale servers faked product defects for an hour on 07-30.
+  #
+  # The real question is whether the build is OLDER THAN THE SOURCE. `BUILD_ID`
+  # is written at the end of a successful build, so its timestamp is the build's
+  # completion time; anything under the app or the shared packages that is newer
+  # than that is not in the bundle being served.
+  if [ ! -f "$dir/.next/BUILD_ID" ]; then
+    echo "REFUSING: $dir has no completed .next build." >&2
+    echo "  Build it:  (cd $dir && rm -rf .next && ./node_modules/.bin/next build)" >&2
+    exit 1
+  fi
+  # ⚠️ `|| true` ON THE FIND, and it is load-bearing rather than sloppy: not
+  # every app has a `src/`, `find` exits non-zero for a path that is not there,
+  # and under `set -euo pipefail` that killed the whole script SILENTLY — after
+  # the API had already started. Only the directories that exist are searched.
+  SEARCH=""
+  for d in "$dir/app" "$dir/src" packages/*/src; do
+    [ -d "$d" ] && SEARCH="$SEARCH $d"
+  done
+  NEWER="$( { find $SEARCH -type f \
+                \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) \
+                -newer "$dir/.next/BUILD_ID" 2>/dev/null || true; } | head -3)"
+  if [ -n "$NEWER" ]; then
+    echo "REFUSING: $dir/.next is OLDER than its source — it would serve a stale build." >&2
+    printf '  changed since the build: %s\n' $NEWER >&2
+    echo "  Rebuild:  (cd $dir && rm -rf .next && ./node_modules/.bin/next build)" >&2
+    exit 1
+  fi
+  echo "==> starting ${ws}-web on ${port}"
+  (
+    cd "$dir" &&
+    NODE_ENV=production \
+    AUTH_URL="http://${HOST_IP}:${port}" \
+    AUTH_TRUST_HOST=true \
+    KEYCLOAK_URL="$CANONICAL_KC" \
+    nohup ./node_modules/.bin/next start -p "$port" -H 0.0.0.0 </dev/null >"/tmp/aw-${ws}-web.log" 2>&1 &
+  ) </dev/null
+done
 
 # ── 5. prove it, rather than announce it ───────────────────────────────────
-echo "==> waiting for both to answer"
-for _ in $(seq 1 60); do
+URL_LIST="http://localhost:${API_PORT}/api/v1/health"
+for entry in $APPS; do
+  # `/api/auth/signin` rather than `/`. Raised by Codex: `status < 500` on the
+  # root accepted 404, 401 and 403 as healthy, so an app whose routes were all
+  # broken still reported ready as long as something answered. This route is
+  # rendered by the app's own Auth.js handler, so a 200 proves the server is
+  # running THIS app with a working auth config — the thing every browser test
+  # below depends on — rather than merely proving a socket is open.
+  URL_LIST="${URL_LIST} http://${HOST_IP}:${entry##*:}/api/auth/signin"
+done
+
+echo "==> waiting for every service to answer"
+for _ in $(seq 1 90); do
+  # Explicit expected statuses, never a `< 500` band. A redirect is accepted
+  # only as 307/308, which is what a Next landing route legitimately returns.
   if node -e "
-    Promise.all([
-      fetch('http://localhost:${API_PORT}/api/v1/health'),
-      fetch('${WEB_URL}/home/dashboard'),
-    ]).then(rs => process.exit(rs.every(r => r.ok) ? 0 : 1)).catch(() => process.exit(1))
+    const OK = new Set([200, 307, 308]);
+    const urls = '${URL_LIST}'.split(' ').filter(Boolean);
+    Promise.all(urls.map(u => fetch(u, { redirect: 'manual' })))
+      .then(rs => process.exit(rs.every(r => OK.has(r.status)) ? 0 : 1))
+      .catch(() => process.exit(1))
   " 2>/dev/null; then
     ok=1; break
   fi
@@ -202,7 +309,7 @@ for _ in $(seq 1 60); do
 done
 
 if [ "${ok:-0}" != "1" ]; then
-  echo "  FAILED to come up. Logs: /tmp/aw-api.log /tmp/aw-web.log" >&2
+  echo "  FAILED to come up. Logs: /tmp/aw-api.log /tmp/aw-*-web.log" >&2
   exit 1
 fi
 
@@ -260,12 +367,17 @@ const api = 'http://localhost:${API_PORT}/api/v1';
 # ⚠️ WHAT IS STILL NOT PROVEN HERE: that a GENUINE token is ACCEPTED. Only a
 # real browser sign-in can show that, because the realm requires the
 # authorization-code flow. Run it when the auth wiring has changed:
-#   (cd apps/e2e && WORKSHOP_WEB_URL=${WEB_URL} node verify/verify-pricing-screen.mjs)
+#   (cd apps/e2e && WORKSHOP_WEB_URL=http://${HOST_IP}:3001 \
+#      node verify/verify-pricing-screen.mjs)
+
+echo
+for entry in $APPS; do
+  printf '  %-9s : http://%s:%s\n' "${entry%%:*}" "$HOST_IP" "${entry##*:}"
+done
 
 cat <<INFO
 
-  Web app : ${WEB_URL}
-  Mobile  : exp://${HOST_IP}:8081   (run: MOBILE_HOST=${HOST_IP} npx expo start --lan)
+  Mobile    : exp://${HOST_IP}:8081   (run: MOBILE_HOST=${HOST_IP} npx expo start --lan)
 
   Sign in with the FULL EMAIL, over plain http.
   Accounts are created by scripts/seed-dev-identity.sh; the password is that
