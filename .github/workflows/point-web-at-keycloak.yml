@@ -1,0 +1,180 @@
+# Point the live web service at the deployed Keycloak — step 4 of six.
+#
+# WHY A WORKFLOW AND NOT A CONSOLE CLICK. `RENDER_API_KEY` is a repository
+# secret and cannot be read from a developer machine, which is the same reason
+# `render-status.yml` exists. Doing this by hand in the dashboard is also how
+# earlier "facts" in this project turned out to be wrong — nothing records what
+# was actually set.
+#
+# 🔴 RENDER'S ENV-VAR ENDPOINT IS A WHOLE-SET PUT, NOT A PATCH. Sending only the
+# keys being changed DELETES every other variable on the service — including
+# `AUTH_SECRET`, whose loss would invalidate every session and cannot be
+# recovered from anywhere else. So this GETs the current set, merges, and PUTs
+# the union. It never sends a set smaller than the one it read, and it refuses
+# if the read came back empty.
+#
+# ⚠️ DRY RUN BY DEFAULT. It reports which keys would change and prints only KEY
+# NAMES — never values.
+name: Point web at Keycloak
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write the variables and redeploy.'
+        required: false
+        default: ''
+      keycloak_url:
+        description: 'Public base URL of the deployed Keycloak'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+      auth_url:
+        description: 'Public base URL the web app is served on'
+        required: false
+        default: 'https://autoworkshop.aiappinvent.com'
+      realm:
+        description: 'Keycloak realm'
+        required: false
+        default: 'autoworkshop'
+
+permissions:
+  contents: read
+
+jobs:
+  point:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      # The production web service, by id. Never a name lookup that could match
+      # a neighbouring service — this Render account also hosts Solar, which is
+      # explicitly off-limits (ADR-011 / D2a).
+      SERVICE_ID: srv-d9ju49id0e5s7389fjlg
+      KEYCLOAK_URL: ${{ inputs.keycloak_url }}
+      AUTH_URL: ${{ inputs.auth_url }}
+      REALM: ${{ inputs.realm }}
+      CONFIRM: ${{ inputs.confirm }}
+
+    steps:
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+
+      - name: Prove the Keycloak realm is actually serving first
+        run: |
+          set -euo pipefail
+          # Pointing the app at an issuer that does not answer would replace one
+          # broken sign-in with another, and the symptom would look identical.
+          URL="${KEYCLOAK_URL}/realms/${REALM}/.well-known/openid-configuration"
+          code="$(curl -s -o /tmp/disc.json -w '%{http_code}' --max-time 120 "$URL")"
+          echo "discovery -> $code"
+          [ "$code" = "200" ] || { echo "::error::$URL did not answer 200"; exit 1; }
+          ISS="$(python3 -c "import json;print(json.load(open('/tmp/disc.json'))['issuer'])")"
+          echo "issuer    -> $ISS"
+          # The API validates `iss` byte for byte against its own KEYCLOAK_URL.
+          [ "$ISS" = "${KEYCLOAK_URL}/realms/${REALM}" ] || {
+            echo "::error::issuer '$ISS' is not '${KEYCLOAK_URL}/realms/${REALM}'"; exit 1; }
+
+      - name: Read the current variables and merge
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/services/${SERVICE_ID}/env-vars?limit=100" > /tmp/cur.json
+
+          python3 - <<'PY'
+          import json, os
+
+          rows = json.load(open('/tmp/cur.json'))
+          cur = {}
+          for r in rows:
+              e = r.get('envVar', r)
+              if 'key' in e:
+                  cur[e['key']] = e.get('value', '')
+
+          # A service with variables that reads back as none means the request
+          # shape changed or the id is wrong. Writing the merge would then be a
+          # DELETE of everything. Refuse instead.
+          if not cur:
+              raise SystemExit('::error::read back zero env vars — refusing to PUT a smaller set')
+
+          want = {
+              'KEYCLOAK_URL': os.environ['KEYCLOAK_URL'],
+              'KEYCLOAK_REALM': os.environ['REALM'],
+              'AUTH_URL': os.environ['AUTH_URL'],
+              # Auth.js v5 rejects an unrecognised Host and only auto-detects
+              # Vercel — without this every /api/auth/* route 500s while
+              # ordinary pages keep returning 200.
+              'AUTH_TRUST_HOST': 'true',
+              'NEXT_PUBLIC_APP_URL': os.environ['AUTH_URL'],
+          }
+
+          changed = [k for k, v in want.items() if cur.get(k) != v]
+          print('variables on the service :', len(cur))
+          print('keys that would change   :', changed or '(none)')
+          print('keys preserved untouched :', sorted(k for k in cur if k not in want))
+
+          merged = dict(cur)
+          merged.update(want)
+          json.dump([{'key': k, 'value': v} for k, v in sorted(merged.items())],
+                    open('/tmp/merged.json', 'w'))
+          print('merged set size          :', len(merged))
+          if len(merged) < len(cur):
+              raise SystemExit('::error::merged set is smaller than the current set')
+          PY
+
+      - name: What this would do
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          echo "DRY RUN — nothing written."
+          echo "With confirm=APPLY this would PUT the merged set and trigger a redeploy."
+
+      - name: Write the variables and redeploy
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # ONE PUT of the whole set. Solar learned that repeated partial env
+          # changes trigger a redeploy each time, and a boot that misses the
+          # health-check window leaves the service stuck at
+          # `update_in_progress`, blocking every later deploy.
+          curl -fsS -X PUT -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/merged.json \
+            "https://api.render.com/v1/services/${SERVICE_ID}/env-vars" >/dev/null
+          echo "variables written"
+          curl -fsS -X POST -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data '{"clearCache":"do_not_clear"}' \
+            "https://api.render.com/v1/services/${SERVICE_ID}/deploys" >/dev/null
+          echo "redeploy triggered"
+
+      - name: Read the variables back
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # A write that succeeded is not proof the value is there. Key names
+          # only — values are never printed.
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/services/${SERVICE_ID}/env-vars?limit=100" > /tmp/after.json
+          python3 - <<'PY'
+          import json, os
+          rows = json.load(open('/tmp/after.json'))
+          cur = {}
+          for r in rows:
+              e = r.get('envVar', r)
+              if 'key' in e:
+                  cur[e['key']] = e.get('value', '')
+          for k in ('KEYCLOAK_URL', 'KEYCLOAK_REALM', 'AUTH_URL', 'AUTH_TRUST_HOST'):
+              ok = cur.get(k) == os.environ.get({'KEYCLOAK_URL': 'KEYCLOAK_URL',
+                                                 'KEYCLOAK_REALM': 'REALM',
+                                                 'AUTH_URL': 'AUTH_URL',
+                                                 'AUTH_TRUST_HOST': '_TRUE'}[k], 'true')
+              print(f'{k:16} present={k in cur} matches={ok}')
+          print('total variables :', len(cur))
+          assert 'AUTH_SECRET' in cur, 'AUTH_SECRET disappeared — the merge dropped a key'
+          print('AUTH_SECRET still present: yes')
+          PY
+        env:
+          KEYCLOAK_URL: ${{ inputs.keycloak_url }}
+          REALM: ${{ inputs.realm }}
+          AUTH_URL: ${{ inputs.auth_url }}
