@@ -242,7 +242,26 @@ jobs:
           # Alphanumeric: this value crosses a JDBC URL, a Render env var and an
           # ALTER ROLE. Symbols would need correct quoting at every hop and one
           # of them would eventually be wrong.
-          PW="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 40)"
+          #
+          # 🔴 NOT `tr -dc ... < /dev/urandom | head -c 40`. That is the obvious
+          # spelling and it FAILED THIS STEP on the first real APPLY run:
+          #
+          #     tr: write error: Broken pipe
+          #     ##[error]Process completed with exit code 1
+          #
+          # `head` closes the pipe after 40 bytes, `tr` takes SIGPIPE, and under
+          # `set -euo pipefail` a non-zero anywhere in the pipeline fails the
+          # step. The deploy died before the ALTER ROLE, so it was a clean no-op
+          # rather than a half-configured service — but it could never have
+          # succeeded, and no dry run could have caught it because the whole
+          # step is `if: confirm == 'APPLY'`.
+          #
+          # `secrets.choice` has no pipe to break and is a CSPRNG. python3 is
+          # already a dependency of this job.
+          PW="$(python3 -c "
+          import secrets, string
+          print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(40)))
+          ")"
           printf '%s' "$PW" > /tmp/kcpw
           chmod 600 /tmp/kcpw
           echo "::add-mask::$PW"
