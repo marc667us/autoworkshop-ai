@@ -117,3 +117,8 @@ apps/mobile/.expo/
 .env
 .env.*
 !.env.example
+
+# Generated at image-build time by build-prod-realm.mjs. It is a DERIVED file —
+# committing it would create a second realm to keep in step with the real one,
+# and the stale copy is the one that would get deployed.
+infrastructure/keycloak/render/realm-prod.json
