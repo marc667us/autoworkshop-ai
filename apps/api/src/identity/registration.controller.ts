@@ -1,8 +1,18 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  ConflictException,
+  Controller,
+  Get,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { UserGuard, type UserRequest } from '../auth/user.guard';
 import { KeycloakJwtService } from '../auth/keycloak-jwt.service';
 import { MembershipRepository } from './membership.repository';
+import { validatedBody } from '../common/validation/validated-body';
 
 /**
  * ONBOARDING — the routes a signed-up person can reach before they belong
@@ -21,6 +31,7 @@ import { MembershipRepository } from './membership.repository';
  * at all and refuses a caller who already has a membership.
  */
 
+type RegisterWorkshopBody = z.infer<typeof RegisterWorkshopBody>;
 const RegisterWorkshopBody = z.object({
   // §5's organisation name. Bounded because it becomes a tenant name, an
   // organisation name and the seed of a slug; unbounded text in all three is
@@ -82,15 +93,58 @@ export class RegistrationController {
    * would ever show.
    */
   @Post('workshop')
-  async registerWorkshop(@Req() req: UserRequest, @Body() body: unknown) {
-    const parsed = RegisterWorkshopBody.parse(body);
+  async registerWorkshop(
+    @Req() req: UserRequest,
+    // ⚠️ `validatedBody`, NOT a bare `.parse()` in the handler. The raw call
+    // threw a ZodError that nothing mapped, so a one-character workshop name
+    // returned `{"statusCode":500,"message":"Internal server error"}` — a
+    // client mistake reported as a server fault. Measured over HTTP, not
+    // reasoned about. The pipe is this repo's established boundary: it reports
+    // EVERY problem at once and rejects unknown keys via `.strict()`.
+    @Body(validatedBody(RegisterWorkshopBody)) parsed: RegisterWorkshopBody,
+  ) {
     const subject = await this.subjectOf(req);
-    const created = await this.memberships.registerWorkshop(
-      subject,
-      parsed.workshopName,
-      parsed.branchName,
-    );
-    return { ...created, roleName: 'workshop_owner' };
+    try {
+      const created = await this.memberships.registerWorkshop(
+        subject,
+        parsed.workshopName,
+        parsed.branchName,
+      );
+      return { ...created, roleName: 'workshop_owner' };
+    } catch (err) {
+      // 🔴 THE DATABASE'S REFUSAL MUST REACH THE USER AS AN ANSWER, NOT A 500.
+      //
+      // Measured before this existed: a second POST — which is what a
+      // double-submitted form IS — returned `{"statusCode":500,"message":
+      // "Internal server error"}`. The guard worked perfectly and the person on
+      // the other end was told the server was broken. They would retry, get 500
+      // again, and reasonably conclude registration was unavailable while in
+      // fact their workshop already existed and was waiting for them.
+      //
+      // §70's rule is that a user is never left uncertain whether an action
+      // succeeded; "Internal server error" for an action that DID succeed a
+      // moment ago is the worst version of that.
+      //
+      // Matched on the message the function raises. That is a coupling, so both
+      // strings live in migration 036 and are quoted here — if either is
+      // reworded, this falls back to a 500 and `verify-registration-flow.mjs`
+      // fails on the status code rather than the wording drifting unnoticed.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('already belongs to an organisation')) {
+        throw new ConflictException(
+          'This account already has a workshop. Sign in and open your dashboard.',
+        );
+      }
+      if (message.includes('no active application user')) {
+        // Reachable only if the account is suspended between the guard
+        // resolving it and this statement — rare, but a 500 would be wrong.
+        throw new BadRequestException('This account is not active.');
+      }
+      if (message.includes('a workshop needs a name')) {
+        throw new BadRequestException('A workshop needs a name.');
+      }
+      throw err;
+    }
   }
 
   /**
