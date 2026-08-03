@@ -8,9 +8,12 @@ import {
   viewerHasSession,
   ViewerSwitchers,
   ActingAsControl,
+  registrationStatus,
+  needsWorkshop,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction, switchUserAction } from './sign-out-action';
+import { CreateWorkshopScreen } from './_screens/create-workshop-screen';
 
 export const metadata: Metadata = {
   title: 'AutoWorkshop AI — Workshop',
@@ -40,6 +43,27 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     viewerHasSession('workshop'),
   ]);
 
+  // ── SIGNED UP, BUT NOT IN A WORKSHOP YET ──────────────────────────────────
+  //
+  // Owner instruction 2026-08-03: "users must sign up via kc". Keycloak makes
+  // the account; the first API call provisions the application user; neither
+  // puts anybody in a workshop. Without this branch that person sees the full
+  // shell with every count at zero and a dashboard saying its figures could not
+  // be loaded — which is what a BROKEN application looks like, on the first
+  // screen they ever see. It is not broken; they have nowhere to look yet.
+  //
+  // ⚠️ ONLY ASKED WHEN A SESSION EXISTS. `/registration/status` needs a token,
+  // and asking without one would spend a round trip on every anonymous request
+  // to learn what the cookie already said.
+  //
+  // ⚠️ `needsWorkshop` IS TRUE ONLY WHEN WE POSITIVELY KNOW. An unreachable API
+  // returns null, which is NOT "no workshop" — collapsing the two would show
+  // every existing owner an invitation to create the workshop they already have
+  // during an outage, and the API would then refuse them with a 409 they did
+  // nothing to earn.
+  const registration = signedIn ? await registrationStatus('workshop') : null;
+  const onboarding = signedIn && needsWorkshop(registration);
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -53,6 +77,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
           {...viewerLabels(viewer)}
+          // 🔴 OVERRIDES THE ORGANISATION CHIP DURING ONBOARDING, and the order
+          // of these two lines is the fix. `/me` 401s for a user with no
+          // membership, so `currentViewer()` is null and `viewerLabels(null)`
+          // returns "Not signed in" — which the shell then rendered BESIDE a
+          // working "Sign out" button. Seen in a screenshot of the new
+          // onboarding screen, not reasoned about.
+          //
+          // That contradiction has cost this repo a session already (the
+          // 2026-08-02 issuer bug presented exactly the same way), so a new user
+          // meeting it on their FIRST screen would reasonably conclude sign-up
+          // had half-failed. It is a true statement about the viewer lookup and
+          // a false one about the person.
+          {...(onboarding ? { organizationLabel: 'No workshop yet' } : {})}
           // T-0005 finding 5: a real sign-out — revoke the refresh token at
           // Keycloak, clear the cookie, end the SSO session. Passed from the
           // server layout because a server action cannot be created in the
@@ -72,7 +109,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // single-role viewer gets `null` here and the shell falls back to its
           // read-only "Acting as" chip, so the role is stated either way.
           roleControl={<ActingAsControl viewer={viewer} />}
-          counters={{
+          // ⚠️ NO BADGES DURING ONBOARDING. These are placeholder figures, and
+          // on a normal screen they are merely provisional — but shown to
+          // somebody whose workshop does not exist yet they are simply false:
+          // "10 tasks" and "12 active jobs" against an account that owns
+          // nothing. The first screen a user sees is the worst place to
+          // advertise work that is not there.
+          counters={onboarding ? {} : {
             'workshop.tasks.open': 7,
             'workshop.approvals.pending': 3,
             'workshop.complaints.new': 4,
@@ -81,7 +124,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             'workshop.proposals.pendingApproval': 2,
             'workshop.messages.unread': 5,
           }}
-          warnings={{ 'workshop.parts.reorderAlerts': 2 }}
+          warnings={onboarding ? {} : { 'workshop.parts.reorderAlerts': 2 }}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
             { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks', count: 10 },
@@ -91,7 +134,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             { id: 'help', label: 'Help and support', icon: 'help' },
           ]}
         >
-          {children}
+          {/* Rendered IN PLACE of the page, never as a redirect. A redirect
+              needs a second condition on the onboarding route to send finished
+              users back, and two conditions are free to disagree — that is a
+              redirect loop on the first screen a new user reaches, escapable
+              only by clearing cookies. One condition cannot loop. */}
+          {onboarding ? (
+            <CreateWorkshopScreen displayName={viewer?.displayName} />
+          ) : (
+            children
+          )}
         </WorkspaceShell>
       </body>
     </html>
