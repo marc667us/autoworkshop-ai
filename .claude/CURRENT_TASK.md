@@ -177,3 +177,23 @@ Consolidated at the 2026-08-03 pt3 close. Ordered by what unblocks the most.
 |---|---|
 | E1 | **Retire `autoworkshop-customer`?** It duplicates the apex landing and consumes free instance-hours. Keeping it costs hours; removing it loses the consumer basket flow until that moves too. |
 | E2 | **Workshop staff vs consumer front door.** The apex now shows a parts marketplace to everyone, including workshop staff arriving to work. Watch whether that reads well in practice; the wordmark and nav both reach the dashboard. |
+
+---
+
+## ✅ LIVE SUITE AT CLOSE — 2026-08-03, 24/24 against production
+
+| suite | result |
+|---|---|
+| `verify-live-site.mjs` (existing) | **9/9** — serves, shell renders, sign-in reaches Keycloak, unknown route 404s, no console errors |
+| `verify-vin-funnel.mjs` against the APEX | **9/9** — VIN decodes signed out, gate holds, CTA carries the VIN through sign-up |
+| signed-in identity, live | **6/6** — real session, no "Not signed in", the AUTHENTICATED API answers |
+
+**⚠️ ONE MEASUREMENT CHANGED MEANING, AND IT IS NOT A FIX.** The suite reports
+**0px horizontal overflow at 768px**, where T-0044 recorded 51px. That is
+because `/` is now the public landing rather than a redirect into the shell —
+**a different page is being measured.** T-0044 is a SHELL defect and remains
+open; re-measure it on `/home/dashboard` and `/workshop-floor/job-cards` before
+believing it is gone.
+
+The signed-in run also asserts the known blocker as a KNOWN state: if
+"still no workshop" ever FAILS, A1 and A2 are done and this file needs updating.
