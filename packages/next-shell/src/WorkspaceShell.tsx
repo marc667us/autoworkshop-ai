@@ -67,6 +67,8 @@ export interface WorkspaceShellProps {
   organizationLabel?: string;
   branchLabel?: string;
   userLabel?: string;
+  /** Where the wordmark links. Omit and it stays plain text. */
+  brandHref?: string;
   /**
    * The role the viewer is acting as, humanised — supplied by `viewerLabels()`
    * along with the other three, so a layout spreading `{...viewerLabels(viewer)}`
@@ -109,6 +111,7 @@ export function WorkspaceShell({
   organizationLabel,
   branchLabel,
   userLabel,
+  brandHref,
   roleLabel,
   roleControl,
   counters,
@@ -152,6 +155,7 @@ export function WorkspaceShell({
       organizationLabel={organizationLabel}
       branchLabel={branchLabel}
       userLabel={userLabel}
+      brandHref={brandHref}
       roleLabel={roleLabel}
       roleControl={roleControl}
       counters={counters}

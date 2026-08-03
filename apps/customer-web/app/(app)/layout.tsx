@@ -48,6 +48,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <WorkspaceShell
           workspaceId="customer"
+          // The wordmark goes to the STORE, not to `/` — `/` would redirect a
+          // signed-in customer straight back to the dashboard they were trying
+          // to leave, which reads as a broken link (owner request 2026-08-03).
+          brandHref="/marketplace"
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
           {...viewerLabels(viewer)}

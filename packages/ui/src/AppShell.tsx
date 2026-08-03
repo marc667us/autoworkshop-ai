@@ -45,6 +45,8 @@ export interface AppShellProps {
   organizationLabel?: string;
   branchLabel?: string;
   userLabel?: string;
+  /** Where the wordmark links. Omit and it stays plain text. */
+  brandHref?: string;
   /** The role the viewer is acting as, as a chip in the right-hand cluster. */
   roleLabel?: string;
   /** Replaces that chip with the role switcher when the viewer holds several. */
@@ -79,6 +81,7 @@ export function AppShell({
   organizationLabel,
   branchLabel,
   userLabel,
+  brandHref,
   roleLabel,
   roleControl,
   counters,
@@ -204,6 +207,7 @@ export function AppShell({
         organizationLabel={organizationLabel}
         branchLabel={branchLabel}
         userLabel={userLabel}
+        brandHref={brandHref}
         roleLabel={roleLabel}
         roleControl={roleControl}
         // On mobile the same button opens the overlay drawer instead of

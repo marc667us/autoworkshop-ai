@@ -77,6 +77,20 @@ export interface TopNavProps {
   onToggleSideNav: () => void;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  /**
+   * Where the wordmark goes when clicked. Omit and it stays plain text.
+   *
+   * Owner request 2026-08-03: "user must be able [to] access the landing even
+   * when logged in by clicking [the] autoworkshop logo". In `customer-web` the
+   * public marketplace is a REAL DESTINATION for a signed-in person — it is the
+   * parts store — but `/` redirects them to their dashboard, so once you have an
+   * account the shop becomes unreachable. A wordmark that goes home is the
+   * convention every storefront already uses.
+   *
+   * A NODE-free prop rather than a `renderLink` callback: the brand is one
+   * anchor, and `TopNav` must stay renderable in Storybook with no router.
+   */
+  brandHref?: string;
   /** Right-hand cluster (§10-§15). */
   actions?: TopNavAction[];
   userLabel?: string;
@@ -265,6 +279,7 @@ export function TopNav({
   onToggleSideNav,
   searchValue,
   onSearchChange,
+  brandHref,
   actions = [],
   userLabel,
   roleLabel,
@@ -320,17 +335,37 @@ export function TopNav({
         <Glyph name="menu" />
       </button>
 
-      <span
-        className="aw-topnav-brand"
-        style={{
-          fontWeight: 600,
-          color: themeVar.textPrimary,
-          fontSize: primitive.fontSize.base,
-          whiteSpace: 'nowrap',
-        }}
-      >
-        AutoWorkshop AI
-      </span>
+      {/* A plain <a>, not the injected renderLink: this is one anchor to a
+          fixed address, and a full page load is CORRECT here — the destination
+          is a different part of the product with its own shell. */}
+      {brandHref ? (
+        <a
+          className="aw-topnav-brand"
+          href={brandHref}
+          title="Go to the parts marketplace"
+          style={{
+            fontWeight: 600,
+            color: themeVar.textPrimary,
+            fontSize: primitive.fontSize.base,
+            whiteSpace: 'nowrap',
+            textDecoration: 'none',
+          }}
+        >
+          AutoWorkshop AI
+        </a>
+      ) : (
+        <span
+          className="aw-topnav-brand"
+          style={{
+            fontWeight: 600,
+            color: themeVar.textPrimary,
+            fontSize: primitive.fontSize.base,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          AutoWorkshop AI
+        </span>
+      )}
 
       {/* Workspace / organisation / branch selectors (§5, §6, §7).
           Hidden below the tablet breakpoint: on a 360px phone these three
