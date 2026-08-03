@@ -47,6 +47,20 @@ export interface AppShellProps {
   userLabel?: string;
   /** Where the wordmark links. Omit and it stays plain text. */
   brandHref?: string;
+  /**
+   * Render the shell WITHOUT its side navigation and without the menu toggle.
+   *
+   * For a page that is genuinely public. The apex landing showed an anonymous
+   * visitor the entire WORKSHOP menu — Workshop Floor, Finance and Warranty,
+   * Reports — with badges reading 10, 12, 5 and 2. Nothing there was reachable
+   * (every route is gated server-side) and none of those numbers were real, so
+   * the product's shop front opened with a menu of doors that do not open and
+   * counters that count nothing.
+   *
+   * ⚠️ NOT A SECURITY CONTROL, like every other visibility decision in this
+   * package — it is an honesty one. The API and RLS deny independently.
+   */
+  hideSideNav?: boolean;
   /** The role the viewer is acting as, as a chip in the right-hand cluster. */
   roleLabel?: string;
   /** Replaces that chip with the role switcher when the viewer holds several. */
@@ -82,6 +96,7 @@ export function AppShell({
   branchLabel,
   userLabel,
   brandHref,
+  hideSideNav = false,
   roleLabel,
   roleControl,
   counters,
@@ -212,12 +227,15 @@ export function AppShell({
         roleControl={roleControl}
         // On mobile the same button opens the overlay drawer instead of
         // collapsing an inline column that is not on screen.
+        // A toggle for a navigation that is not rendered is a control that
+        // does nothing — the exact thing TopNav's own header forbids.
+        hideMenuButton={hideSideNav}
         sideNavCollapsed={isMobile ? !mobileNavOpen : collapsed}
         // On desktop the side nav is always mounted. On mobile it lives inside
         // a Drawer that unmounts when closed, so the id genuinely is not in the
         // document and must not be referenced — this was a real dangling
         // `aria-controls` in the shipped app, not merely a Storybook artefact.
-        sideNavId={!isMobile || mobileNavOpen ? 'app-side-nav' : undefined}
+        sideNavId={hideSideNav ? undefined : !isMobile || mobileNavOpen ? 'app-side-nav' : undefined}
         onToggleSideNav={() =>
           isMobile ? setMobileNavOpen((o) => !o) : setCollapsed((c) => !c)
         }
@@ -230,7 +248,7 @@ export function AppShell({
       />
 
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-        {isMobile ? (
+        {hideSideNav ? null : isMobile ? (
           <Drawer
             open={mobileNavOpen}
             onClose={closeMobileNav}

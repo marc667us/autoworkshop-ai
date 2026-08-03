@@ -75,6 +75,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // at `/` — the Solar pattern: one app, public and private routes side
           // by side, no second service and therefore no DNS work.
           brandHref="/"
+          // `/` is the public parts marketplace and the free VIN search. A
+          // signed-OUT visitor there gets no workshop menu and no placeholder
+          // badges; a signed-in one keeps the shell so they can get back.
+          publicPaths={['/']}
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
           {...viewerLabels(viewer)}

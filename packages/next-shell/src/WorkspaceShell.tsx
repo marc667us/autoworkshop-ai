@@ -100,6 +100,30 @@ export interface WorkspaceShellProps {
    * `viewerHasSession()`, NOT inferred from `userLabel` — see AccountControl.
    */
   signedIn?: boolean;
+  /**
+   * Routes that are PUBLIC, and on which a SIGNED-OUT visitor gets no side
+   * navigation and no counters.
+   *
+   * 🔴 THE DEFECT THIS CLOSES. The apex landing — the product's shop front —
+   * showed anonymous visitors the entire workshop menu (Workshop Floor, Finance
+   * and Warranty, Reports) with badges reading 10, 12, 5 and 2. Not a leak:
+   * every route behind those items is gated server-side and the API and RLS
+   * deny independently. But nothing there was reachable and none of the numbers
+   * were real, so the first thing a stranger saw was a menu of doors that do
+   * not open, counting work that does not exist.
+   *
+   * ⚠️ SIGNED-OUT ONLY, DELIBERATELY. A signed-in visitor keeps the shell on
+   * the same page, because the landing is reachable from their wordmark and
+   * taking their navigation away would leave them somewhere with no way back —
+   * a defect this session already fixed once.
+   *
+   * ⚠️ DECIDED HERE RATHER THAN IN THE LAYOUT because a server layout cannot
+   * read its own pathname. The previous attempt stamped it via middleware and
+   * crashed the edge runtime with `Cannot redefine property:
+   * __import_unsupported` — green typecheck, green lint, green build. This
+   * component is already a client component and already calls `usePathname`.
+   */
+  publicPaths?: readonly string[];
   drawer?: React.ReactNode;
 }
 
@@ -122,9 +146,13 @@ export function WorkspaceShell({
   switchUserAction,
   signInHref,
   signedIn,
+  publicPaths,
   drawer,
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
+  // Public page + nobody signed in = the shop front, not the application.
+  const bare = !signedIn && (publicPaths ?? []).includes(pathname);
+
   const base = getWorkspace(workspaceId);
   // T-0027: the role selects the tree (`07.txt` pt2 §46-§49). The value comes
   // from the caller because this is a client component — see the `role` prop.
@@ -152,15 +180,28 @@ export function WorkspaceShell({
       workspace={workspace}
       pathname={pathname}
       grants={grants}
-      organizationLabel={organizationLabel}
-      branchLabel={branchLabel}
       userLabel={userLabel}
       brandHref={brandHref}
       roleLabel={roleLabel}
       roleControl={roleControl}
-      counters={counters}
-      warnings={warnings}
-      topNavActions={topNavActions}
+      hideSideNav={bare}
+      // ⚠️ THE TOP-BAR COUNTS ARE A SEPARATE PROP, and missing that is why the
+      // first attempt still showed "✓ 10 · ✉ 5 · ⌾ 3" to a stranger after the
+      // side-nav badges were already gone. Emptying `counters` does not touch
+      // these. Stripped rather than zeroed: `Count` renders nothing at 0, but a
+      // zero is still a claim, and an anonymous visitor has no tasks to have
+      // none of.
+      topNavActions={bare ? topNavActions?.map(({ count, ...a }) => a) : topNavActions}
+      // The organisation and branch chips on a public shop front read
+      // "Not signed in | —", which is true and useless to a stranger looking
+      // for a brake disc. The Sign in button beside them is the useful half.
+      organizationLabel={bare ? undefined : organizationLabel}
+      branchLabel={bare ? undefined : branchLabel}
+      // ⚠️ EMPTIED, NOT HIDDEN BY CSS. These are placeholder figures; showing
+      // "10 tasks" to a stranger browsing for a brake disc is a claim, and it
+      // is false.
+      counters={bare ? {} : counters}
+      warnings={bare ? {} : warnings}
       organizationSwitcher={organizationSwitcher}
       accountControl={
         <AccountControl

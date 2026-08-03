@@ -177,8 +177,7 @@ Consolidated at the 2026-08-03 pt3 close. Ordered by what unblocks the most.
 |---|---|---|
 | F1 | **Seed the live catalogue.** The apex landing went live reporting `parts 0 · suppliers 0 · countries 0 · mechanics 0` — a shop with nothing in it. | ✅ **DONE** — `Seed live catalogue` workflow; now **18 parts · 5 suppliers · 3 countries** across 8 categories, GHS priced, unpublished rows correctly withheld. |
 | F2 | **Mechanics directory is still 0.** It is copied from workshops that actually exist, and none do. | ⏳ **BLOCKED BY A1** — it fills once migration 037 unblocks workshop registration. Re-run the seed afterwards. |
-| F3 | **The public landing shows the full WORKSHOP side nav to anonymous visitors**, with placeholder badges reading 10, 12, 5, 2. Not a security issue — every route is gated server-side — but the numbers are fiction and it is the wrong first impression for a public shop front. | OPEN |
-| F4 | **The live checks assert STRUCTURE, NOT CONTENT.** 24/24 passed against a completely empty shop: they confirm the catalogue section renders, never that anything is in it. `verify-live-site.mjs` and `verify-vin-funnel.mjs` both need a non-empty assertion. `seed-live-catalogue.yml`'s read-back is written correctly and can be copied. | OPEN |
+| F3 | **The live checks assert STRUCTURE, NOT CONTENT.** 24/24 passed against a completely empty shop: they confirm the catalogue section renders, never that anything is in it. `verify-live-site.mjs` and `verify-vin-funnel.mjs` both need a non-empty assertion. `seed-live-catalogue.yml`'s read-back is written correctly and can be copied. | OPEN |
 
 ### E. DECISIONS WAITING ON THE OWNER
 

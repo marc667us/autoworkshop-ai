@@ -75,6 +75,14 @@ export interface TopNavProps {
    */
   sideNavId?: string;
   onToggleSideNav: () => void;
+  /**
+   * Drop the menu button entirely, for a page rendered without a side nav.
+   *
+   * A toggle whose target does not exist is a control that does nothing when
+   * pressed — this file's own header forbids exactly that, and `aria-controls`
+   * would dangle at the same time.
+   */
+  hideMenuButton?: boolean;
   searchValue: string;
   onSearchChange: (value: string) => void;
   /**
@@ -277,6 +285,7 @@ export function TopNav({
   sideNavCollapsed,
   sideNavId,
   onToggleSideNav,
+  hideMenuButton = false,
   searchValue,
   onSearchChange,
   brandHref,
@@ -304,36 +313,38 @@ export function TopNav({
       }}
     >
       {/* ---- Left section (§3) ---- */}
-      <button
-        type="button"
-        onClick={onToggleSideNav}
-        // §4: the same control expands and collapses, so its accessible name
-        // must describe the ACTION, and aria-expanded must report the state.
-        aria-label={sideNavCollapsed ? 'Expand navigation' : 'Collapse navigation'}
-        aria-expanded={!sideNavCollapsed}
-        // Only reference the side nav when it is genuinely mounted. TopNav is
-        // used standalone (Storybook, and any surface without a side nav), and
-        // below 768px the nav is an overlay that is absent while closed — in
-        // both cases a hardcoded `aria-controls` named an element that did not
-        // exist, which axe rates CRITICAL. The caller knows; this component
-        // cannot.
-        aria-controls={sideNavId}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: '2.25rem',
-          height: '2.25rem',
-          border: `1px solid ${themeVar.borderDefault}`,
-          borderRadius: primitive.radius.md,
-          background: themeVar.backgroundPrimary,
-          color: themeVar.textPrimary,
-          cursor: 'pointer',
-          flexShrink: 0,
-        }}
-      >
-        <Glyph name="menu" />
-      </button>
+      {hideMenuButton ? null : (
+        <button
+          type="button"
+          onClick={onToggleSideNav}
+          // §4: the same control expands and collapses, so its accessible name
+          // must describe the ACTION, and aria-expanded must report the state.
+          aria-label={sideNavCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+          aria-expanded={!sideNavCollapsed}
+          // Only reference the side nav when it is genuinely mounted. TopNav is
+          // used standalone (Storybook, and any surface without a side nav), and
+          // below 768px the nav is an overlay that is absent while closed — in
+          // both cases a hardcoded `aria-controls` named an element that did not
+          // exist, which axe rates CRITICAL. The caller knows; this component
+          // cannot.
+          aria-controls={sideNavId}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '2.25rem',
+            height: '2.25rem',
+            border: `1px solid ${themeVar.borderDefault}`,
+            borderRadius: primitive.radius.md,
+            background: themeVar.backgroundPrimary,
+            color: themeVar.textPrimary,
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          <Glyph name="menu" />
+        </button>
+      )}
 
       {/* A plain <a>, not the injected renderLink: this is one anchor to a
           fixed address, and a full page load is CORRECT here — the destination
