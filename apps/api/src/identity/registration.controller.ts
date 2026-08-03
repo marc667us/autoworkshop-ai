@@ -1,0 +1,109 @@
+import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { z } from 'zod';
+import { UserGuard, type UserRequest } from '../auth/user.guard';
+import { KeycloakJwtService } from '../auth/keycloak-jwt.service';
+import { MembershipRepository } from './membership.repository';
+
+/**
+ * ONBOARDING — the routes a signed-up person can reach before they belong
+ * anywhere.
+ *
+ * ⚠️ ON `UserGuard`, NOT `TenantGuard`, AND THAT IS THE WHOLE REASON THIS
+ * CONTROLLER IS SEPARATE. `TenantGuard` resolves exactly one organisation for
+ * the request and refuses a caller with no membership — which is precisely the
+ * person these routes exist for. Putting registration behind it would mean you
+ * had to already belong to a workshop in order to create one.
+ *
+ * The safety argument is not that this guard is lenient. It is that a request
+ * authenticated here never receives a tenant context, so `withTenant` is never
+ * reachable from it and every tenant-owned table returns zero rows. The one
+ * write below goes through a SECURITY DEFINER function that takes no tenant id
+ * at all and refuses a caller who already has a membership.
+ */
+
+const RegisterWorkshopBody = z.object({
+  // §5's organisation name. Bounded because it becomes a tenant name, an
+  // organisation name and the seed of a slug; unbounded text in all three is
+  // how a display breaks in three places at once.
+  workshopName: z.string().trim().min(2).max(120),
+  branchName: z.string().trim().min(1).max(120).optional(),
+});
+
+@Controller('registration')
+@UseGuards(UserGuard)
+export class RegistrationController {
+  constructor(
+    private readonly memberships: MembershipRepository,
+    private readonly jwt: KeycloakJwtService,
+  ) {}
+
+  /**
+   * `GET /registration/status` — do I belong to a workshop yet?
+   *
+   * The question the shell cannot otherwise ask. `GET /me` is behind
+   * `TenantGuard`, so for a user with no membership it 401s — indistinguishable
+   * at the network layer from an expired session, which would send a
+   * newly-signed-up person back to a login screen they had just come from.
+   *
+   * Deliberately returns 200 with `hasWorkshop: false` rather than an error: it
+   * is not a failure to be new.
+   */
+  @Get('status')
+  async status(@Req() req: UserRequest) {
+    const subject = await this.subjectOf(req);
+    const record = await this.memberships.findByKeycloakSubject(subject);
+    const active = (record?.memberships ?? []).filter((m) => m.status === 'active');
+    return {
+      userId: req.appUserId,
+      hasWorkshop: active.length > 0,
+      // What they could act as, if anything. The shell uses it to decide
+      // between "create your workshop" and "go to your dashboard".
+      organizations: active.map((m) => ({
+        organizationId: m.organizationId,
+        roleName: m.roleName,
+      })),
+    };
+  }
+
+  /**
+   * `POST /registration/workshop` — create my workshop.
+   *
+   * Creates tenant + organisation + branch + an owner membership for the
+   * CALLER, atomically, in the database.
+   *
+   * ⚠️ THE CALLER IS TAKEN FROM THE TOKEN SUBJECT, NEVER FROM THE BODY. The
+   * body names the workshop and nothing else. A `userId` or `subject` field
+   * here would let any authenticated person register a workshop in somebody
+   * else's name and make themselves its owner.
+   *
+   * ⚠️ "Already belongs to an organisation" is enforced IN THE DATABASE, not
+   * here. A double-submitted form races two requests past any check made in
+   * application code, and the loser would create a second tenant that no screen
+   * would ever show.
+   */
+  @Post('workshop')
+  async registerWorkshop(@Req() req: UserRequest, @Body() body: unknown) {
+    const parsed = RegisterWorkshopBody.parse(body);
+    const subject = await this.subjectOf(req);
+    const created = await this.memberships.registerWorkshop(
+      subject,
+      parsed.workshopName,
+      parsed.branchName,
+    );
+    return { ...created, roleName: 'workshop_owner' };
+  }
+
+  /**
+   * The token subject for this request.
+   *
+   * `UserGuard` puts the resolved `appUserId` on the request but not the
+   * subject, and the database functions key on the SUBJECT — deliberately, so
+   * that no code path can pass a user id that did not come from a validated
+   * signature. Re-verifying is a JWKS-cached signature check, not a round trip.
+   */
+  private async subjectOf(req: UserRequest): Promise<string> {
+    const header = req.headers.authorization ?? '';
+    const verified = await this.jwt.verify(header.slice(7));
+    return verified.subject;
+  }
+}

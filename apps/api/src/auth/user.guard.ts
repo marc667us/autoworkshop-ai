@@ -58,11 +58,41 @@ export class UserGuard implements CanActivate {
 
     // `memberships_for_subject` LEFT JOINs memberships, so an active user with
     // NO membership still returns one row — which is precisely the buyer this
-    // guard exists for. A null here means no active application user for a
-    // valid token, which is refused: authentication is not authorization.
-    const record = await this.memberships.findByKeycloakSubject(verified.subject);
+    // guard exists for.
+    let record = await this.memberships.findByKeycloakSubject(verified.subject);
+
     if (!record) {
-      throw new UnauthorizedException('no application user for this identity');
+      // 🔴 SIGN-UP HAPPENS HERE — owner instruction "users must sign up via kc".
+      //
+      // A null means a valid Keycloak token whose subject has no application
+      // user. Until 2026-08-03 that was refused outright, which made signing up
+      // through Keycloak produce an account that could not use the application:
+      // authentication succeeded and every request 401'd. Nothing outside the
+      // dev seed script had ever written `identity.users`, so on a deployed
+      // environment this branch was the state of EVERY user.
+      //
+      // Provisioning here grants NOTHING. The user gets an identity and no
+      // membership, so `TenantGuard` still refuses every workshop route and
+      // `withUser` leaves `app.tenant_id` unset — every tenant-owned table
+      // returns zero rows. It is exactly the marketplace buyer this guard was
+      // written for, and now they can also register a workshop.
+      //
+      // Re-read rather than trusting the id: the row is what the rest of the
+      // request reasons about, and a user provisioned but not readable would be
+      // a harder failure to diagnose later than one refused now.
+      await this.memberships.provisionUser(
+        verified.subject,
+        verified.email,
+        verified.name,
+      );
+      record = await this.memberships.findByKeycloakSubject(verified.subject);
+      if (!record) {
+        // Provisioned and still not resolvable means the user exists but is not
+        // `active` — a SUSPENDED account signing in. `memberships_for_subject`
+        // filters on status, and `provision_user_from_subject` deliberately
+        // does not reactivate. Refusing is the intended outcome.
+        throw new UnauthorizedException('this account is not active');
+      }
     }
 
     req.appUserId = record.userId;

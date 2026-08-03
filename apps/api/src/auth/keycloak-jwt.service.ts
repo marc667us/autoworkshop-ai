@@ -7,6 +7,16 @@ export interface VerifiedToken {
   /** Keycloak subject — the ONLY identity input we trust from the token. */
   subject: string;
   email?: string;
+  /**
+   * The display name, from the `name` claim (Keycloak's `profile` scope).
+   *
+   * Read ONLY to populate `identity.users.display_name` on first sign-in
+   * (migration 036). It is a LABEL, never an identity: the row is keyed on
+   * `subject`, and two people may legitimately share a name. Optional because a
+   * client can be configured without the `profile` scope, in which case the
+   * database falls back rather than refusing the sign-in.
+   */
+  name?: string;
   realmRoles: string[];
 }
 
@@ -91,6 +101,15 @@ export class KeycloakJwtService {
     return {
       subject: payload.sub,
       email: typeof payload['email'] === 'string' ? payload['email'] : undefined,
+      // `name` when the profile scope is present; otherwise the username, which
+      // this realm sets to the email (`registrationEmailAsUsername`). Both are
+      // labels only — see the interface.
+      name:
+        typeof payload['name'] === 'string'
+          ? payload['name']
+          : typeof payload['preferred_username'] === 'string'
+            ? payload['preferred_username']
+            : undefined,
       realmRoles,
     };
   }

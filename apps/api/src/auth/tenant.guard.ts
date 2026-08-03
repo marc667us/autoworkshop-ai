@@ -51,11 +51,35 @@ export class TenantGuard implements CanActivate {
 
     const verified = await this.jwtService.verify(header.slice(7));
 
-    const record = await this.memberships.findByKeycloakSubject(verified.subject);
+    let record = await this.memberships.findByKeycloakSubject(verified.subject);
     if (!record) {
-      // A valid Keycloak token whose subject has no application user. Refused:
-      // authentication is not authorization.
-      throw new UnauthorizedException('no application user for this identity');
+      // 🔴 SIGN-UP, AND THIS GUARD STILL REFUSES THEM AFTERWARDS — deliberately.
+      //
+      // A valid Keycloak token whose subject has no application user. Since
+      // 2026-08-03 the user is CREATED here (owner: "users must sign up via
+      // kc") rather than rejected, because rejecting made a Keycloak sign-up
+      // produce an account that could not use the application at all.
+      //
+      // ⚠️ Creating the user does NOT let this request through. It grants no
+      // membership, so `resolveTenantContext` below finds nothing to resolve and
+      // throws "user holds no active membership" — which is the correct answer
+      // for someone who has signed up but does not yet belong to a workshop, and
+      // a far more actionable one than "no application user for this identity".
+      // Authentication is still not authorization; what changed is that the
+      // person now EXISTS, so they can register a workshop through the routes on
+      // `UserGuard` and come back holding a membership.
+      await this.memberships.provisionUser(
+        verified.subject,
+        verified.email,
+        verified.name,
+      );
+      record = await this.memberships.findByKeycloakSubject(verified.subject);
+      if (!record) {
+        // Provisioned and still unresolvable = a SUSPENDED account.
+        // `provision_user_from_subject` never reactivates, and
+        // `memberships_for_subject` filters on `status = 'active'`.
+        throw new UnauthorizedException('this account is not active');
+      }
     }
 
     // Correlation id ties the HTTP request, the database transaction and the

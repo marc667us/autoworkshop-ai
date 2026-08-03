@@ -11,6 +11,7 @@ import { MeService } from './me.service';
 import { MembershipService } from './membership.service';
 import { OrganizationController } from './organization.controller';
 import { OrganizationService } from './organization.service';
+import { RegistrationController } from './registration.controller';
 import { UserService } from './user.service';
 
 @Module({
@@ -20,6 +21,9 @@ import { UserService } from './user.service';
     UserController,
     MembershipController,
     MeController,
+    // Onboarding: reachable BEFORE the caller belongs to any organisation.
+    // On UserGuard, not TenantGuard — see the controller header.
+    RegistrationController,
   ],
   providers: [
     MembershipRepository,

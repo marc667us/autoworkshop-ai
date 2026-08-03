@@ -61,4 +61,89 @@ export class MembershipRepository {
 
     return { userId, memberships };
   }
+
+  /**
+   * SIGN-UP — a validated Keycloak subject becomes an application user.
+   *
+   * Owner instruction 2026-08-03: "users must sign up via kc". Keycloak creates
+   * the account; this is what makes it usable. Without it a person who signs up
+   * holds a perfectly valid token and is refused by BOTH guards with "no
+   * application user for this identity" — which reads like an auth failure and
+   * is really a missing row.
+   *
+   * ⚠️ THIS GRANTS NOTHING, and the whole safety argument rests on that. The
+   * new user has no membership, so `resolveTenantContext` still refuses every
+   * workshop route and `withUser` leaves `app.tenant_id` unset, which makes
+   * every tenant-owned table return zero rows for them. Creating an identity
+   * and granting access are separate acts; only the first happens here.
+   *
+   * ⚠️ EVERY ARGUMENT COMES FROM A SIGNATURE-VALIDATED TOKEN, never from a
+   * request body. `subject` is the key; `email` and `name` are labels the
+   * database will substitute for if absent. A caller-supplied subject here
+   * would be account takeover by header.
+   *
+   * Runs without a tenant context, like `findByKeycloakSubject` above and for
+   * the same reason — see migration 036 for why it must be SECURITY DEFINER.
+   */
+  async provisionUser(
+    subject: string,
+    email: string | undefined,
+    displayName: string | undefined,
+  ): Promise<string> {
+    const rows = await this.db.queryWithoutTenant<{ id: string }>(
+      `SELECT identity.provision_user_from_subject($1, $2, $3) AS id`,
+      [subject, email ?? '', displayName ?? ''],
+    );
+    const id = rows[0]?.id;
+    if (!id) {
+      // The function RETURNS a uuid or raises; an empty result means the shape
+      // changed underneath us. Failing loudly beats returning a blank user id
+      // that would then be written into a membership row.
+      throw new Error('provision_user_from_subject returned no id');
+    }
+    return id;
+  }
+
+  /**
+   * REGISTRATION — an identity becomes a workshop.
+   *
+   * Creates tenant + organisation + branch + an owner membership for the
+   * CALLER, atomically. The caller is identified by SUBJECT, not by a user id,
+   * so no request can register a workshop in somebody else's name.
+   *
+   * ⚠️ The database refuses a caller who already belongs to an organisation.
+   * That check lives in the function rather than here deliberately: a
+   * double-submitted form races two requests through any check made in
+   * application code, and the loser creates a second tenant that no screen
+   * would ever reveal.
+   */
+  async registerWorkshop(
+    subject: string,
+    workshopName: string,
+    branchName: string | undefined,
+  ): Promise<{
+    tenantId: string;
+    organizationId: string;
+    branchId: string;
+    membershipId: string;
+  }> {
+    const rows = await this.db.queryWithoutTenant<{
+      tenant_id: string;
+      organization_id: string;
+      branch_id: string;
+      membership_id: string;
+    }>(
+      `SELECT tenant_id, organization_id, branch_id, membership_id
+         FROM identity.register_workshop($1, $2, $3)`,
+      [subject, workshopName, branchName ?? ''],
+    );
+    const row = rows[0];
+    if (!row) throw new Error('register_workshop returned no row');
+    return {
+      tenantId: row.tenant_id,
+      organizationId: row.organization_id,
+      branchId: row.branch_id,
+      membershipId: row.membership_id,
+    };
+  }
 }
