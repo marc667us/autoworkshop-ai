@@ -66,6 +66,16 @@ export class RegistrationController {
     const active = (record?.memberships ?? []).filter((m) => m.status === 'active');
     return {
       userId: req.appUserId,
+      /**
+       * ⚠️ THE DISPLAY NAME LIVES HERE BECAUSE `/me` CANNOT SUPPLY IT TO THIS
+       * PERSON. `/me` is behind TenantGuard and 401s for anyone with no
+       * membership — which for `customer-web` is not an edge case, it is the
+       * ENTIRE AUDIENCE. A vehicle owner buying a filter never joins a
+       * workshop, so without this the shell had no name for them and rendered
+       * "Not signed in" beside a working "Sign out", permanently. Seen in a
+       * screenshot of the VIN funnel, for the very people it converts.
+       */
+      displayName: record?.displayName,
       hasWorkshop: active.length > 0,
       // What they could act as, if anything. The shell uses it to decide
       // between "create your workshop" and "go to your dashboard".

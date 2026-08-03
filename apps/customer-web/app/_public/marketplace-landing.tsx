@@ -6,8 +6,10 @@ import {
   CatalogueStats,
   PublicMechanic,
   PublicPart,
+  PublicVin,
 } from './public-api';
 import { AddToBasket } from './add-to-basket';
+import { VinSearch } from './vin-search';
 
 /**
  * ABOSSEY OKAI AUTO PARTS MARKETPLACE — the public landing page.
@@ -99,6 +101,10 @@ export interface MarketplaceLandingProps {
     category: string;
     mechanicQuery: string;
   };
+  /** What the visitor typed into the VIN box, echoed back into the field. */
+  vinQuery: string;
+  /** The FREE half of the VIN answer, or null when nothing was searched. */
+  vinResult: PublicVin | null;
   /** Non-fatal problems, named rather than rendered as an empty page. */
   problems: string[];
 }
@@ -110,6 +116,8 @@ export function MarketplaceLanding({
   total,
   mechanics,
   applied,
+  vinQuery,
+  vinResult,
   problems,
 }: MarketplaceLandingProps) {
   // Cards are grouped under category headings, preserving the order the API
@@ -265,6 +273,12 @@ export function MarketplaceLanding({
       ) : null}
 
       {/* ── Parts search ─────────────────────────────────────────────────── */}
+      {/* ⚠️ ABOVE the parts search, deliberately. A visitor who does not yet
+          know which part they need still knows their VIN — this is the question
+          they CAN answer, and answering it is what earns the account. Putting it
+          below the catalogue would bury the funnel under a grid. */}
+      <VinSearch vinQuery={vinQuery} result={vinResult} />
+
       <section aria-labelledby="find-parts">
         <h2
           id="find-parts"

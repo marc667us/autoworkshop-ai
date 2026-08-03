@@ -26,6 +26,16 @@ import { apiGet } from './api';
 
 export interface RegistrationStatus {
   userId: string;
+  /**
+   * The person's name — the ONLY way `customer-web` can learn it.
+   *
+   * `/me` is behind TenantGuard and 401s for a viewer with no membership, and
+   * in customer-web that viewer is not an edge case: a vehicle owner buying a
+   * filter never joins a workshop. Without this the shell had no name for them
+   * and rendered "Not signed in" beside a working "Sign out", permanently, to
+   * exactly the people the VIN funnel converts.
+   */
+  displayName?: string;
   hasWorkshop: boolean;
   organizations: Array<{ organizationId: string; roleName: string }>;
 }

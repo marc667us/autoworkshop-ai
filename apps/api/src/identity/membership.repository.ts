@@ -31,18 +31,30 @@ export class MembershipRepository {
 
   async findByKeycloakSubject(subject: string): Promise<{
     userId: string;
+    /**
+     * The person's name, carried out of the SAME boundary query.
+     *
+     * `/me` cannot supply it to a viewer with no membership — it is behind
+     * TenantGuard — and for `customer-web` that viewer is the entire audience.
+     * Reading it here costs nothing: `memberships_for_subject` already joins
+     * `identity.users`.
+     */
+    displayName?: string;
     memberships: ValidatedMembership[];
   } | null> {
     const rows = await this.db.queryWithoutTenant<{
       user_id: string;
+      display_name: string;
       tenant_id: string;
       organization_id: string;
       branch_id: string | null;
       role_name: string;
       status: 'active' | 'suspended' | 'revoked';
     }>(
-      `SELECT user_id, tenant_id, organization_id, branch_id, role_name, status
-         FROM identity.memberships_for_subject($1)`,
+      `SELECT m.user_id, u.display_name, m.tenant_id, m.organization_id,
+              m.branch_id, m.role_name, m.status
+         FROM identity.memberships_for_subject($1) m
+         JOIN identity.users u ON u.id = m.user_id`,
       [subject],
     );
 
@@ -59,7 +71,7 @@ export class MembershipRepository {
         status: r.status,
       }));
 
-    return { userId, memberships };
+    return { userId, displayName: rows[0]!.display_name, memberships };
   }
 
   /**

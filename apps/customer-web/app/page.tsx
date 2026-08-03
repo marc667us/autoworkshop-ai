@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { viewerHasSession } from '@autoworkshop/next-shell';
 import { MarketplaceLanding } from './_public/marketplace-landing';
-import { fetchFacets, fetchMechanics, fetchParts, fetchStats } from './_public/public-api';
+import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from './_public/public-api';
 
 /**
  * `/` — the front door, and the ONLY route in this workspace that serves two
@@ -53,6 +53,12 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
     mechanicQuery: one(params.mechanic),
   };
 
+  // The VIN the visitor typed, if any. Kept OUT of `applied` because it drives
+  // no part filter — mixing it in would make `anyFilter` true and hide the
+  // catalogue behind a "clear filters" state for somebody who only checked a
+  // vehicle.
+  const vinQuery = one(params.vin).trim();
+
   // Rebuilt rather than forwarded: only the parameters the parts endpoint
   // understands are passed on, so an unrecognised query-string key cannot ride
   // through to the API. The API normalises again on its side — this is the
@@ -70,12 +76,19 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
 
   // Fetched together — four independent reads, and making them sequential would
   // add three round trips to the first page a visitor ever sees.
-  const [statsResult, facetsResult, partsResult, mechanicsResult] = await Promise.all([
-    fetchStats(),
-    fetchFacets(),
-    fetchParts(partsQuery.toString()),
-    fetchMechanics(mechanicQuery.toString()),
-  ]);
+  // ⚠️ THE VIN LOOKUP JOINS THE SAME `Promise.all`, not a fifth sequential
+  // await. It is on the first page a visitor ever sees, and adding a round trip
+  // there is the difference between the tool feeling instant and feeling slow.
+  // `fetchVin` is only called when something was typed — an empty VIN must not
+  // spend a request to be told it is empty.
+  const [statsResult, facetsResult, partsResult, mechanicsResult, vinResult] =
+    await Promise.all([
+      fetchStats(),
+      fetchFacets(),
+      fetchParts(partsQuery.toString()),
+      fetchMechanics(mechanicQuery.toString()),
+      vinQuery ? fetchVin(vinQuery) : Promise.resolve(null),
+    ]);
 
   // A failed section is NAMED and the rest of the page still renders. The
   // alternative — one error screen for any failure — means a broken mechanic
@@ -85,6 +98,7 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
   if (!facetsResult.ok) problems.push(`Search filters: ${facetsResult.reason}`);
   if (!partsResult.ok) problems.push(`Parts: ${partsResult.reason}`);
   if (!mechanicsResult.ok) problems.push(`Mechanics: ${mechanicsResult.reason}`);
+  if (vinResult && !vinResult.ok) problems.push(`VIN check: ${vinResult.reason}`);
 
   return (
     <MarketplaceLanding
@@ -94,6 +108,8 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       total={partsResult.ok ? partsResult.data.total : 0}
       mechanics={mechanicsResult.ok ? mechanicsResult.data : []}
       applied={applied}
+      vinQuery={vinQuery}
+      vinResult={vinResult && vinResult.ok ? vinResult.data : null}
       problems={problems}
     />
   );

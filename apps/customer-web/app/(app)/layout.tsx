@@ -5,6 +5,7 @@ import {
   grantsFor,
   navRoleFor,
   viewerLabels,
+  registrationStatus,
   viewerHasSession,
   ViewerSwitchers,
   ActingAsControl,
@@ -34,9 +35,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Resolved together: the viewer DESCRIBES the person, the session says whether
   // there is one. They are separate calls because `/me` can fail while the
   // session is live, and sign-out must survive that (Codex finding M2).
-  const [viewer, signedIn] = await Promise.all([
+  const [viewer, signedIn, status] = await Promise.all([
     currentViewer('customer'),
     viewerHasSession('customer'),
+    // Only asked when a session exists — the call needs a token, and asking
+    // without one spends a round trip to learn what the cookie already said.
+    // Resolved in the SAME Promise.all rather than after it: this is the shell
+    // every customer page renders inside.
+    registrationStatus('customer'),
   ]);
 
   return (
@@ -45,6 +51,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
           {...viewerLabels(viewer)}
+          // 🔴 A SIGNED-IN CUSTOMER IS NOT "Not signed in", AND HERE THAT IS THE
+          // NORMAL CASE, not an edge one. `/me` is behind TenantGuard, so a
+          // viewer with no membership cannot be described — and in THIS
+          // workspace almost nobody has one: a vehicle owner buying a filter
+          // never joins a workshop. `viewerLabels(null)` therefore supplied the
+          // signed-out labels to every customer, permanently, and the shell
+          // rendered "Not signed in" next to a working "Sign out".
+          //
+          // Seen in a screenshot of the VIN funnel's final screen — the page
+          // somebody reaches immediately AFTER being persuaded to register.
+          //
+          // The name comes from /registration/status, which is on UserGuard and
+          // can answer for exactly this person. The organisation chip is left
+          // ABSENT rather than filled: a customer has no organisation, and
+          // `Selector` renders nothing for an empty value.
+          {...(signedIn && !viewer
+            ? { userLabel: status?.displayName, organizationLabel: undefined, branchLabel: undefined }
+            : {})}
           // T-0005 finding 5: a real sign-out — revoke the refresh token at
           // Keycloak, clear the cookie, end the SSO session. Passed from the
           // server layout because a server action cannot be created in the

@@ -95,3 +95,33 @@ export function fetchMechanics(search: string): Promise<PublicResult<PublicMecha
 export function fetchStats(): Promise<PublicResult<CatalogueStats>> {
   return get('/stats');
 }
+
+/**
+ * The FREE half of a VIN lookup — what a signed-out visitor may see.
+ *
+ * ⚠️ IT IS THE ENDPOINT THAT WITHHOLDS THE REST, NOT THIS FUNCTION AND NOT THE
+ * PAGE. `/public/vin/:vin` returns manufacturer, region, country and year and
+ * simply does not send engine, plant or serial. If this ever appears to be
+ * "filtering" a fuller response, something has gone wrong at the API — a page
+ * that receives the full decode and renders half of it has no gate at all.
+ *
+ * The signed-in half is `GET /vin/:vin`, which needs a token and therefore uses
+ * `apiGet` from next-shell, not this helper.
+ */
+export interface PublicVin {
+  vin: string;
+  valid: boolean;
+  problem?: string;
+  manufacturer?: string;
+  region?: string;
+  country?: string;
+  modelYear?: number;
+  /** Named field by field, so "see more" is not a request to register on faith. */
+  moreAvailable?: string[];
+}
+
+export function fetchVin(vin: string): Promise<PublicResult<PublicVin>> {
+  // Encoded because it reaches a URL PATH and the value is whatever somebody
+  // typed into a public form. The API validates the alphabet again on its side.
+  return get(`/vin/${encodeURIComponent(vin.trim().toUpperCase())}`);
+}
