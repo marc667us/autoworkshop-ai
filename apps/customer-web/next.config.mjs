@@ -24,6 +24,26 @@ const constrainedBuild = process.env.SKIP_BUILD_CHECKS === '1';
 const nextConfig = {
   eslint: { ignoreDuringBuilds: constrainedBuild },
   typescript: { ignoreBuildErrors: constrainedBuild },
+  /**
+   * Emit `.next/standalone` — required by this app's Dockerfile, added
+   * 2026-08-03 when the public landing page was first deployed.
+   *
+   * ⚠️ WITHOUT IT THE IMAGE BUILDS AND THE CONTAINER DIES AT START: the
+   * Dockerfile copies `.next/standalone`, which simply would not exist, so
+   * `node apps/customer-web/server.js` finds nothing. On Render that surfaces
+   * as a failed health check with no build error — the same shape of failure
+   * the API's own start-up check was written to catch.
+   *
+   * Safe locally: `next start` prefers a normal build when one is present, and
+   * this only ADDS a directory.
+   */
+  output: 'standalone',
+  /**
+   * The workspace root, not this app. pnpm links workspace packages through
+   * symlinks into ../../node_modules/.pnpm, and tracing rooted at the app
+   * directory would follow those links outside its root and drop the files.
+   */
+  outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
   reactStrictMode: true,
   // Shared workspace packages are compiled by this app rather than pre-built,
   // so a token change is picked up without a separate build step.
