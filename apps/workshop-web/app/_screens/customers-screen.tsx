@@ -1,6 +1,8 @@
 import { Suspense } from 'react';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, StatusBadge } from '@autoworkshop/ui';
+import { quickCreateHref } from '@autoworkshop/next-shell';
+import { QuickCreateButton } from './quick-create-button';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
 
@@ -47,13 +49,28 @@ interface Customer {
 }
 
 export async function CustomersScreen({ route }: { route: string }) {
-  const title = await navLabelFor('workshop', route, 'Customers');
+  // Resolved together: the heading, and where THIS viewer may add a customer.
+  // `register-customer` sits under a different group in every tree and is
+  // permission-gated on the §34 default one, so the href is read out of the
+  // viewer's own visible navigation rather than written down a second time.
+  const [title, addHref] = await Promise.all([
+    navLabelFor('workshop', route, 'Customers'),
+    quickCreateHref('workshop', 'register-customer'),
+  ]);
 
   return (
     <>
       <PageHeader
         title={title}
         description="Everyone this workshop services — their contact details and the vehicles registered to them."
+        /*
+          The way IN to this screen's whole purpose. A customer book with no
+          "add" on it sends people hunting through a menu whose wording differs
+          per role — and the href differs per role too, which is why it is
+          resolved from the viewer's own navigation rather than written here.
+          Renders nothing for a viewer whose tree has no such route.
+        */
+        actions={<QuickCreateButton href={addHref} label="Add customer" />}
       />
       {/* Streams the shell immediately and the table when the API answers, so a
           slow API delays the data and not the navigation around it. */}

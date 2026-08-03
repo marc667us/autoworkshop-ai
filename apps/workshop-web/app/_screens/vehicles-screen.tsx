@@ -1,6 +1,8 @@
 import { Suspense } from 'react';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
+import { quickCreateHref } from '@autoworkshop/next-shell';
+import { QuickCreateButton } from './quick-create-button';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
 
@@ -42,13 +44,19 @@ function mileage(km: number | null): string {
 }
 
 export async function VehiclesScreen({ route }: { route: string }) {
-  const title = await navLabelFor('workshop', route, 'Vehicles');
+  // As the customers screen: the add target differs per tree, so it comes from
+  // the viewer's own navigation and is absent when they have no such route.
+  const [title, addHref] = await Promise.all([
+    navLabelFor('workshop', route, 'Vehicles'),
+    quickCreateHref('workshop', 'register-vehicle'),
+  ]);
 
   return (
     <>
       <PageHeader
         title={title}
         description="Every vehicle registered to this workshop's customers, newest first."
+        actions={<QuickCreateButton href={addHref} label="Register vehicle" />}
       />
       <Suspense fallback={<LoadingState label="Loading vehicles…" />}>
         <VehiclesTable route={route} />

@@ -26,6 +26,11 @@ export { viewerHasSession } from './viewer';
 export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';
 export { requireWorkspaceAccess } from './require-access';
 export { requireNavRoute } from './require-route';
+/**
+ * Resolves an "Add new …" target out of the viewer's OWN visible navigation,
+ * so a create button can never point somewhere its owner would be refused.
+ */
+export { quickCreateHref } from './quick-create';
 export { apiGet, apiPost, apiPut, apiPatch, apiDelete, describeApiFailure } from './api';
 export { ApiFailure } from './ApiFailure';
 export { OrganizationSwitcher } from './OrganizationSwitcher';
