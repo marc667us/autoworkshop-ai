@@ -1,0 +1,504 @@
+# Deploy the NestJS API to Render.
+#
+# WHY THIS EXISTS. Keycloak is deployed, the web service is deployed, and the
+# live site can be signed into — and every screen still reads zero, because
+# NOTHING IN THIS REPO DEPLOYED THE API. `/me` cannot be answered, so
+# `currentViewer()` returns null, the top bar says "Not signed in" beside a
+# working "Sign out", and the dashboard says its figures could not be loaded.
+# Measured on the live site 2026-08-03, signed in as the owner.
+#
+# MODELLED ON `deploy-keycloak.yml`, which is the worked example that now
+# demonstrably works end to end: build image -> push GHCR -> create or update
+# the Render service -> poll the deploy -> READ THE RESULT BACK OVER THE PUBLIC
+# URL. Every deviation from it below is deliberate and commented.
+#
+# ── THE THREE BUGS THAT DEPLOY PAID FOR, AND WHAT THIS INHERITS ─────────────
+#
+# 1. A step gated on `confirm == 'APPLY'` HAS NEVER RUN. "Built and validated"
+#    meant its first real execution died on its first command. So: no clever
+#    shell in an APPLY-only step. The password generator is `secrets.choice`,
+#    not `tr -dc … | head -c 40` (which takes SIGPIPE and fails `pipefail`).
+# 2. Render nests the owner as `owner.id` on some responses and omits it on
+#    others. Try both shapes, fall back to `/v1/owners`, and fail with the key
+#    NAMES present rather than a bare KeyError.
+# 3. Render's env endpoint is a WHOLE-SET PUT, not a PATCH. This service is
+#    created by this workflow and owns its whole env set, so a full PUT is
+#    correct HERE — but see `point-web-at-keycloak.yml` for the merge that is
+#    required when touching a service somebody else configured.
+#
+# ── THE ONE THING THIS ASSERTS THAT KEYCLOAK'S DEPLOY COULD NOT ────────────
+#
+# The API REFUSES TO BOOT on a superuser DSN (`database.service.ts`: a superuser
+# bypasses RLS entirely, even with FORCE). That guard is the whole reason the
+# `autoworkshop_app` role exists — so this workflow proves the credential by
+# CONNECTING AS THAT ROLE and asserting `rolsuper=false, rolbypassrls=false`
+# before it ever reaches Render. A deploy that sets a DSN the API will reject at
+# boot would otherwise surface as an unexplained failed health check.
+
+name: Deploy API
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually push the image and create/update the service.'
+        required: false
+        default: ''
+      service:
+        description: 'Render service name'
+        required: false
+        default: 'autoworkshop-api'
+      database:
+        description: 'Render Postgres service name'
+        required: false
+        default: 'autoworkshop-postgres'
+      keycloak_url:
+        description: 'Public Keycloak base URL the API validates issuers against'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SERVICE_NAME: ${{ inputs.service }}
+      DB_NAME: ${{ inputs.database }}
+      KC_URL: ${{ inputs.keycloak_url }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/autoworkshop-api
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without the things this cannot run without
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          [ -f apps/api/Dockerfile ] || { echo "::error::apps/api/Dockerfile is missing"; exit 1; }
+
+      # ⚠️ THE ISSUER MUST BE REACHABLE AND MUST MATCH, BEFORE ANYTHING IS BUILT.
+      # `KeycloakJwtService` validates every token's `iss` against
+      # `${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}` byte for byte. Deploying an
+      # API pointed at an issuer that answers something else produces a service
+      # that passes its health check and 401s every real request — the exact
+      # shape of the 2026-08-02 local outage, one layer out.
+      #
+      # Long timeouts on purpose: Render's free tier spins the instance down, and
+      # a cold Keycloak took 24.6s to answer on 2026-08-03. A short timeout here
+      # would report a healthy service as dead.
+      - name: Prove the Keycloak issuer answers, and is the one we will pin
+        run: |
+          set -euo pipefail
+          WANT="${KC_URL}/realms/autoworkshop"
+          for i in $(seq 1 10); do
+            CODE="$(curl -s -o /tmp/disc.json -w '%{http_code}' --max-time 120 \
+              "${KC_URL}/realms/autoworkshop/.well-known/openid-configuration" || echo 000)"
+            [ "$CODE" = "200" ] && break
+            echo "  discovery: $CODE (cold start? attempt $i)"
+          done
+          [ "$CODE" = "200" ] || { echo "::error::Keycloak did not answer at ${KC_URL}"; exit 1; }
+          python3 - <<PY
+          import json
+          d = json.load(open('/tmp/disc.json'))
+          want = "${WANT}"
+          print('issuer:', d['issuer'])
+          if d['issuer'] != want:
+              raise SystemExit(f"::error::issuer is {d['issuer']}, expected {want} — "
+                               "the API would reject every token it is sent")
+          PY
+
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          docker build -f apps/api/Dockerfile \
+            -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" .
+          echo "built ${IMAGE}:${GITHUB_SHA}"
+
+      # 🔴 PROVE THE IMAGE CAN ACTUALLY START, not merely that it built.
+      # The Dockerfile's own note says it: with pnpm's symlink tree the failure
+      # appears at RUN time, not build time, so the image looks fine until Render
+      # health-checks it. The container is started with NO DATABASE_URL, so the
+      # expected outcome is the API's OWN boot guard message — which proves node
+      # resolved every workspace import and Nest constructed the module graph.
+      - name: Prove the image starts far enough to reach its own boot guard
+        run: |
+          set -euo pipefail
+          set +e
+          OUT="$(docker run --rm --entrypoint node "${IMAGE}:${GITHUB_SHA}" dist/main.js 2>&1)"
+          set -e
+          echo "$OUT" | tail -20
+          echo "$OUT" | grep -q 'DATABASE_URL is not configured' || {
+            echo "::error::the image did not reach its own boot guard — it cannot start at all"
+            exit 1; }
+          echo "image starts, resolves every workspace import, and fails ONLY on the missing DSN"
+
+      - name: What this would do
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<INFO
+
+          DRY RUN — nothing pushed, created or altered.
+
+          With confirm=APPLY this would:
+            1. push ${IMAGE}:${GITHUB_SHA} to GHCR
+            2. give autoworkshop_app a database password and PROVE it by
+               connecting as that role, asserting NOSUPERUSER + NOBYPASSRLS
+            3. create (or update) the Render service '${SERVICE_NAME}' from that
+               image, free plan, oregon, health check /api/v1/health
+            4. poll until Render reports the deploy live
+            5. read /api/v1/health back over the public URL
+
+          The image build, the issuer check and the container start-up check
+          above are NOT gated — they run on every dispatch, so this dry run has
+          already proved the three things most likely to be wrong.
+          INFO
+
+      - name: Log in to GHCR
+        if: ${{ inputs.confirm == 'APPLY' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the image
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
+
+      - name: Install a matching psql
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          test -x "$PSQL" || { echo "::error::$PSQL missing"; exit 1; }
+          # ⚠️ ABSOLUTE PATH PLUS A VERSION ASSERTION. Solar's backup step called
+          # bare `pg_dump`, PATH resolved Ubuntu's older client, and the job
+          # failed three times on a version mismatch while its own "check" merely
+          # ECHOED the version. Echoing a wrong value is not a check.
+          "$PSQL" --version | grep -q ' 17\.' || { echo "::error::wrong psql on PATH"; exit 1; }
+          echo "PSQL_BIN=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Find the database and open the firewall for this runner
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          curl -sS -o /tmp/pg.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres?limit=50"
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == want:
+                  open('/tmp/db_id', 'w').write(d['id'])
+                  break
+          else:
+              sys.exit(f"::error::no database named {want}")
+          PY
+          ID="$(cat /tmp/db_id)"
+
+          curl -sS -o /tmp/conn.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}/connection-info"
+          python3 -c "
+          import json
+          i=json.load(open('/tmp/conn.json'))
+          e=i.get('externalConnectionString'); n=i.get('internalConnectionString')
+          if not (e or n): raise SystemExit('::error::no connection string')
+          open('/tmp/dburl','w').write(e or n)
+          # The INTERNAL string is what the API uses: it runs inside Render, and
+          # the external host is both slower and firewalled.
+          open('/tmp/dburl_internal','w').write(n or e)
+          "
+          chmod 600 /tmp/dburl /tmp/dburl_internal
+
+          # 🔴 Render rejects an unlisted IP by DROPPING the connection, and psql
+          # reports it as "SSL connection has been closed unexpectedly" — which
+          # reads like TLS and is not. A single /32 for this runner, restored in
+          # an `always()` step below so a failed run cannot leave it open.
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          curl -sS -o /tmp/pg_one.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}"
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json'))
+          d = d.get('postgres', d)
+          json.dump(d.get('ipAllowList') or [], open('/tmp/ip_allow_original.json', 'w'))
+          json.dump({'ipAllowList': (d.get('ipAllowList') or []) +
+                     [{'cidrBlock': f'{ip}/32', 'description': 'ephemeral: deploy-api'}]},
+                    open('/tmp/ip_allow_patch.json', 'w'))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          sleep 20
+
+      - name: Give autoworkshop_app a password, and PROVE it is not a superuser
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # Alphanumeric: this value crosses a DSN, a Render env var and an ALTER
+          # ROLE. Symbols would need correct quoting at every hop and one of them
+          # would eventually be wrong.
+          #
+          # 🔴 NOT `tr -dc ... < /dev/urandom | head -c 40`. That spelling FAILED
+          # the first real APPLY run of deploy-keycloak.yml: `head` closes the
+          # pipe, `tr` takes SIGPIPE, `pipefail` fails the step — and no dry run
+          # could catch it, because the whole step is APPLY-only.
+          PW="$(python3 -c "
+          import secrets, string
+          print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(40)))
+          ")"
+          printf '%s' "$PW" > /tmp/apppw
+          chmod 600 /tmp/apppw
+          echo "::add-mask::$PW"
+
+          # Migration 002 creates the role NOSUPERUSER NOBYPASSRLS. This is the
+          # only place it gets a password, and the Render env var is written in
+          # the same run, so the database and the service cannot disagree.
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" \
+            -c "ALTER ROLE autoworkshop_app LOGIN PASSWORD '${PW}'" >/dev/null
+          echo "autoworkshop_app can now log in"
+
+          HOSTPART="$(python3 -c "
+          import re
+          u=open('/tmp/dburl').read()
+          m=re.match(r'postgres(?:ql)?://[^:]+:[^@]+@([^/]+)/(.+)', u)
+          print(m.group(1), m.group(2))
+          ")"
+          HOST="$(echo "$HOSTPART" | cut -d' ' -f1)"
+          DB="$(echo "$HOSTPART" | cut -d' ' -f2 | cut -d'?' -f1)"
+
+          # 🔴 THE ASSERTION THE API'S BOOT GUARD EXISTS FOR. An ALTER that
+          # succeeded is not proof the credential works, and a credential that
+          # works is not proof it is the RIGHT one: a superuser would connect
+          # perfectly and silently bypass every RLS policy in the database.
+          # Checked by connecting AS the role and asking Postgres about itself.
+          OUT="$(PGPASSWORD="$PW" "${PSQL_BIN}" -v ON_ERROR_STOP=1 \
+            "postgresql://autoworkshop_app@${HOST}/${DB}?sslmode=require" \
+            -tAc "select current_user||' '||rolsuper||' '||rolbypassrls
+                    from pg_roles where rolname = current_user")" \
+            || { echo "::error::autoworkshop_app cannot log in with the password just set"; exit 1; }
+          echo "connected as: $OUT"
+          echo "$OUT" | grep -q '^autoworkshop_app f f$' || {
+            echo "::error::the app role is a superuser or bypasses RLS — tenant isolation would NOT apply"
+            exit 1; }
+          echo "verified: NOSUPERUSER, NOBYPASSRLS"
+
+      - name: Create or update the Render service
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # Render nests the owner as `owner.id` on some responses and omits it
+          # on others — a bare KeyError here cost a whole APPLY run. Only key
+          # NAMES are printed, never values: this response carries connection
+          # details.
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/$(cat /tmp/db_id)" > /tmp/pgobj.json
+
+          OWNER="$(python3 -c "
+          import json
+          d = json.load(open('/tmp/pgobj.json'))
+          d = d.get('postgres', d)
+          print(d.get('ownerId') or (d.get('owner') or {}).get('id') or '')
+          ")"
+          if [ -z "$OWNER" ]; then
+            echo "postgres object exposed no ownerId; keys were:"
+            python3 -c "
+          import json
+          d = json.load(open('/tmp/pgobj.json'))
+          d = d.get('postgres', d)
+          print(' ', sorted(d.keys()))
+          "
+            OWNER="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' "https://api.render.com/v1/owners?limit=1" \
+              | python3 -c "
+          import sys, json
+          rows = json.load(sys.stdin)
+          o = rows[0].get('owner', rows[0]) if rows else {}
+          print(o.get('id',''))
+          ")"
+          fi
+          [ -n "$OWNER" ] || { echo "::error::could not determine the Render ownerId"; exit 1; }
+          echo "owner resolved: $OWNER"
+
+          EXISTING="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/services?name=${SERVICE_NAME}&limit=20" \
+            | python3 -c "
+          import sys, json, os
+          rows = json.load(sys.stdin)
+          for r in rows:
+              s = r.get('service', r)
+              if s.get('name') == os.environ['SERVICE_NAME']:
+                  print(s['id']); break
+          ")"
+
+          # The app DSN: the INTERNAL host, but the APP role and its new
+          # password — never the bootstrap superuser the connection string
+          # actually carries. `database.service.ts` refuses `://autoworkshop:`
+          # at boot, so getting this wrong is a service that never starts.
+          python3 - > /tmp/appdsn <<'PY'
+          import re
+          u = open('/tmp/dburl_internal').read().strip()
+          pw = open('/tmp/apppw').read().strip()
+          m = re.match(r'(postgres(?:ql)?)://[^:]+:[^@]+@(.+)$', u)
+          if not m:
+              raise SystemExit('::error::could not parse the internal connection string')
+          print(f'{m.group(1)}://autoworkshop_app:{pw}@{m.group(2)}', end='')
+          PY
+          python3 -c "
+          d=open('/tmp/appdsn').read()
+          assert '://autoworkshop:' not in d, 'the DSN still names the superuser'
+          print('app DSN built for role autoworkshop_app')
+          "
+
+          python3 - > /tmp/envvars.json <<PY
+          import json
+          print(json.dumps([
+            {"key": "DATABASE_URL", "value": open('/tmp/appdsn').read()},
+            {"key": "KEYCLOAK_URL", "value": "${KC_URL}"},
+            {"key": "KEYCLOAK_REALM", "value": "autoworkshop"},
+            # `keycloak-jwt.service.ts` defaults to this; set explicitly so the
+            # value is visible in the Render dashboard rather than implied.
+            {"key": "KEYCLOAK_AUDIENCE", "value": "autoworkshop-api"},
+            {"key": "NODE_ENV", "value": "production"},
+          ]))
+          PY
+
+          if [ -z "$EXISTING" ]; then
+            echo "creating ${SERVICE_NAME}"
+            python3 - > /tmp/service.json <<PY
+          import json, os
+          spec = {
+            "type": "web_service",
+            "name": os.environ['SERVICE_NAME'],
+            "ownerId": "${OWNER}",
+            "image": {"ownerId": "${OWNER}",
+                      "imagePath": f"{os.environ['IMAGE']}:{os.environ['GITHUB_SHA']}"},
+            "serviceDetails": {
+              "env": "image", "runtime": "image",
+              "plan": "free", "region": "oregon",
+              # The API mounts everything under /api/v1 (main.ts).
+              "healthCheckPath": "/api/v1/health",
+            },
+            "envVars": json.load(open('/tmp/envvars.json')),
+          }
+          print(json.dumps(spec))
+          PY
+            SVC="$(curl -fsS -X POST -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Content-Type: application/json' --data @/tmp/service.json \
+              "https://api.render.com/v1/services" \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('service',d)['id'])")"
+          else
+            echo "updating ${SERVICE_NAME} ($EXISTING)"
+            SVC="$EXISTING"
+            # A SINGLE PUT of the whole env-var set. This workflow owns this
+            # service's entire environment, so a whole-set write is correct here
+            # — unlike the WEB service, whose set is shared and must be MERGED
+            # (see point-web-at-keycloak.yml, where a partial PUT deleted
+            # AUTH_SECRET).
+            curl -fsS -X PUT -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Content-Type: application/json' --data @/tmp/envvars.json \
+              "https://api.render.com/v1/services/${SVC}/env-vars" >/dev/null
+            curl -fsS -X POST -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Content-Type: application/json' \
+              --data "{\"imageUrl\":\"${IMAGE}:${GITHUB_SHA}\"}" \
+              "https://api.render.com/v1/services/${SVC}/deploys" >/dev/null
+          fi
+          echo "$SVC" > /tmp/svc_id
+          echo "service: $SVC"
+
+      - name: Wait for the deploy, then read the API back over its public URL
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          SVC="$(cat /tmp/svc_id)"
+          PUBLIC_URL="https://${SERVICE_NAME}.onrender.com"
+
+          for i in $(seq 1 60); do
+            STATUS="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' \
+              "https://api.render.com/v1/services/${SVC}/deploys?limit=1" \
+              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0].get('deploy',d[0])['status'])")"
+            echo "  deploy status: $STATUS"
+            case "$STATUS" in
+              live) break ;;
+              build_failed|update_failed|canceled|deactivated)
+                echo "::error::deploy ended as $STATUS"; exit 1 ;;
+            esac
+            sleep 20
+          done
+
+          # 🔴 READ IT BACK OVER THE PUBLIC URL. Render calling a deploy "live"
+          # proves the health path answered from inside its network. Keycloak
+          # reported /health/ready UP for THIRTY HOURS with a dead database —
+          # the lesson being that the only trustworthy check is the one that
+          # goes the way a user's request goes.
+          for i in $(seq 1 20); do
+            CODE="$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 120 \
+              "${PUBLIC_URL}/api/v1/health" || echo 000)"
+            [ "$CODE" = "200" ] && break
+            echo "  health: $CODE (waiting)"
+            sleep 15
+          done
+          [ "$CODE" = "200" ] || { echo "::error::the API did not answer at ${PUBLIC_URL}"; exit 1; }
+          echo "health body:"; cat /tmp/health.json; echo
+
+          # An unauthenticated /me MUST be refused. This is cheap, and it proves
+          # the guard chain is mounted rather than merely that a process is
+          # listening — a 200 here would mean the API was answering identity
+          # questions to anonymous callers.
+          ME="$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "${PUBLIC_URL}/api/v1/me" || echo 000)"
+          echo "unauthenticated /api/v1/me -> $ME"
+          case "$ME" in
+            401|403) echo "the tenant guard is mounted and refuses anonymous callers" ;;
+            *) echo "::error::/api/v1/me returned $ME to an anonymous caller, expected 401/403"; exit 1 ;;
+          esac
+
+          {
+            echo "### API deployed"
+            echo ""
+            echo "- URL: ${PUBLIC_URL}"
+            echo "- health: 200"
+            echo "- unauthenticated /me: ${ME} (refused, as required)"
+            echo ""
+            echo "NEXT: point the web service at it —"
+            echo "\`API_BASE_URL=${PUBLIC_URL}\` via a MERGING env update."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl /tmp/dburl_internal /tmp/apppw /tmp/appdsn /tmp/envvars.json || true
