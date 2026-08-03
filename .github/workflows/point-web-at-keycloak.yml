@@ -15,7 +15,7 @@
 #
 # ⚠️ DRY RUN BY DEFAULT. It reports which keys would change and prints only KEY
 # NAMES — never values.
-name: Point web at Keycloak
+name: Point web at Keycloak and API
 
 on:
   workflow_dispatch:
@@ -36,6 +36,10 @@ on:
         description: 'Keycloak realm'
         required: false
         default: 'autoworkshop'
+      api_base_url:
+        description: 'Public base URL of the deployed API (server-side calls from Next)'
+        required: false
+        default: 'https://autoworkshop-api.onrender.com'
 
 permissions:
   contents: read
@@ -53,6 +57,7 @@ jobs:
       KEYCLOAK_URL: ${{ inputs.keycloak_url }}
       AUTH_URL: ${{ inputs.auth_url }}
       REALM: ${{ inputs.realm }}
+      API_BASE_URL: ${{ inputs.api_base_url }}
       CONFIRM: ${{ inputs.confirm }}
 
     steps:
@@ -75,6 +80,34 @@ jobs:
           # The API validates `iss` byte for byte against its own KEYCLOAK_URL.
           [ "$ISS" = "${KEYCLOAK_URL}/realms/${REALM}" ] || {
             echo "::error::issuer '$ISS' is not '${KEYCLOAK_URL}/realms/${REALM}'"; exit 1; }
+
+      # THE SAME RULE, FOR THE API. Pointing the web app at an API that does not
+      # answer replaces "no data" with "no data", and the screen says the same
+      # thing either way — so the mistake would be invisible until somebody
+      # opened the Render dashboard. Deployed 2026-08-03; before that this
+      # variable had nowhere to point, which is why every live screen read zero.
+      - name: Prove the API is actually serving too
+        run: |
+          set -euo pipefail
+          # Free tier spins down; a cold start took 24.6s for Keycloak on the
+          # same account, so this waits rather than declaring a sleeping service dead.
+          for i in $(seq 1 6); do
+            code="$(curl -s -o /tmp/health.json -w '%{http_code}' --max-time 120               "${API_BASE_URL}/api/v1/health" || echo 000)"
+            [ "$code" = "200" ] && break
+            echo "  health: $code (cold start? attempt $i)"
+          done
+          echo "health -> $code"
+          [ "$code" = "200" ] || { echo "::error::${API_BASE_URL}/api/v1/health did not answer 200"; exit 1; }
+          cat /tmp/health.json; echo
+          # An anonymous /me MUST be refused. A 200 here would mean the web app
+          # was about to be pointed at an API answering identity questions to
+          # anyone, which is worse than being pointed at nothing.
+          me="$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "${API_BASE_URL}/api/v1/me" || echo 000)"
+          echo "anonymous /me -> $me"
+          case "$me" in
+            401|403) ;;
+            *) echo "::error::/api/v1/me returned $me to an anonymous caller"; exit 1 ;;
+          esac
 
       - name: Read the current variables and merge
         run: |
@@ -108,6 +141,11 @@ jobs:
               # ordinary pages keep returning 200.
               'AUTH_TRUST_HOST': 'true',
               'NEXT_PUBLIC_APP_URL': os.environ['AUTH_URL'],
+              # Where the Next SERVER calls the API. `apiBaseUrl()` in
+              # packages/auth reads it; the browser never sees it, and there is
+              # deliberately no NEXT_PUBLIC_ twin — the access token is used
+              # server-side only and must not cross to the client.
+              'API_BASE_URL': os.environ['API_BASE_URL'],
           }
 
           changed = [k for k, v in want.items() if cur.get(k) != v]
