@@ -39,9 +39,23 @@ COPY . .
 RUN pnpm --filter @autoworkshop/api build
 
 # A self-contained tree at /out: real directories, no symlinks, production
-# dependencies only. `--legacy` because the workspace is not using pnpm's
-# `inject-workspace-packages` layout.
-RUN pnpm deploy --filter "@autoworkshop/api" --prod --legacy /out
+# dependencies only.
+#
+# 🔴 NO `--legacy`. That flag DOES NOT EXIST IN pnpm 9 — it was added in pnpm 10,
+# where `deploy` began requiring `inject-workspace-packages` and `--legacy` opts
+# back into the behaviour that is simply the DEFAULT here. This file shipped with
+# it and the build died on `ERROR Unknown option: 'legacy'`, because the image
+# had never once been built:
+#
+#   #17 [builder 10/11] RUN pnpm deploy --filter "@autoworkshop/api" --prod --legacy /out
+#   0.461  ERROR  Unknown option: 'legacy'
+#
+# The comment above it confidently explained WHY the flag was needed, which is
+# this repo's most repeated defect class wearing a new hat: a confident
+# explanation of a thing that does not exist stops the next reader checking.
+# `packageManager` pins pnpm@9.15.4 — check a flag against THAT, not against the
+# current docs.
+RUN pnpm deploy --filter "@autoworkshop/api" --prod /out
 
 # The build must actually have produced an entrypoint. Without this the image
 # builds cleanly and fails at container start, which on Render surfaces as an
