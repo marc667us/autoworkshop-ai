@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { viewerHasSession } from '@autoworkshop/next-shell';
-import { MarketplaceLanding } from './_public/marketplace-landing';
-import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from './_public/public-api';
+import { MarketplaceLanding } from '@autoworkshop/marketplace-ui';
+import { AddToBasket } from './_public/add-to-basket';
+import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from '@autoworkshop/marketplace-ui';
 
 /**
  * `/` — the front door, and the ONLY route in this workspace that serves two
@@ -111,6 +112,12 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       vinQuery={vinQuery}
       vinResult={vinResult && vinResult.ok ? vinResult.data : null}
       problems={problems}
+      // ⚠️ SUPPLIED BY THIS APP, not imported by the package. The basket is
+      // customer-web's own client-side store; the shared landing must not know
+      // it exists, or it could not be mounted anywhere else.
+      renderAddToBasket={(part) => (
+        <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
+      )}
     />
   );
 }

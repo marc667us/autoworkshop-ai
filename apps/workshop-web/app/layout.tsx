@@ -6,14 +6,14 @@ import {
   navRoleFor,
   viewerLabels,
   viewerHasSession,
-  ViewerSwitchers,
-  ActingAsControl,
   registrationStatus,
   needsWorkshop,
+  ViewerSwitchers,
+  ActingAsControl,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction, switchUserAction } from './sign-out-action';
-import { CreateWorkshopScreen } from './_screens/create-workshop-screen';
+
 
 export const metadata: Metadata = {
   title: 'AutoWorkshop AI — Workshop',
@@ -43,26 +43,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     viewerHasSession('workshop'),
   ]);
 
-  // ── SIGNED UP, BUT NOT IN A WORKSHOP YET ──────────────────────────────────
+  // ⚠️ USED FOR THE LABELS AND THE BADGES ONLY — NEVER TO REPLACE THE PAGE.
   //
-  // Owner instruction 2026-08-03: "users must sign up via kc". Keycloak makes
-  // the account; the first API call provisions the application user; neither
-  // puts anybody in a workshop. Without this branch that person sees the full
-  // shell with every count at zero and a dashboard saying its figures could not
-  // be loaded — which is what a BROKEN application looks like, on the first
-  // screen they ever see. It is not broken; they have nowhere to look yet.
+  // It once swapped `children` for the onboarding form, which was right for the
+  // app's own screens and WRONG for `/`: that route is now the PUBLIC parts
+  // marketplace and the free VIN search, and a signed-in account with no
+  // workshop asked for the landing and got a form. Measured in a browser — the
+  // free tool the whole funnel depends on was unreachable for exactly the
+  // people it converts. The screen now lives on the DASHBOARD, which is the
+  // page whose emptiness it explains.
   //
-  // ⚠️ ONLY ASKED WHEN A SESSION EXISTS. `/registration/status` needs a token,
-  // and asking without one would spend a round trip on every anonymous request
-  // to learn what the cookie already said.
-  //
-  // ⚠️ `needsWorkshop` IS TRUE ONLY WHEN WE POSITIVELY KNOW. An unreachable API
-  // returns null, which is NOT "no workshop" — collapsing the two would show
-  // every existing owner an invitation to create the workshop they already have
-  // during an outage, and the API would then refuse them with a 409 they did
-  // nothing to earn.
+  // What stays here is honest on every route: somebody with no workshop should
+  // not see an organisation name they do not have, or badges counting work that
+  // does not exist.
   const registration = signedIn ? await registrationStatus('workshop') : null;
   const onboarding = signedIn && needsWorkshop(registration);
+
+
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -74,6 +71,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body style={{ margin: 0, background: 'var(--aw-background-primary)', color: 'var(--aw-text-primary)' }}>
         <WorkspaceShell
           workspaceId="workshop"
+          // The wordmark reaches the public landing, which this app now serves
+          // at `/` — the Solar pattern: one app, public and private routes side
+          // by side, no second service and therefore no DNS work.
+          brandHref="/"
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
           {...viewerLabels(viewer)}
@@ -134,16 +135,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             { id: 'help', label: 'Help and support', icon: 'help' },
           ]}
         >
-          {/* Rendered IN PLACE of the page, never as a redirect. A redirect
-              needs a second condition on the onboarding route to send finished
-              users back, and two conditions are free to disagree — that is a
-              redirect loop on the first screen a new user reaches, escapable
-              only by clearing cookies. One condition cannot loop. */}
-          {onboarding ? (
-            <CreateWorkshopScreen displayName={viewer?.displayName} />
-          ) : (
-            children
-          )}
+          {children}
         </WorkspaceShell>
       </body>
     </html>

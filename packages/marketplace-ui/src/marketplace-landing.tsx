@@ -8,7 +8,6 @@ import {
   PublicPart,
   PublicVin,
 } from './public-api';
-import { AddToBasket } from './add-to-basket';
 import { VinSearch } from './vin-search';
 
 /**
@@ -107,6 +106,20 @@ export interface MarketplaceLandingProps {
   vinResult: PublicVin | null;
   /** Non-fatal problems, named rather than rendered as an empty page. */
   problems: string[];
+  /**
+   * The "Add to basket" control for a part card, supplied by the app.
+   *
+   * ⚠️ A RENDER PROP, NOT AN IMPORT, AND THAT IS WHAT LETS THIS PAGE BE SHARED.
+   * The basket is `customer-web`'s: it is a client component writing that app's
+   * own local storage. Importing it here would tie this package to one app and
+   * reintroduce the copy-paste that §0.3 forbids — the alternative was a second
+   * landing page that could silently disagree with the first.
+   *
+   * Omit it and the cards render without a basket button, which is exactly
+   * right for `workshop-web`: workshop staff browse the catalogue, they do not
+   * have a consumer basket. The same rule as `accountControl` on `TopNav`.
+   */
+  renderAddToBasket?: (part: PublicPart) => React.ReactNode;
 }
 
 export function MarketplaceLanding({
@@ -119,6 +132,7 @@ export function MarketplaceLanding({
   vinQuery,
   vinResult,
   problems,
+  renderAddToBasket,
 }: MarketplaceLandingProps) {
   // Cards are grouped under category headings, preserving the order the API
   // returned (category display_order, then name) rather than re-sorting here —
@@ -461,7 +475,7 @@ export function MarketplaceLanding({
               }}
             >
               {group.items.map((part) => (
-                <PartCard key={part.id} part={part} />
+                <PartCard key={part.id} part={part} renderAddToBasket={renderAddToBasket} />
               ))}
             </div>
           </section>
@@ -603,7 +617,16 @@ function ChipLink({
   );
 }
 
-function PartCard({ part }: { part: PublicPart }) {
+function PartCard({
+  part,
+  renderAddToBasket,
+}: {
+  part: PublicPart;
+  // Threaded rather than read from a context: one prop down one level is
+  // cheaper to follow than a provider, and it keeps this file free of any React
+  // context that a non-Next consumer would also have to mount.
+  renderAddToBasket?: (part: PublicPart) => React.ReactNode;
+}) {
   return (
     <article style={CARD}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: primitive.space[2] }}>
@@ -667,7 +690,7 @@ function PartCard({ part }: { part: PublicPart }) {
         where the buyer can still act on it, rather than at the last step of
         checkout after they have typed an address.
       */}
-      <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
+      {renderAddToBasket ? renderAddToBasket(part) : null}
 
       <div
         style={{

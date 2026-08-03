@@ -1,5 +1,6 @@
-import { MarketplaceLanding } from '../../_public/marketplace-landing';
-import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from '../../_public/public-api';
+import { MarketplaceLanding } from '@autoworkshop/marketplace-ui';
+import { AddToBasket } from '../../_public/add-to-basket';
+import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from '@autoworkshop/marketplace-ui';
 
 /**
  * `/marketplace` — THE PUBLIC LANDING, REACHABLE WHILE SIGNED IN.
@@ -114,6 +115,12 @@ export default async function Marketplace({ searchParams }: { searchParams?: Pro
       vinQuery={vinQuery}
       vinResult={vinResult && vinResult.ok ? vinResult.data : null}
       problems={problems}
+      // ⚠️ SUPPLIED BY THIS APP, not imported by the package. The basket is
+      // customer-web's own client-side store; the shared landing must not know
+      // it exists, or it could not be mounted anywhere else.
+      renderAddToBasket={(part) => (
+        <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
+      )}
     />
   );
 }

@@ -1,4 +1,5 @@
-import { apiGet } from '@autoworkshop/next-shell';
+import { apiGet, registrationStatus, needsWorkshop, viewerHasSession } from '@autoworkshop/next-shell';
+import { CreateWorkshopScreen } from '../../_screens/create-workshop-screen';
 import { PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { currentViewer, grantsFor, navRoleFor, requireNavRoute } from '@autoworkshop/next-shell';
@@ -120,6 +121,7 @@ function Tile({ label, value, kind, hint }: TileSpec) {
 }
 
 export default async function Dashboard() {
+
   // FIRST STATEMENT. Behaviour-neutral TODAY — `/home/dashboard` appears in the
   // workspace default tree and in all four role trees, so nobody who can reach
   // this app is refused by it. It is here because this is a CONCRETE page, which
@@ -134,6 +136,30 @@ export default async function Dashboard() {
   // a new folder cannot keep the old gate. A constant would be opaque to that
   // check and would quietly turn the guardrail into a no-op for this file.
   await requireNavRoute('workshop', '/home/dashboard');
+
+  // ⚠️ AFTER `requireNavRoute`, DELIBERATELY. The nav gate is documented as the
+  // first statement before any data access, and onboarding is data access: it
+  // asks the API who the caller is. A page that answered "create your
+  // workshop" to somebody whose role tree does not contain this route would be
+  // rendering content behind a gate it never opened.
+  // THE ONBOARDING SCREEN LIVES HERE, NOT IN THE LAYOUT.
+  //
+  // It belongs on the page whose emptiness it explains. In the layout it
+  // replaced EVERY page — including `/`, which is the public parts marketplace
+  // and the free VIN search — so a signed-in account with no workshop asked for
+  // the landing and was handed a form instead. A public front door that
+  // disappears once you have an account is not a front door.
+  //
+  // Rendered IN PLACE rather than as a redirect: a redirect needs a second
+  // condition on the onboarding route to send finished users back, and two
+  // conditions are free to disagree. That is a redirect loop on the first
+  // screen a new user reaches, escapable only by clearing cookies.
+  if (await viewerHasSession('workshop')) {
+    const registration = await registrationStatus('workshop');
+    if (needsWorkshop(registration)) {
+      return <CreateWorkshopScreen displayName={registration?.displayName} />;
+    }
+  }
 
   const nav = await describeNavigation();
 
