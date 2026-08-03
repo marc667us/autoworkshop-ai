@@ -1,0 +1,295 @@
+# Why does `POST /api/v1/registration/workshop` return 500 in production?
+#
+# THE FACTS THIS EXISTS TO EXPLAIN. Measured against the live API on
+# 2026-08-03, with a real token whose audience was correct:
+#
+#   GET  /api/v1/registration/status            -> 200  (user provisioned)
+#   POST /api/v1/registration/workshop {"x"}    -> 400  (validation)
+#   POST /api/v1/registration/workshop {valid}  -> 500
+#
+# So the route, the guard and the validation are all fine, and the failure is
+# inside `identity.register_workshop` on the live database. NestJS returns a
+# bare "Internal server error" to the caller — correctly, it must not leak
+# internals — which means the actual cause is visible only from inside.
+#
+# ── TWO INDEPENDENT READINGS, BECAUSE ONE CAN LIE ──────────────────────────
+#
+# 1. THE DATABASE, DIRECTLY. It calls the function AS `autoworkshop_app` — the
+#    role the API actually connects as — inside a transaction that ROLLS BACK.
+#    This is the repo's established `--rehearse` pattern: it exercises the real
+#    statement against the real schema and writes nothing. Postgres reports its
+#    own error, with SQLSTATE, which is the answer rather than a clue about it.
+#
+#    ⚠️ AS THE APP ROLE, NOT THE OWNER. The owner is exempt from RLS, so a
+#    rehearsal run as the superuser would pass for a function the application
+#    could never call — the exact mistake that made `verify/036`'s first draft
+#    report a working registration as broken.
+#
+# 2. THE SERVICE LOG. Render's log API, best-effort. It is second because a log
+#    that has rotated, or an API shape that changed, produces silence — and
+#    silence must not be mistaken for "no error".
+#
+# NON-DESTRUCTIVE BY CONSTRUCTION. The transaction rolls back, so no tenant,
+# organisation, branch or membership survives this workflow. It therefore has NO
+# confirm gate: there is nothing to confirm, and a dry-run gate on a read-only
+# job is the pattern that produced three never-executed steps in this repo.
+
+name: Diagnose registration 500
+
+on:
+  workflow_dispatch:
+    inputs:
+      database:
+        description: 'Render Postgres service name'
+        required: false
+        default: 'autoworkshop-postgres'
+      api_service:
+        description: 'Render service name of the API (for the log read)'
+        required: false
+        default: 'autoworkshop-api'
+      subject:
+        description: 'Keycloak subject to rehearse as (blank = the newest application user)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: ${{ inputs.database }}
+      API_SERVICE: ${{ inputs.api_service }}
+      SUBJECT: ${{ inputs.subject }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+
+      - name: Install a matching psql
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          "$PSQL" --version | grep -q ' 17\.' || { echo "::error::wrong psql on PATH"; exit 1; }
+          echo "PSQL_BIN=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          curl -sS -o /tmp/pg.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres?limit=50"
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == want:
+                  open('/tmp/db_id','w').write(d['id']); break
+          else:
+              sys.exit(f"::error::no database named {want}")
+          PY
+          ID="$(cat /tmp/db_id)"
+          curl -sS -o /tmp/conn.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}/connection-info"
+          python3 -c "
+          import json
+          i=json.load(open('/tmp/conn.json'))
+          u=i.get('externalConnectionString') or i.get('internalConnectionString')
+          if not u: raise SystemExit('::error::no connection string')
+          open('/tmp/dburl','w').write(u)
+          "
+          chmod 600 /tmp/dburl
+
+          # Render drops an unlisted IP rather than refusing it, and psql reports
+          # that as "SSL connection has been closed unexpectedly" — which reads
+          # like TLS and is not. Restored in an always() step below.
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          curl -sS -o /tmp/pg_one.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}"
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json')); d = d.get('postgres', d)
+          json.dump(d.get('ipAllowList') or [], open('/tmp/ip_allow_original.json','w'))
+          json.dump({'ipAllowList': (d.get('ipAllowList') or []) +
+                     [{'cidrBlock': f'{ip}/32', 'description': 'ephemeral: diagnose-registration'}]},
+                    open('/tmp/ip_allow_patch.json','w'))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          sleep 20
+
+      - name: What the live schema actually looks like
+        run: |
+          set -euo pipefail
+          echo "::group::the two functions from migration 036"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tAc "
+            SELECT p.proname || ' | owner=' || pg_get_userbyid(p.proowner)
+                   || ' | secdef=' || p.prosecdef
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname='identity'
+               AND p.proname IN ('register_workshop','provision_user_from_subject')
+             ORDER BY p.proname"
+          echo "::endgroup::"
+
+          echo "::group::EXECUTE grants for autoworkshop_app"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tAc "
+            SELECT p.proname || ' | app_can_execute=' ||
+                   has_function_privilege('autoworkshop_app', p.oid, 'EXECUTE')
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname='identity'
+               AND p.proname IN ('register_workshop','provision_user_from_subject')"
+          echo "::endgroup::"
+
+          echo "::group::columns the INSERTs must satisfy (NOT NULL, no default)"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT table_name, column_name, is_nullable, column_default
+              FROM information_schema.columns
+             WHERE table_schema='identity'
+               AND table_name IN ('tenants','organizations','branches','memberships')
+               AND is_nullable='NO' AND column_default IS NULL
+             ORDER BY table_name, ordinal_position"
+          echo "::endgroup::"
+
+          echo "::group::check constraints on those tables"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT rel.relname AS table_name, con.conname, pg_get_constraintdef(con.oid)
+              FROM pg_constraint con
+              JOIN pg_class rel ON rel.oid = con.conrelid
+              JOIN pg_namespace n ON n.oid = rel.relnamespace
+             WHERE n.nspname='identity'
+               AND rel.relname IN ('tenants','organizations','branches','memberships')
+               AND con.contype='c'
+             ORDER BY 1,2"
+          echo "::endgroup::"
+
+          echo "::group::triggers (a trigger is the usual invisible cause)"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT event_object_table, trigger_name, action_timing, event_manipulation
+              FROM information_schema.triggers
+             WHERE trigger_schema='identity'
+             ORDER BY 1,2"
+          echo "::endgroup::"
+
+      # 🔴 THE ANSWER. Calls the real function, as the role the API uses, and
+      # prints Postgres's own error text and SQLSTATE. Rolls back regardless.
+      - name: Rehearse register_workshop AS autoworkshop_app, then ROLL BACK
+        run: |
+          set -euo pipefail
+          # The app role's password is not knowable here, so the rehearsal uses
+          # SET LOCAL ROLE inside the owner's session. That is the same identity
+          # switch the app connection has — a NOSUPERUSER, NOBYPASSRLS role —
+          # without needing its credential.
+          SUBJ="${SUBJECT}"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=0 -v subj="${SUBJ}" "$(cat /tmp/dburl)" <<'SQL'
+          \set ON_ERROR_STOP off
+          BEGIN;
+
+          -- Pick the subject to rehearse as: the one supplied, else the most
+          -- recently created application user that holds NO membership — which
+          -- is exactly the person the endpoint is for.
+          SELECT COALESCE(
+                   NULLIF(:'subj', ''),
+                   (SELECT u.keycloak_subject
+                      FROM identity.users u
+                      LEFT JOIN identity.memberships m ON m.user_id = u.id
+                     WHERE m.id IS NULL AND u.status = 'active'
+                     ORDER BY u.created_at DESC
+                     LIMIT 1)
+                 ) AS rehearsing_as \gset
+
+          \echo '--- rehearsing as subject: ' :rehearsing_as
+
+          SET LOCAL ROLE autoworkshop_app;
+          SELECT current_user AS running_as;
+
+          -- The call that 500s in production.
+          SELECT * FROM identity.register_workshop(:'rehearsing_as', 'Diagnostic Workshop', 'Diagnostic Branch');
+
+          ROLLBACK;
+          SQL
+          echo ""
+          echo "Anything above beginning ERROR: is the cause of the 500."
+          echo "The transaction was ROLLED BACK — nothing was created."
+
+      - name: The API service log, best effort
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          OWNER="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/owners?limit=1" \
+            | python3 -c "
+          import sys, json
+          rows = json.load(sys.stdin)
+          o = rows[0].get('owner', rows[0]) if rows else {}
+          print(o.get('id',''))
+          ")"
+          SVC="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/services?name=${API_SERVICE}&limit=20" \
+            | python3 -c "
+          import sys, json, os
+          rows = json.load(sys.stdin)
+          for r in rows:
+              s = r.get('service', r)
+              if s.get('name') == os.environ['API_SERVICE']:
+                  print(s['id']); break
+          ")"
+          echo "owner=$OWNER service=$SVC"
+          [ -n "$SVC" ] || { echo "::warning::could not resolve the API service id"; exit 0; }
+
+          code="$(curl -sS -o /tmp/logs.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/logs?ownerId=${OWNER}&resource=${SVC}&limit=100")"
+          echo "GET /v1/logs -> $code"
+          if [ "$code" != "200" ]; then
+            # Stated rather than swallowed: a log read that failed is not the
+            # same as a service with no errors, and treating it as such is how a
+            # diagnosis reports "nothing found" about a fault that is right there.
+            echo "::warning::log read returned ${code}; the DATABASE rehearsal above is the authoritative result"
+            head -c 400 /tmp/logs.json || true
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/logs.json'))
+          logs = d.get('logs', d if isinstance(d, list) else [])
+          if not logs:
+              print('no log lines returned')
+          for e in logs[-80:]:
+              print(e.get('timestamp',''), (e.get('message') or '').rstrip())
+          PY
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl /tmp/conn.json || true
