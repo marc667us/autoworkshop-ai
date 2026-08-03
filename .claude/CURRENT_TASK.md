@@ -1,141 +1,123 @@
 # Current task
 
-## ▶ NEXT SESSION STARTS HERE — two steps, then the app is genuinely usable live
+## ▶ START HERE — ONE BLOCKER, AND IT IS UNDERSTOOD
 
-The live site now has a **working sign-in** (see the credentials block in
-`NEXT_SESSION_START_HERE.md`). What it does NOT have is data or an API, so every
-screen renders its "connection problem" state. Two steps close that:
+`POST /api/v1/registration/workshop` returns **500** on production. Everything
+either side of it works. Diagnosed to the exact line by
+`.github/workflows/diagnose-registration-500.yml` (run it again any time — it
+rehearses against the live database inside a transaction that ROLLS BACK, so it
+creates nothing):
 
-### 1. Deploy the API service to Render  ← START HERE
+```
+Render log : new row violates row-level security policy for table "tenants"
+rehearsal  : permission denied to set role "autoworkshop_app"
+```
 
-Nothing in the repo deploys it yet. `provision-render-service.yml` exists and is
-the closest starting point; `deploy-keycloak.yml` is the WORKED EXAMPLE of the
-shape that now demonstrably works end to end (build image → push GHCR → create
-or update the Render service → poll the deploy → **read the result back over the
-public URL**).
+### 🔴 THE CAUSE, AND WHY NO LOCAL TEST COULD EVER HAVE SEEN IT
 
-The API needs, at minimum:
-`DATABASE_URL` (internal Render connection string), `KEYCLOAK_URL=https://autoworkshop-keycloak.onrender.com`,
-`KEYCLOAK_REALM=autoworkshop`, `KEYCLOAK_AUDIENCE`, and the boot guard REFUSES a
-superuser DSN by design — use the app role, not `autoworkshop`.
+**Render's `autoworkshop` database user is NOT a superuser. Locally it is.**
 
-Then set the web service's `API_BASE_URL` to the API's URL with
-`point-web-at-keycloak.yml` (it merges rather than replaces — see below).
+`identity.register_workshop` is `SECURITY DEFINER` and owned by `autoworkshop`.
+A superuser bypasses row-level security entirely, so locally the function's four
+INSERTs sail through. On Render the same user is merely the table owner, and
+`FORCE ROW LEVEL SECURITY` applies to owners — so the first INSERT is refused.
 
-### 2. Seed the live workshop
+The function is byte-identical in both places. **The ROLE is not.** `verify/036`
+passed 9 of 9 locally against a defect that exists only in production, which is
+why this file says: for anything touching RLS, **rehearse ON LIVE**.
 
-The realm has two accounts but Postgres has **no tenant, no organisation and no
-membership**, so `resolveTenantContext` cannot place the signed-in user. Until
-then `/me` cannot answer and every screen shows the connection state — which is
-exactly what the owner is seeing.
+### THE FIX — MIGRATION 037, NOT AN EDIT TO 036
 
-⚠️ `scripts/seed-dev-identity.sh` and `seed-dev-core.sh` are LOCAL-ONLY (they
-`docker exec` into `aw-postgres`). A live seed needs the same SQL driven through
-the `apply-migrations.yml` connection path — the IP-allow-list dance is already
-solved there, including the ephemeral `/32` restored in an `if: always()` step.
+036 is applied and checksummed in both databases. Fixes go in the next number.
 
-🔴 **The membership must match the Keycloak user's subject**, not an email
-string. Get the `sub` from the realm (`/admin/realms/autoworkshop/users`) and use
-it as `identity.users.id`, or the join in `UserService` will find nothing while
-every row looks correct.
+**Preferred shape** — a controlled, auditable bypass scoped to this one
+function:
 
-## Then
+1. `register_workshop` does `SET LOCAL app.bootstrap = 'on'` as its first
+   statement.
+2. Migration 037 adds a permissive **INSERT** policy to `identity.tenants`,
+   `identity.organizations`, `identity.branches` and `identity.memberships`:
+   `WITH CHECK (current_setting('app.bootstrap', true) = 'on')`.
 
-3. **"Add staff" has no screen to link to.** The nav advertises `staff` and
-   `technicians`; no page exists in workshop-web and the membership API has no
-   UI. Its own slice — a list plus an add-member form on the existing
-   `MembershipService`. Requested by the owner this session.
-4. More menu entries → real screens. `node scripts/audit-menu-coverage.mjs --all`.
-5. Mobile: offline queue, camera capture, push — all still empty.
-6. Evidence upload: `POST /evidence/upload-url` + `storage_key` wiring + UI.
-7. Repo-wide RLS org-scoping — PLAN BEFORE CODE.
+⚠️ **Do NOT weaken the existing policies generally.** The bypass must be
+reachable only from inside this function, and only for INSERT. Registration is
+the one operation that legitimately has no tenant context — it is what CREATES
+the tenant.
 
----
+⚠️ **Rejected alternative:** a `BYPASSRLS` role to own the function. Creating
+one needs privileges Render's user probably lacks, and it would move the bypass
+somewhere far less visible than a policy named in a migration.
 
-## ✅ DONE 2026-08-02/03 — this session
+**Verify with:** `Diagnose registration 500` (must show the four ids returned,
+then roll back), then `apply-migrations.yml` with `confirm=APPLY`, then the real
+thing — sign in at `autoworkshop.aiappinvent.com` and create the workshop.
 
-### A. The web job-card DETAIL screen (`01a2221`)
+### THEN: FINISH THE SEED
 
-One screen, **four** `[id]` routes, and the job number is a LINK on every queue
-and both lists. Verified in a browser as four identities: **52/52**.
-
-🔴 **THE SHAPE THAT MATTERS: THE HREF IS PER-ROLE.** The five trees disagree
-about where job cards live, and `requireNavRoute` 404s a route the viewer's tree
-does not carry:
-
-| tree | job-card list route | why |
-|---|---|---|
-| §34 default + §47 manager | `/workshop-floor/job-cards` | as before |
-| §46 owner | `/workshop-operations/job-cards` | filed under Operations |
-| §49 technician | `/home/my-assigned-work` | **has NO job-cards route** |
-| §48 reception | `/home/my-tasks` | **has no job-card LIST** — the queue is it |
-
-`app/_screens/job-card-detail-href.ts` + a spec that resolves the REAL navigation
-model. **Never hardcode a job-card href** — use `jobCardDetailHrefFor(role, id)`.
-
-### B. "Add customer" / "Register vehicle" buttons (`386ac55`)
-
-Same lesson, generalised. `quickCreateHref(workspace, slug)` in
-`packages/next-shell` resolves the target out of the viewer's OWN visible
-navigation using the same three functions as `requireNavRoute`, so button and
-gate cannot disagree. Returns null → no button. **It respects permissions too:**
-the §34 tree gates `register-customer` on `organization.admin`, so a viewer
-without it would have got a button straight to a 404.
-12 unit tests + `verify-quick-create-buttons.mjs` **11/11** across three roles.
-
-### C. KEYCLOAK IS DEPLOYED TO RENDER — and three bugs stood in the way
-
-`https://autoworkshop-keycloak.onrender.com` · realm `autoworkshop`. It did not
-exist before this session.
-
-1. 🔴 **`801eef8` — the JVM refused to start.** `JAVA_OPTS_APPEND` added
-   `-XX:+UseSerialGC` while Keycloak's entrypoint already sets `-XX:+UseG1GC`.
-   APPEND means both: *"Multiple garbage collectors selected"* is **fatal**, not
-   last-one-wins. Keycloak would have died on every boot. Fixed with
-   `-XX:-UseG1GC` in front, verified by reading the flags back
-   (`UseG1GC=false, UseSerialGC=true`), not by trusting the setting.
-2. 🔴 **`9a5fc05` — the deploy's password generator broke its own pipe.**
-   `tr -dc … | head -c 40` → `tr` takes SIGPIPE → `pipefail` fails the step.
-   **No dry run could ever have caught it**: the whole step is
-   `if: confirm == 'APPLY'`, so it had never executed. Now `secrets.choice`.
-3. 🔴 **`17ac00b` — `KeyError: 'ownerId'`.** Render nests the owner as
-   `owner.id` on some responses and omits it on others. Now tries both, falls
-   back to `/v1/owners`, and prints the KEY NAMES present when it cannot find it.
-
-### D. The live web service points at Keycloak (`f3386ec`)
-
-New `point-web-at-keycloak.yml`. 🔴 **Render's env endpoint is a whole-set PUT,
-not a PATCH** — sending only the changed keys DELETES the rest, including
-`AUTH_SECRET`. It GETs, merges, PUTs the union, refuses if the read was empty or
-the merge shrank, and asserts on read-back that `AUTH_SECRET` survived.
-
-### E. `d71b964` — `KC_PROXY_HEADERS: xforwarded` on the local Keycloak
-
-Behind any HTTPS proxy, `start-dev` minted `http://` as the issuer while the app
-knew `https://` — every token rejected, and the symptom is the confusing one:
-**"Sign out" AND "Not signed in" rendered together**. Verified in BOTH
-directions (tunnel → https, plain LAN → unchanged).
+The owner's application user EXISTS on live (`marc667us@yahoo.com`, provisioned
+2026-08-03) and holds **no membership**. Once 037 is applied, signing in and
+using the "create your workshop" form on `/home/dashboard` completes it. Nothing
+needs to be inserted by hand.
 
 ---
 
-## 🔴 Lessons this session paid for — do not relearn
+## ✅ DONE 2026-08-03 pt3
 
-- **A verification that lies is worse than no verification.** Mine lied twice
-  before it was right: it called two CORRECT empty states "still plain text"
-  (reception lands on *Alpha Parts Supply*, which owns no job cards), then
-  reported two rendered pages as not rendered because `body.textContent()`
-  includes the inline `<style>` block and a loose `/404/` test matched **a hex
-  colour**. **Assert on `main`, never `body`. Prove rows exist before judging a
-  link.**
-- **An assertion whose subject can empty itself fails for the wrong reason.**
-  The owner's leg drove a queue that step 7 of the same script deliberately
-  empties.
-- **A step gated on `confirm == APPLY` has never run.** "Built and validated"
-  meant its first real execution died on its first command.
-- **Codex found a reachable falsehood I would have shipped:** the detail screen
-  branched on `closed` first and said "this job is closed, so it has no next
-  stage" while the API offered `warranty_follow_up` — hiding a real action.
-  **Branch on the data; let a flag choose only the WORDS.**
-- **A comment claiming a rule the code does not have** — fourth instance. Mine
-  said `viewerRole()` returns undefined for four roles; it does not, they map to
-  real `RoleId`s and reach the default tree by a different door.
+### The public landing is live on the apex, with NO DNS change
+
+Learned by reading Solar: **one service, 421 routes, 88 public**, and `/` renders
+the landing for everyone — signed in or not, no redirect. No second service means
+nothing for a CNAME to point at differently, which is why Solar never needed a
+Namecheap change.
+
+The seven-app decision stands, so the public surface became
+**`packages/marketplace-ui`** and `workshop-web` — which already owns the apex —
+mounts it at `/`. `AddToBasket` is a render prop, so the package depends on no
+app.
+
+### 🔴 The audience defect: every authenticated call was refused
+
+```
+aud: account
+"token rejected: jwt audience invalid. expected: autoworkshop-api"
+```
+
+**No audience mapper existed anywhere in the realm.** The API refused every
+authenticated request from every web app while public routes worked — so the
+site looked alive and said "Not signed in" beside a working "Sign out". That
+symptom was misread three times across two sessions.
+
+Fixed on 7 clients in `realm-autoworkshop.json` **and applied to the live realm
+directly**, because `deploy-keycloak.yml` imports the realm on FIRST BOOT ONLY.
+
+### VIN funnel
+
+Offline ISO 3779 decode is the primary (no key, no cost, instant); NHTSA vPIC
+enriches when reachable. `/public/vin/:vin` is free, `/vin/:vin` needs a session.
+**The gate is the API sending less, never the page hiding fields** — and the
+deploy asserts it: if the public endpoint ever returns `detail`, `plantCode` or
+`serial`, the deploy fails.
+
+### Defects only a browser found
+
+A form with **no submit button** (three green gates missed it) · "Not signed in"
+beside "Sign out" in customer-web, permanently, for every customer · onboarding
+replacing the **public** landing · a middleware fix that passed typecheck, lint
+and build then crashed the edge runtime with `Cannot redefine property:
+__import_unsupported` · a leak check that reported two **false** leaks by
+searching the whole page instead of the VIN section.
+
+---
+
+## Standing warnings
+
+- **Keycloak cold start is up to 136 seconds** and produces
+  `error=Configuration` on sign-in, not a wait. The first visitor after an idle
+  period gets a hard error.
+- **Four free Render services now share one instance-hour allowance.** This
+  account was suspended with `suspenders: ['billing']` on 2026-07-28, and
+  `autoworkshop-customer` 404'd for a stretch on 2026-08-03. **No paid remedy is
+  to be proposed** — zero cost is a hard rule.
+- `scripts/guardrails/check-page-gates.sh` is RED with **19 pre-existing** FAILs,
+  all apparently false. Verified identical before and after this session's work.
+- `RENDER_API_KEY` still unrotated since the 2026-07-27 leak.
