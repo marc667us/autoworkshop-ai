@@ -30,7 +30,7 @@
     "realm": [
       {
         "name": "vehicle_owner",
-        "description": "Customer \u2014 owns vehicles, submits complaints, approves proposals"
+        "description": "Customer — owns vehicles, submits complaints, approves proposals"
       },
       {
         "name": "driver",
@@ -86,7 +86,7 @@
       },
       {
         "name": "storekeeper",
-        "description": "Parts depot \u2014 receipt, issue, return"
+        "description": "Parts depot — receipt, issue, return"
       },
       {
         "name": "procurement_officer",
@@ -142,7 +142,7 @@
       },
       {
         "name": "platform_administrator",
-        "description": "Platform administration \u2014 cross-tenant, always audited"
+        "description": "Platform administration — cross-tenant, always audited"
       },
       {
         "name": "mcp_administrator",
@@ -171,6 +171,20 @@
       "webOrigins": [
         "http://localhost:3000",
         "https://autoworkshop.aiappinvent.com"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -192,6 +206,20 @@
       "webOrigins": [
         "http://localhost:3001",
         "https://workshop.autoworkshop.aiappinvent.com"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -211,6 +239,20 @@
       ],
       "webOrigins": [
         "http://localhost:3002"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -230,6 +272,20 @@
       ],
       "webOrigins": [
         "http://localhost:3003"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -249,6 +305,20 @@
       ],
       "webOrigins": [
         "http://localhost:3004"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -268,6 +338,20 @@
       ],
       "webOrigins": [
         "http://localhost:3005"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
@@ -287,6 +371,20 @@
       ],
       "webOrigins": [
         "http://localhost:3006"
+      ],
+      "protocolMappers": [
+        {
+          "name": "autoworkshop-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "autoworkshop-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
       ]
     },
     {
