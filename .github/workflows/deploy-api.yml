@@ -290,16 +290,30 @@ jobs:
           # works is not proof it is the RIGHT one: a superuser would connect
           # perfectly and silently bypass every RLS policy in the database.
           # Checked by connecting AS the role and asking Postgres about itself.
+          # ⚠️ THE VERDICT IS COMPUTED IN SQL, NOT BY MATCHING psql's FORMATTING.
+          # The first version of this asserted `^autoworkshop_app f f$` and FAILED
+          # a correct database: psql prints a boolean COLUMN as `f`, but
+          # concatenating one into text renders it `false`. The role was right;
+          # the check was wrong, and it failed the deploy while printing
+          # "connected as: autoworkshop_app false false" one line above its own
+          # error. An assertion that fails for the wrong reason is worse than no
+          # assertion — it accuses the thing it was meant to protect.
+          #
+          # Asking SQL for the JUDGEMENT removes the question entirely: `OK` or
+          # `BAD` is not a rendering of anything.
           OUT="$(PGPASSWORD="$PW" "${PSQL_BIN}" -v ON_ERROR_STOP=1 \
             "postgresql://autoworkshop_app@${HOST}/${DB}?sslmode=require" \
-            -tAc "select current_user||' '||rolsuper||' '||rolbypassrls
+            -tAc "select case when rolsuper or rolbypassrls then 'BAD' else 'OK' end
+                         || ' ' || current_user
+                         || ' super=' || rolsuper || ' bypassrls=' || rolbypassrls
                     from pg_roles where rolname = current_user")" \
             || { echo "::error::autoworkshop_app cannot log in with the password just set"; exit 1; }
           echo "connected as: $OUT"
-          echo "$OUT" | grep -q '^autoworkshop_app f f$' || {
-            echo "::error::the app role is a superuser or bypasses RLS — tenant isolation would NOT apply"
-            exit 1; }
-          echo "verified: NOSUPERUSER, NOBYPASSRLS"
+          case "$OUT" in
+            OK\ autoworkshop_app\ *) echo "verified: NOSUPERUSER, NOBYPASSRLS" ;;
+            *) echo "::error::the app role is a superuser, bypasses RLS, or is not autoworkshop_app — tenant isolation would NOT apply"
+               exit 1 ;;
+          esac
 
       - name: Create or update the Render service
         if: ${{ inputs.confirm == 'APPLY' }}
