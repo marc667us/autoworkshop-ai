@@ -1,0 +1,246 @@
+# Seed the PUBLIC parts catalogue on the deployed database.
+#
+# WHY. The landing page went live on the apex on 2026-08-03 and the shop is
+# EMPTY: `parts 0 · suppliers 0 · countries 0 · mechanics 0`, measured against
+# the live API. Every functional check passed — the page renders, the filters
+# work, the empty states are honest — and a visitor still finds nothing to buy.
+# The magnet has no magnet.
+#
+# ⚠️ A GREEN SUITE DID NOT CATCH THIS, and that is worth stating in the file
+# that fixes it. `verify-live-site.mjs` and `verify-vin-funnel.mjs` assert that
+# the catalogue SECTION renders; neither asks whether anything is IN it. 24/24
+# passed against an empty shop. The read-back at the end of this workflow is
+# written the other way round: it fails unless rows exist.
+#
+# ── IT RUNS THE SAME SQL AS LOCAL DEVELOPMENT ──────────────────────────────
+#
+# `infrastructure/seed/catalogue.sql`, byte for byte, is what
+# `scripts/seed-dev-catalogue.sh` runs. Two copies of a catalogue drift until
+# the live shop and the local one disagree about what is for sale (§3).
+#
+# ── WHY IT DOES NOT NEED A SUPERUSER ───────────────────────────────────────
+#
+# The SQL opens a transaction and sets `app.current_role = 'admin'`, which is
+# migration 021's own `admin_write` policy door. That matters here more than
+# anywhere: Render's database user is NOT a superuser, so anything relying on
+# superuser RLS bypass works locally and fails live — exactly the defect that
+# blocks `register_workshop` today.
+#
+# ⚠️ THIS ONE WRITES TO PRODUCTION, so it is gated on confirm=APPLY. The dry run
+# still connects and reports what is there now, which is the useful half.
+
+name: Seed live catalogue
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write the catalogue. Anything else inspects only.'
+        required: false
+        default: ''
+      database:
+        description: 'Render Postgres service name'
+        required: false
+        default: 'autoworkshop-postgres'
+      api_base_url:
+        description: 'Public API, for the read-back a visitor would actually get'
+        required: false
+        default: 'https://autoworkshop-api.onrender.com'
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: ${{ inputs.database }}
+      API_BASE_URL: ${{ inputs.api_base_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without the things this cannot run without
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          [ -f infrastructure/seed/catalogue.sql ] || {
+            echo "::error::infrastructure/seed/catalogue.sql is missing"; exit 1; }
+          # The guard that makes the "same SQL as local" claim true rather than
+          # merely intended: if the dev script stops reading this file, the two
+          # have forked and this comment is a lie.
+          grep -q 'infrastructure/seed/catalogue.sql' scripts/seed-dev-catalogue.sh || {
+            echo "::error::scripts/seed-dev-catalogue.sh no longer runs the shared seed file"
+            echo "::error::local and live have forked — reconcile before seeding production"
+            exit 1; }
+          echo "shared seed file present, and dev still uses it"
+
+      - name: Install a matching psql
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          "$PSQL" --version | grep -q ' 17\.' || { echo "::error::wrong psql on PATH"; exit 1; }
+          echo "PSQL_BIN=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          curl -sS -o /tmp/pg.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres?limit=50"
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == want:
+                  open('/tmp/db_id','w').write(d['id']); break
+          else:
+              sys.exit(f"::error::no database named {want}")
+          PY
+          ID="$(cat /tmp/db_id)"
+          curl -sS -o /tmp/conn.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}/connection-info"
+          python3 -c "
+          import json
+          i=json.load(open('/tmp/conn.json'))
+          u=i.get('externalConnectionString') or i.get('internalConnectionString')
+          if not u: raise SystemExit('::error::no connection string')
+          open('/tmp/dburl','w').write(u)
+          "
+          chmod 600 /tmp/dburl
+
+          # Render DROPS an unlisted IP rather than refusing it, and psql calls
+          # that "SSL connection has been closed unexpectedly" — which reads like
+          # TLS and is not. Restored in an always() step below.
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          curl -sS -o /tmp/pg_one.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}"
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json')); d = d.get('postgres', d)
+          json.dump(d.get('ipAllowList') or [], open('/tmp/ip_allow_original.json','w'))
+          json.dump({'ipAllowList': (d.get('ipAllowList') or []) +
+                     [{'cidrBlock': f'{ip}/32', 'description': 'ephemeral: seed-live-catalogue'}]},
+                    open('/tmp/ip_allow_patch.json','w'))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          sleep 20
+
+      - name: What is in the live catalogue right now
+        run: |
+          set -euo pipefail
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT 'suppliers'  AS table, count(*) AS rows, count(*) FILTER (WHERE is_published) AS published FROM catalogue.suppliers
+            UNION ALL SELECT 'parts', count(*), count(*) FILTER (WHERE is_published) FROM catalogue.parts
+            UNION ALL SELECT 'part_categories', count(*), NULL FROM catalogue.part_categories
+            UNION ALL SELECT 'part_fitments', count(*), NULL FROM catalogue.part_fitments
+            UNION ALL SELECT 'mechanic_directory', count(*), count(*) FILTER (WHERE is_published) FROM catalogue.mechanic_directory"
+
+      - name: What this would do
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<INFO
+
+          DRY RUN — nothing written.
+
+          With confirm=APPLY this would run infrastructure/seed/catalogue.sql —
+          the SAME statements scripts/seed-dev-catalogue.sh runs locally —
+          against the deployed database, then read the counts back BOTH from the
+          database and from the public API a visitor actually hits.
+
+          It is idempotent: every INSERT reconciles ON CONFLICT.
+          INFO
+
+      - name: Seed the catalogue
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # ON_ERROR_STOP so a refused INSERT fails the step. Without it psql
+          # reports every error and still exits 0 — the shape of failure that
+          # let "zero rows written" pass as success in this repo before.
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -f infrastructure/seed/catalogue.sql
+          echo "seed applied"
+
+      - name: Read it back — from the database AND from the public API
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          echo "::group::database"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT 'suppliers' AS table, count(*) AS rows, count(*) FILTER (WHERE is_published) AS published FROM catalogue.suppliers
+            UNION ALL SELECT 'parts', count(*), count(*) FILTER (WHERE is_published) FROM catalogue.parts
+            UNION ALL SELECT 'part_categories', count(*), NULL FROM catalogue.part_categories
+            UNION ALL SELECT 'part_fitments', count(*), NULL FROM catalogue.part_fitments
+            UNION ALL SELECT 'mechanic_directory', count(*), count(*) FILTER (WHERE is_published) FROM catalogue.mechanic_directory"
+          echo "::endgroup::"
+
+          # 🔴 THE CHECK THAT MATTERS, AND IT IS THE ONE THE GREEN SUITE LACKED.
+          # Rows in a table are not a shop. This asks the PUBLIC endpoint the
+          # landing page calls, unauthenticated, exactly as a visitor does — and
+          # FAILS if it is still empty.
+          for i in $(seq 1 6); do
+            code="$(curl -s -o /tmp/stats.json -w '%{http_code}' --max-time 120 \
+              "${API_BASE_URL}/api/v1/public/stats" || echo 000)"
+            [ "$code" = "200" ] && break
+            echo "  stats: $code (cold start? attempt $i)"
+          done
+          [ "$code" = "200" ] || { echo "::error::the public stats endpoint did not answer"; exit 1; }
+          cat /tmp/stats.json; echo
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/stats.json'))
+          if not d.get('parts'):
+              raise SystemExit('::error::the public catalogue still reports 0 parts — '
+                               'rows were written but the visitor still sees an empty shop. '
+                               'Check is_published and the RLS read policy.')
+          print(f"the public shop now offers {d['parts']} parts from {d['suppliers']} suppliers")
+          PY
+
+          # Mechanics are copied from workshops that EXIST. On a database with no
+          # organisations this seeds nothing, and that is correct rather than a
+          # failure — so it is reported, not asserted.
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/stats.json'))
+          if not d.get('mechanics'):
+              print('::notice::0 mechanics — the directory is copied from real '
+                    'workshops and none exist yet. It fills once migration 037 '
+                    'unblocks workshop registration.')
+          PY
+
+          {
+            echo "### Live catalogue seeded"
+            echo ''
+            cat /tmp/stats.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl /tmp/conn.json || true
