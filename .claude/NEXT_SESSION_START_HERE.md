@@ -1,28 +1,69 @@
-# ▶ START HERE — next session
+# > START HERE - next session
 
 ```bash
-cd /c/Users/USER/Documents/autoworkshop-ai && bash scripts/start-session.sh
+bash scripts/start-session.sh
 ```
 
-**Run that first.** It kills stale dev servers (`pkill` does NOT work on Windows —
-the single most expensive trap in this repo), proves the ports are free, checks
-the Docker containers, **now probes every dependency FROM THE HOST** (new, see
-below), applies pending migrations, and prints what to run next.
+---
 
-Then this file, then `.claude/CURRENT_TASK.md`.
+## SESSION CLOSE 2026-08-03 - THE LIVE SITE CAN NOW BE SIGNED INTO
 
-**To bring the whole local stack up (one command):**
+**Tip `386ac55`, pushed, tree clean.** Six commits.
 
-```bash
-APPS="workshop:3001 supplier:3002 admin:3006" bash scripts/start-local.sh
-# then, from apps/mobile:
-MOBILE_HOST=<your LAN ip> npx expo start --lan
-```
+### LIVE CREDENTIALS - verified by real browser sign-in, both accounts
 
-`start-local.sh` derives ONE canonical host, registers each app's Keycloak
-redirect URI, REFUSES a stale `.next`, asserts the ports are really free, and
-proves `/me` still rejects an anonymous and a foreign-issuer token before it
-reports ready.
+| | |
+|---|---|
+| **URL** | **https://autoworkshop.aiappinvent.com** |
+| Owner | `marc667us@yahoo.com` / `Forest-prism-bramble-nomad7` |
+| Admin | `admin@aiappinvent.com` / `Basalt-oyster-thistle-quill4` |
+| Keycloak | https://autoworkshop-keycloak.onrender.com (realm `autoworkshop`) |
+
+Also in `C:\Users\USER\autoworkshop-owner-login.txt`.
+Keycloak master admin password lives in `C:\Users\USER\autoworkshop-keycloak-admin.txt`
+- **the only readable copy**; Keycloak honours it on a FIRST boot only.
+
+Realm password policy: `length(12) upperCase(1) lowerCase(1) digits(1)
+specialChars(1) passwordHistory(3)` - a plain lowercase passphrase is REFUSED.
+
+### WHAT THE OWNER WILL SEE, AND IT IS NOT AN AUTH BUG
+
+Both accounts sign in. Then the dashboard reads **zero** and the header shows
+**"Not signed in" beside "Sign out"**. Authentication genuinely succeeded - the
+**API service is not deployed**, so nothing can answer `/me`, and Postgres holds
+**no tenant, organisation or membership** for these users. Those are steps 1 and
+2 in `.claude/CURRENT_TASK.md`.
+
+**Do not chase this as the 08-02 issuer bug.** That one is fixed and verified in
+both directions; this is missing infrastructure, and the screen says so itself.
+
+### What went live
+
+- **Keycloak deployed to Render** - it never existed before. Three bugs blocked
+  it, each fatal: the JVM refused to start (two garbage collectors selected),
+  the deploy's own password generator broke its pipe under `pipefail`, and
+  `KeyError: 'ownerId'` from a Render response shape.
+- **The web service now points at it** (`point-web-at-keycloak.yml` - a MERGE,
+  because Render's env endpoint is a whole-set PUT that would otherwise delete
+  `AUTH_SECRET`).
+- **The production realm had ZERO users** by design; owner + admin created. The
+  client also allowed only the `workshop.` subdomain while the app serves the
+  apex - fixed.
+
+### Product shipped
+
+- **Web job-card detail screen**, one screen at FOUR role-tree routes; job
+  numbers now link. 52/52 in a browser as four identities.
+- **"Add customer" / "Register vehicle" buttons** on the list screens, href
+  resolved from the viewer's own navigation. 11/11 across three roles.
+- **"Add staff" NOT built** - there is no staff screen to link to. Own slice.
+
+### Local stack at close
+
+Servers were left RUNNING (API 4000, workshop-web 3001 bound to 192.168.0.124).
+`AUTH_URL` is the LAN host, so **hitting `localhost:3001` gives `MissingCSRF`** -
+use `http://192.168.0.124:3001`. Local login is `owner@autoworkshop.local` /
+`Change_me_locally1!`. Cloudflared tunnels were used mid-session and stopped.
 
 ---
 

@@ -1,325 +1,141 @@
 # Current task
 
-## ✅ DONE 2026-08-03 — the web job-card DETAIL screen
+## ▶ NEXT SESSION STARTS HERE — two steps, then the app is genuinely usable live
 
-Shipped. `JobCardDetailScreen` + **four** `[id]` routes + the job number is a
-LINK on every queue and both job-card lists. Proven in a browser as four
-identities: **52/52** in `apps/e2e/verify/verify-job-card-detail.mjs`.
+The live site now has a **working sign-in** (see the credentials block in
+`NEXT_SESSION_START_HERE.md`). What it does NOT have is data or an API, so every
+screen renders its "connection problem" state. Two steps close that:
 
-🔴 **THE SHAPE THAT MATTERS: ONE SCREEN, FOUR ROUTES, AND THE HREF IS PER-ROLE.**
-The five navigation trees disagree about where job cards live, and every page
-opens with `requireNavRoute`, which 404s a route the viewer's tree does not
-carry. A single hardcoded href would have worked perfectly for whoever wrote it
-and refused the two roles that live in these queues all day:
+### 1. Deploy the API service to Render  ← START HERE
+
+Nothing in the repo deploys it yet. `provision-render-service.yml` exists and is
+the closest starting point; `deploy-keycloak.yml` is the WORKED EXAMPLE of the
+shape that now demonstrably works end to end (build image → push GHCR → create
+or update the Render service → poll the deploy → **read the result back over the
+public URL**).
+
+The API needs, at minimum:
+`DATABASE_URL` (internal Render connection string), `KEYCLOAK_URL=https://autoworkshop-keycloak.onrender.com`,
+`KEYCLOAK_REALM=autoworkshop`, `KEYCLOAK_AUDIENCE`, and the boot guard REFUSES a
+superuser DSN by design — use the app role, not `autoworkshop`.
+
+Then set the web service's `API_BASE_URL` to the API's URL with
+`point-web-at-keycloak.yml` (it merges rather than replaces — see below).
+
+### 2. Seed the live workshop
+
+The realm has two accounts but Postgres has **no tenant, no organisation and no
+membership**, so `resolveTenantContext` cannot place the signed-in user. Until
+then `/me` cannot answer and every screen shows the connection state — which is
+exactly what the owner is seeing.
+
+⚠️ `scripts/seed-dev-identity.sh` and `seed-dev-core.sh` are LOCAL-ONLY (they
+`docker exec` into `aw-postgres`). A live seed needs the same SQL driven through
+the `apply-migrations.yml` connection path — the IP-allow-list dance is already
+solved there, including the ephemeral `/32` restored in an `if: always()` step.
+
+🔴 **The membership must match the Keycloak user's subject**, not an email
+string. Get the `sub` from the realm (`/admin/realms/autoworkshop/users`) and use
+it as `identity.users.id`, or the join in `UserService` will find nothing while
+every row looks correct.
+
+## Then
+
+3. **"Add staff" has no screen to link to.** The nav advertises `staff` and
+   `technicians`; no page exists in workshop-web and the membership API has no
+   UI. Its own slice — a list plus an add-member form on the existing
+   `MembershipService`. Requested by the owner this session.
+4. More menu entries → real screens. `node scripts/audit-menu-coverage.mjs --all`.
+5. Mobile: offline queue, camera capture, push — all still empty.
+6. Evidence upload: `POST /evidence/upload-url` + `storage_key` wiring + UI.
+7. Repo-wide RLS org-scoping — PLAN BEFORE CODE.
+
+---
+
+## ✅ DONE 2026-08-02/03 — this session
+
+### A. The web job-card DETAIL screen (`01a2221`)
+
+One screen, **four** `[id]` routes, and the job number is a LINK on every queue
+and both lists. Verified in a browser as four identities: **52/52**.
+
+🔴 **THE SHAPE THAT MATTERS: THE HREF IS PER-ROLE.** The five trees disagree
+about where job cards live, and `requireNavRoute` 404s a route the viewer's tree
+does not carry:
 
 | tree | job-card list route | why |
 |---|---|---|
 | §34 default + §47 manager | `/workshop-floor/job-cards` | as before |
-| §46 owner | `/workshop-operations/job-cards` | owner files them under Operations |
-| §49 technician | `/home/my-assigned-work` | **has NO job-cards route at all** |
-| §48 reception | `/home/my-tasks` | **has no job-card LIST at all** — the queue is their list |
+| §46 owner | `/workshop-operations/job-cards` | filed under Operations |
+| §49 technician | `/home/my-assigned-work` | **has NO job-cards route** |
+| §48 reception | `/home/my-tasks` | **has no job-card LIST** — the queue is it |
 
-The map is `app/_screens/job-card-detail-href.ts`; `job-card-detail-href.spec.ts`
-resolves the REAL navigation model and fails if any role's href is not in that
-role's own tree, and asserts a detail page exists on disk behind each one.
-**Never hardcode a job-card href.** Use `jobCardDetailHrefFor(role, id)`.
+`app/_screens/job-card-detail-href.ts` + a spec that resolves the REAL navigation
+model. **Never hardcode a job-card href** — use `jobCardDetailHrefFor(role, id)`.
 
-### What the gates found
+### B. "Add customer" / "Register vehicle" buttons (`386ac55`)
 
-- **Codex, 3 findings, all real, all fixed.** The one that mattered: the screen
-  branched on `closed` FIRST and said *"this job is closed, so it has no next
-  stage"* — but `closed_at` is stamped at `completed` and the lifecycle permits
-  `completed → warranty_follow_up`, so a closed card can legitimately carry a
-  move. It suppressed a real action behind a false sentence. **Branch on the
-  data (`allowedStages`), let `closed` choose only the WORDS.** Also: a comment
-  claiming `viewerRole()` returns undefined for supervisor/storekeeper/QC/
-  cashier — it does not, they map to real `RoleId`s and reach the default tree
-  through `workspaceForRole`, a different door. Fourth comment-claims-a-rule
-  defect in this repo.
-- **Supervisor `/security-review`: no findings.** It independently read
-  `check-page-gates.sh` rather than trusting the comment citing it.
+Same lesson, generalised. `quickCreateHref(workspace, slug)` in
+`packages/next-shell` resolves the target out of the viewer's OWN visible
+navigation using the same three functions as `requireNavRoute`, so button and
+gate cannot disagree. Returns null → no button. **It respects permissions too:**
+the §34 tree gates `register-customer` on `organization.admin`, so a viewer
+without it would have got a button straight to a 404.
+12 unit tests + `verify-quick-create-buttons.mjs` **11/11** across three roles.
 
-### 🔴 MY OWN VERIFICATION LIED TWICE BEFORE IT WAS RIGHT — again
+### C. KEYCLOAK IS DEPLOYED TO RENDER — and three bugs stood in the way
 
-1. It reported "the job number is still plain text" for the owner and for
-   reception. Both screens were CORRECT and rendering their empty state: the
-   owner's queue filters to stages no seeded card was at, and **reception lands
-   on `Alpha Parts Supply`**, which owns no job cards. The script now proves
-   there are ROWS before it judges a link, and switches reception's organisation.
-2. It reported "the detail screen did not render" for two pages that had
-   rendered — `body.textContent()` includes the inline `<style>` block, and a
-   loose `/404/` test matched **a hex colour**. Assert on `main`, never `body`.
+`https://autoworkshop-keycloak.onrender.com` · realm `autoworkshop`. It did not
+exist before this session.
 
-⚠️ **`verify-job-card-detail.mjs` step 7 CONSUMES ITS FIXTURE** — it moves a card
-to `completed` to prove the closed-card case. Re-seed with
-`bash scripts/seed-dev-core.sh`. It reports a SKIP, never a pass, when the
-fixture is gone.
+1. 🔴 **`801eef8` — the JVM refused to start.** `JAVA_OPTS_APPEND` added
+   `-XX:+UseSerialGC` while Keycloak's entrypoint already sets `-XX:+UseG1GC`.
+   APPEND means both: *"Multiple garbage collectors selected"* is **fatal**, not
+   last-one-wins. Keycloak would have died on every boot. Fixed with
+   `-XX:-UseG1GC` in front, verified by reading the flags back
+   (`UseG1GC=false, UseSerialGC=true`), not by trusting the setting.
+2. 🔴 **`9a5fc05` — the deploy's password generator broke its own pipe.**
+   `tr -dc … | head -c 40` → `tr` takes SIGPIPE → `pipefail` fails the step.
+   **No dry run could ever have caught it**: the whole step is
+   `if: confirm == 'APPLY'`, so it had never executed. Now `secrets.choice`.
+3. 🔴 **`17ac00b` — `KeyError: 'ownerId'`.** Render nests the owner as
+   `owner.id` on some responses and omits it on others. Now tries both, falls
+   back to `/v1/owners`, and prints the KEY NAMES present when it cannot find it.
 
-## ▶ NEXT
+### D. The live web service points at Keycloak (`f3386ec`)
 
-1. More menu entries → real screens. 127 remain;
-   `node scripts/audit-menu-coverage.mjs --all` lists them. Build the ones whose
-   API already exists (catalogue/parts, customers, vehicles, memberships); the
-   rest need their API first.
-2. Mobile: offline queue, camera capture, push — all still empty.
-3. Evidence upload: `POST /evidence/upload-url` + `storage_key` wiring + UI.
-4. Repo-wide RLS org-scoping — PLAN BEFORE CODE.
+New `point-web-at-keycloak.yml`. 🔴 **Render's env endpoint is a whole-set PUT,
+not a PATCH** — sending only the changed keys DELETES the rest, including
+`AUTH_SECRET`. It GETs, merges, PUTs the union, refuses if the read was empty or
+the merge shrank, and asserts on read-back that `AUTH_SECRET` survived.
 
-⚠️ **`scripts/guardrails/check-page-gates.sh` is RED on master — 17 FAILs, all
-pre-existing and all apparently FALSE.** Verified identical with and without
-this slice. Two causes, both script limitations: a page that gates via a
-`const ROUTE = '...'` indirection rather than a string literal
-(`solution-and-approval/variations`), and customer-web's Next **route groups**
-(`(app)`), whose parentheses are not part of the URL. Worth a session: a Stage-0
-guardrail that cries wolf 17 times is one nobody reads.
+### E. `d71b964` — `KC_PROXY_HEADERS: xforwarded` on the local Keycloak
 
-## Done 2026-08-02 — do not rebuild
-
-- **Mobile app made to actually run** (`5cf6fe8`) — three defects stopped it
-  bundling; its Keycloak client was missing from the RUNNING realm.
-- **Canonical Keycloak host** (`53ebcea`) — `scripts/start-local.sh`; fixes the
-  issuer mismatch that rendered "Sign out" and "Not signed in" together.
-- **Runtime input validation** (`2f4c56e`) — Zod at the boundary on 43
-  endpoints; fixed `Boolean('false') === true` on the 3 publication routes.
-- **start-local drives every web app** (`948ea3d`) — APPS list, real guards.
-- **Migrations 001-034 APPLIED TO RENDER** (`65a7d59`, `5c9da4f`) — 44 tables.
-- **Mobile job-card detail + stage transitions** (`1143fde`) — 35 mobile tests.
-- **14 menu entries became real screens** (`217a648`) — job queues, 14/14 in a
-  browser, menu coverage 141 → 127 dead entries.
+Behind any HTTPS proxy, `start-dev` minted `http://` as the issuer while the app
+knew `https://` — every token rejected, and the symptom is the confusing one:
+**"Sign out" AND "Not signed in" rendered together**. Verified in BOTH
+directions (tunnel → https, plain LAN → unchanged).
 
 ---
 
-## Slice D — slice 7b VARIATION CONTROL COMPLETE 2026-08-01 (API + schema)
+## 🔴 Lessons this session paid for — do not relearn
 
-Migrations **032 + 033 + 034**, `VariationService`, `VariationController`.
-`07.txt` §14 + §3766 step 12: **"the technician PAUSES CHARGEABLE ADDITIONAL WORK
-UNTIL APPROVAL IS RECEIVED."**
-
-- 🔴 **The money rule is structural.** `work_authorized_at` is the ONE flag
-  execution code consults, and `ck_variation_authorization` refuses it on
-  anything but an approved variation.
-- **Lifecycle:** draft → internally_reviewed → sent_to_customer → approved /
-  rejected / modified. A trigger refuses every skip, on INSERT **and** UPDATE.
-- **Consent needs a name and a channel** when chargeable — but NOT when free, or
-  staff would record £0 variations as nothing at all and lose the record.
-- **Content freezes when SENT**, not when decided, so the number the customer
-  approves is the number the row holds.
-- 🔴 **CODEX FOUND FOUR HOLES IN 032, one CRITICAL — and the first was the SAME
-  defect 030 shipped and 031 fixed: the rule enforced on UPDATE and nowhere
-  else.** Twice in one day. A direct INSERT could create a variation already
-  approved and already authorised. Fixed in **033**, with the internal review's
-  role AND identity moved into the database, an append-only
-  `variation_decisions` history (§3792), and the content freeze moved earlier.
-- 🔴 **`verify/032` WALKED THROUGH THE HOLE AND CALLED IT A PASS** — it performed
-  the internal review as the technician who raised the variation, exactly what
-  §3792 forbids. 033 made it fail; that is how the gap was found. Corrected to
-  use an independent supervisor.
-- **034** loosened one notch: 033 froze `work_authorized_at` so hard that an
-  approved variation lacking it could NEVER be authorised — approved is terminal,
-  so the work would be permanently blocked. Filling a NULL is a COMPLETION;
-  changing a set value is a REWRITE. Only the second is refused. The consent
-  fields keep the stricter rule, because a name added later fabricates consent.
-- Proof: `verify/032` **16/16** · `verify/033` **14/14** · `variation.spec.ts`
-  **18/18**.
-
-⚠️ **Org-scoping now has a starting point.** Migration 027 introduced
-`identity.current_organization_id()` for ONE table. The repo-wide change is
-still open and still needs a plan before code — but the helper and its failure
-modes are now proven: unset GUC returns NULL and matches nothing, a non-uuid
-value RAISES rather than matching. Both fail closed.
-
-## Slice D — slice 9 QUALITY CONTROL COMPLETE 2026-08-01 (API + schema)
-
-Migrations **030** + **031**, `QualityService`, `QualityController`.
-`2.txt` §563: an INDEPENDENT inspection verifying the complaint was addressed and
-no new defect introduced.
-
-- 🔴 **Independence is enforced in POSTGRES**, not just the service.
-  `repair.user_worked_on_job_card()` spans four tables (executions, tasks, time
-  entries, parts) — evidence capture EXCLUDED, because photographing a car is
-  not repairing it — and `trg_qc_independence` refuses a self-inspection.
-- 🔴 **A PASS IS DERIVED FROM §563'S TWO ANSWERS**, never supplied by the caller.
-  `ck_qc_decision_consistent` makes "complaint not addressed + passed"
-  unreachable in the database.
-- ⚠️ `Boolean('false')` is TRUE — a coercing parse would turn "not addressed"
-  into a pass. Accepted values are enumerated instead.
-- 🔴 **CODEX FOUND FOUR WAYS ROUND 030, all the same shape — the rule was
-  enforced at the door and nowhere else.** Fixed in **031**: (1) the test session
-  was never tied to the job card, so a worker could name a card they never
-  touched and be checked against that; (2) `trg_qc_after_testing` fired on INSERT
-  only while `test_session_id` stayed updatable; (3) the SECURITY DEFINER
-  predicate was executable by PUBLIC — a cross-tenant "who worked on what"
-  oracle; (4) `ON DELETE CASCADE` erased decided inspections when a job card was
-  deleted, despite DELETE being revoked on the table.
-- Codex also found three gaps in `verify/030` itself. `verify/031` closes them:
-  all four predicate branches are now exercised individually **and a control
-  proves the predicate returns to false**, `UPDATE job_card_id` is tested, and
-  the cascade path is tested.
-- Proof: `verify/030` **13/13** · `verify/031` **14/14** · `quality.spec.ts`
-  **14/14** (including a drift check that `CAN_INSPECT` agrees with
-  `ROLE_TARGET_STAGES`).
-
-## 🔴 OWNER DECISION NEEDED — pricing is invisible to the seeded owner identity
-
-`pricing-rules` exists ONLY in the §46 owner tree
-(`packages/navigation/src/workspaces.ts`). The §34 default tree's Settings group
-has no pricing entry, and `WORKSHOP_ROLE_TREES` maps only `owner` to the tree
-that has one.
-
-**Measured consequence.** `owner@autoworkshop.local` holds THREE active
-memberships — `platform_administrator`, `workshop_owner`, `technician` — and
-`resolveTenantContext` defaults to the strongest by ROLE_PRECEDENCE, which is
-`platform_administrator`. `navRoleFor` returns undefined for that, resolving to
-the DEFAULT tree. **So the person most likely to set the labour rate opens the
-app, finds no Pricing anywhere, and concludes the feature does not exist.** They
-must switch role to `workshop_owner` first. `verify-pricing-screen.mjs` does
-exactly that and records why.
-
-Three options, none taken unilaterally because each is a change to APPROVED
-navigation and `05.txt` §2 prohibits that without review:
-
-1. Add `pricing` to the §34 default tree's Settings group (mirrors Slice C's
-   two-route shape for Workshop Profile).
-2. Leave it — owners use the role switcher, which now works.
-3. Reconsider ROLE_PRECEDENCE so `workshop_owner` outranks
-   `platform_administrator` for a user holding both. ⚠️ Wider blast radius: it
-   changes the default role for every multi-role account, not just this screen.
-
-## Slice D — pricing screen COMPLETE 2026-08-01 (`organization_pricing`)
-
-`PricingController` + `PricingService` + `/workshop-management/pricing-rules`.
-The screen migration 029's header said this slice would add.
-
-- 🔴 **The point of the screen is the ZERO.** With no pricing row,
-  `quotation.service.ts` falls back to `PRICING_DEFAULTS`, whose labour rate is
-  **0** — so a workshop that never opened this page quoted labour at nothing on
-  every job, silently. The screen renders a warning banner over the fallbacks
-  rather than an empty state, because "empty" would imply nothing is happening.
-- **Reads tenant-wide, writes owner-only**, which is 029's split, not this
-  slice's: quotations are prepared by reception, managers and technicians, so
-  narrowing the READ would break quotation preparation for everybody.
-- ⚠️ **`Number('') === 0`.** A cleared field must never become a zero rate. The
-  server action sends every numeric field as a RAW STRING (no `Number(...)`),
-  and `requiredNumber` rejects the empty string before parsing.
-- **`apiPut` added to `packages/next-shell`** — the pricing row is read as a UNIT
-  by quotation building, so a partial write would leave a workshop quoting a new
-  labour rate against an old tax rate.
-- Proof: `pricing.spec.ts` **17/17** · `verify-pricing-screen.mjs` **17/17**,
-  driving an owner AND a technician, and READING THE RATE BACK after a reload
-  (a refused write matches zero rows and raises nothing, so "Saved" is not
-  evidence).
-- **Codex found 2, both fixed:** `parsePricingInput` threw on the FIRST bad field
-  while its docstring promised whole-object validation — the repo's most-repeated
-  defect, a comment claiming a rule that does not exist. Behaviour was fixed to
-  match the promise (all problems reported at once). The spec's "every message"
-  test covered 5 of 13 paths; now covers all 13.
-
-## Slice C — COMPLETE 2026-08-01 (mechanic directory opt-in)
-
-Migration **027** + `DirectoryController` + a settings screen at BOTH routes.
-A workshop can now list itself publicly, and take itself back off.
-
-- **The workshop publishes ITSELF here**, unlike parts. A directory entry is the
-  workshop's own consented description of itself; requiring an administrator to
-  approve "we are here, this is our phone number" would make the directory
-  unfillable. `admin_write` still lets an administrator withdraw abuse.
-- **Saving and publishing are separate actions.** `is_published` is absent from
-  the save statement entirely, so editing a live listing cannot withdraw it by
-  accident and editing a draft cannot expose it.
-- ⚠️ **TWO ROUTES, BOTH REQUIRED.** §46's owner tree carries Workshop Profile
-  under `/workshop-management/`; the §34 default tree under `/settings/`.
-  `platform_administrator` may edit AND resolves to the DEFAULT tree, so
-  building only the owner's path left the administrator on a blank page.
-  Slice 4 wrote this trap down and it still caught me.
-- 🔴 **028 — a comment described a rule the database did not implement.**
-  `directory.service.ts` said the listing was readable by any member; 027's
-  single `FOR ALL` policy restricted it to the owner. A manager or technician
-  saw "Not listed" above a pre-filled form for a listing that existed. Found by
-  Codex, reproduced (owner 1 row, manager 0, technician 0), fixed by adding
-  `member_read_own` — the comment was right, the policy was wrong. **Second
-  comment-claims-a-rule-that-does-not-exist defect in two days.**
-- Proof: `verify/027` **12/12** · `verify/028` **6/6** ·
-  `apps/e2e/verify/verify-directory-optin.mjs` **14/14**, driving an owner and a
-  technician.
-
-## Slice B — COMPLETE 2026-08-01 (schema + API + screens)
-
-**A part can now reach the public marketplace without a developer.** Proven end
-to end: supplier adds a draft on screen -> it appears in the admin queue ->
-admin publishes -> an anonymous buyer sees it on `/api/v1/public/parts`.
-
-- API: `apps/api/src/catalogue/` — supplier routes on `UserGuard` + `withUser`,
-  admin routes on `TenantGuard` + `withTenant`.
-  ⚠️ **The guard choice is load-bearing, not stylistic.** `withTenant` is the
-  ONLY path that sets `app.current_role`. An admin route on `UserGuard` would
-  return 200 and change nothing — migration 025's defect, one layer up.
-- Screens: supplier `/products/product-catalogue`, admin
-  `/catalogue-and-content/products`. Neither needed a navigation change; the
-  approved trees already carried both routes.
-- Proofs: `packages/auth/verify/probe-catalogue.mjs` **33/33** ·
-  `apps/e2e/verify/verify-catalogue-screens.mjs` **14/14**.
-
-## Slice B schema — SHIPPED 2026-08-01, do not rebuild
-
-- **024** — a supplier may write its own catalogue but NOT publish it. Policies
-  key on `catalogue.current_user_supplies`; the column rules are triggers,
-  because RLS selects rows and not columns. Applying to list a supplier is just
-  an unpublished `catalogue.suppliers` row — approval IS publication, so there is
-  no `supplier_applications` table. `created_by` exists for a SECURITY reason:
-  without it, "you may own a supplier that has no members yet" would let any
-  signed-in stranger claim an administrator-seeded supplier.
-- **025** — 🔴 **every admin policy in 021–024 was UNREACHABLE from the app.**
-  All 21 predicates tested `current_role_name() = 'admin'`; the app sets
-  `platform_administrator` from the membership row. Nine policies and three
-  triggers were inert and the failure mode was `UPDATE 0` — no error. An admin
-  publish endpoint would have returned 200 and changed nothing.
-- **026** — 🔴 a supplier could publish new PUBLIC fitment claims on its own
-  already-published part; fitments inherit visibility from the part and 024 put
-  no guard on them. Found by Codex, reproduced before fixing. Worst field for it
-  to happen in: a fitment is "this part fits that car".
-
-**72 verify checks across six scripts, zero failures.** Re-run any with:
-`docker exec -i aw-postgres psql -U autoworkshop -d autoworkshop -v ON_ERROR_STOP=1 -f - < infrastructure/migrations/verify/NNN_*.sql`
-
-✅ **Migrations 001–034 are APPLIED TO RENDER** (2026-08-02, run 30761632886) —
-34 applied, 0 skipped, schema verified by counting real tables per schema
-(identity 5, core 5, repair 24, catalogue 9, audit 1). Re-check or extend with
-`gh workflow run apply-migrations.yml` (dry run) / `-f confirm=APPLY`.
-
-## Done 2026-08-01 — do not rebuild
-
-- **Render production is BACK.** The free-tier hours reset; the Release workflow's only
-  failure was Render's deploy API returning **400** on a suspended service. Re-ran the
-  failed job alone — green. Live serves `/` 200, `/home/dashboard` 200 with real content,
-  `/nonexistent-page` 404.
-- **Role-switcher rollout COMPLETE** — both switchers extracted into one shared server
-  component `packages/next-shell/src/ViewerSwitchers.tsx` and mounted in **all seven**
-  apps. `workshop-web`'s inline `'use server'` closure is gone.
-
-## Slice A (marketplace ordering) — SHIPPED 2026-07-31
-
-Migrations 022 + 023, buyer basket/checkout/my-orders, supplier order inbox, role
-switcher API + UI. See the 07-31 close block in `NEXT_SESSION_START_HERE.md`.
-
-## Still open in Phase 5, in dependency order
-
-Slice 7b (variation control) · slice 9 (QC — must be done by somebody who did not do the
-work, `2.txt` §563) · slice 10 (vehicle release) · 11 (dashboards) · 12 (inboxes).
-Then Phase 5 acceptance, `07.txt` pt2 §51-§52.
-
-## Rules that keep applying
-
-**A control file not updated in the SAME COMMIT as the work becomes an instruction to
-redo it.** This file said "build migration 014" for five slices after 014 shipped.
-
-**Every refusal must name a REACHABLE alternative.** The most expensive defect class here.
-
-**Prove endpoints with real tokens and the screen with a browser**, and for any rule about
-WHO, capture TWO sessions — a single-identity probe silently skips the check that matters.
-
-**A migration already applied is CHECKSUMMED.** Fixes go in the next number.
-
-**Definition of complete (`05.txt` §6):** migration runs · backend rule exists · API works ·
-page renders with loading/empty/error/permission states · permissions enforced · tests pass ·
-lint + typecheck pass · Playwright journey passes · responsive checked · docs updated ·
-**no paid dependency** · committed.
+- **A verification that lies is worse than no verification.** Mine lied twice
+  before it was right: it called two CORRECT empty states "still plain text"
+  (reception lands on *Alpha Parts Supply*, which owns no job cards), then
+  reported two rendered pages as not rendered because `body.textContent()`
+  includes the inline `<style>` block and a loose `/404/` test matched **a hex
+  colour**. **Assert on `main`, never `body`. Prove rows exist before judging a
+  link.**
+- **An assertion whose subject can empty itself fails for the wrong reason.**
+  The owner's leg drove a queue that step 7 of the same script deliberately
+  empties.
+- **A step gated on `confirm == APPLY` has never run.** "Built and validated"
+  meant its first real execution died on its first command.
+- **Codex found a reachable falsehood I would have shipped:** the detail screen
+  branched on `closed` first and said "this job is closed, so it has no next
+  stage" while the API offered `warranty_follow_up` — hiding a real action.
+  **Branch on the data; let a flag choose only the WORDS.**
+- **A comment claiming a rule the code does not have** — fourth instance. Mine
+  said `viewerRole()` returns undefined for four roles; it does not, they map to
+  real `RoleId`s and reach the default tree by a different door.
