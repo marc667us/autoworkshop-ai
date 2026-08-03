@@ -81,6 +81,32 @@ export interface TopNavProps {
   actions?: TopNavAction[];
   userLabel?: string;
   /**
+   * The role the viewer is ACTING AS, as a read-only chip beside the user chip.
+   *
+   * Owner request 2026-08-03. Before it, the active role was rendered nowhere a
+   * single-role viewer could see: the only mention was the `<option>` text
+   * inside the role switcher, which does not render below two roles. "Who am I
+   * and what may I do here" is the question this strip exists to answer and it
+   * answered only half of it.
+   *
+   * Superseded by `roleControl` when one is supplied — see below.
+   */
+  roleLabel?: string;
+  /**
+   * Replaces the read-only Role chip with the real switcher, for a viewer who
+   * holds more than one role.
+   *
+   * REPLACES, never sits beside — same rule as `organizationSwitcher`. Two
+   * controls naming the same role is how a user ends up unsure which is
+   * authoritative, and this one is worse than the organisation case because the
+   * role decides which navigation tree they are looking at.
+   *
+   * A ReactNode slot rather than data-plus-callback because switching role is a
+   * SERVER action, and this package must stay renderable with no server, no
+   * session and no Next runtime.
+   */
+  roleControl?: React.ReactNode;
+  /**
    * Theme switcher (§15 sits beside the user profile in the right-hand
    * cluster). Injected rather than imported so TopNav keeps no dependency on
    * the theme context and stays renderable in isolation in Storybook.
@@ -241,6 +267,8 @@ export function TopNav({
   onSearchChange,
   actions = [],
   userLabel,
+  roleLabel,
+  roleControl,
   themeControl,
   accountControl,
   organizationSwitcher,
@@ -400,6 +428,27 @@ export function TopNav({
         {userLabel ? (
           <span className="aw-topnav-secondary" style={{ display: 'inline-flex' }}>
             <Selector label="User" value={userLabel} />
+          </span>
+        ) : null}
+        {/* WHO, then AS WHAT — in that order, reading toward the sign-out
+            button (owner request 2026-08-03).
+
+            The switcher REPLACES the chip rather than joining it, for the same
+            reason the organisation one does: two controls naming the same role
+            leaves the user unsure which is authoritative — and here that role
+            is what decides the navigation tree they are looking at.
+
+            ⚠️ The parentheses are load-bearing. `roleControl ?? roleLabel ? x : y`
+            is legal and parses as `(roleControl ?? roleLabel) ? x : y`, which is
+            the intent — but relying on that is how the next edit reads it the
+            other way round.
+
+            `.aw-topnav-secondary` matches the user chip beside it, so the pair
+            steps aside together below 767px rather than collapsing to a name
+            with no role. */}
+        {(roleControl ?? roleLabel) ? (
+          <span className="aw-topnav-secondary" style={{ display: 'inline-flex' }}>
+            {roleControl ?? <Selector label="Acting as" value={roleLabel} />}
           </span>
         ) : null}
         {/* Deliberately NOT in `.aw-topnav-secondary`, unlike the user chip it

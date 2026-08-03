@@ -7,6 +7,8 @@ import {
   viewerLabels,
   viewerHasSession,
   ViewerSwitchers,
+
+  ActingAsControl,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction } from './sign-out-action';
@@ -59,12 +61,17 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           signOutAction={signOutAction}
           signInHref="/api/auth/signin"
           signedIn={signedIn}
-          // T-0016 + the 2026-07-31 role switcher, as ONE shared component so
-          // all seven apps mount the identical control group. Both halves list
-          // only the viewer's own memberships and both are re-validated by the
-          // API, which REFUSES an organisation or role the viewer does not hold
-          // rather than downgrading. See `ViewerSwitchers`.
+          // T-0016, as ONE shared component so all seven apps mount the identical
+          // control. It lists only the viewer's own memberships and the API
+          // re-validates the choice, REFUSING an organisation the viewer does not
+          // hold rather than downgrading. The ROLE half moved to `roleControl`
+          // below (owner request 2026-08-03). See `ViewerSwitchers`.
           organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
+          // The ROLE, top right beside the user chip (owner request 2026-08-03).
+          // Renders the switcher only for a viewer holding several roles; a
+          // single-role viewer gets `null` here and the shell falls back to its
+          // read-only "Acting as" chip, so the role is stated either way.
+          roleControl={<ActingAsControl viewer={viewer} />}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
             { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },

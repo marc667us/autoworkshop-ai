@@ -67,6 +67,18 @@ export interface WorkspaceShellProps {
   organizationLabel?: string;
   branchLabel?: string;
   userLabel?: string;
+  /**
+   * The role the viewer is acting as, humanised — supplied by `viewerLabels()`
+   * along with the other three, so a layout spreading `{...viewerLabels(viewer)}`
+   * gets it with no extra wiring.
+   */
+  roleLabel?: string;
+  /**
+   * The role SWITCHER, for a viewer holding more than one role. Supplied as a
+   * node because it needs a server action; when it is absent (or renders null,
+   * which is every single-role viewer) the chip above stands in.
+   */
+  roleControl?: React.ReactNode;
   counters?: Record<string, number>;
   warnings?: Record<string, number>;
   topNavActions?: TopNavAction[];
@@ -97,6 +109,8 @@ export function WorkspaceShell({
   organizationLabel,
   branchLabel,
   userLabel,
+  roleLabel,
+  roleControl,
   counters,
   warnings,
   topNavActions,
@@ -138,6 +152,8 @@ export function WorkspaceShell({
       organizationLabel={organizationLabel}
       branchLabel={branchLabel}
       userLabel={userLabel}
+      roleLabel={roleLabel}
+      roleControl={roleControl}
       counters={counters}
       warnings={warnings}
       topNavActions={topNavActions}

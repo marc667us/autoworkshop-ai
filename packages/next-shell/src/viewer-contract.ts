@@ -117,6 +117,20 @@ export interface ViewerLabels {
    * double as an authentication fact.
    */
   userLabel?: string;
+  /**
+   * The role the viewer is ACTING AS, humanised — owner request 2026-08-03:
+   * "the login user['s] role must show at the top right".
+   *
+   * It was not shown anywhere for most viewers. The active role appeared only
+   * inside the `RoleSwitcher`'s `<select>`, which renders `null` below two
+   * options (`RoleSwitcher.tsx`) — so every single-role account, which is most
+   * of them, had no way to see what it was acting as.
+   *
+   * Absent for a signed-out viewer, for the same reason `userLabel` is: there
+   * is no role to state, and naming a plausible one would be a false statement
+   * in the strip a user reads to check whose session they are in.
+   */
+  roleLabel?: string;
 }
 
 /**
@@ -142,6 +156,7 @@ export function viewerLabels(viewer: ViewerDescription | null): ViewerLabels {
       // two controls both reading "Sign in", one of them inert text, is the
       // ambiguity §70 forbids.
       userLabel: undefined,
+      roleLabel: undefined,
     };
   }
 
@@ -160,6 +175,13 @@ export function viewerLabels(viewer: ViewerDescription | null): ViewerLabels {
     organizationLabel: byOrganization?.organizationName ?? 'Unknown organisation',
     branchLabel: byOrganization?.branchName ?? 'All branches',
     userLabel: viewer.displayName,
+    // ⚠️ FROM `activeRole`, NOT from the membership row matched above. The
+    // matched row is chosen by organisation and branch, and one user can hold
+    // SEVERAL roles in one organisation — `owner@` holds three. `activeRole` is
+    // the one the API actually resolved for this request and therefore the one
+    // every page's data was fetched as; a chip naming a different one would be
+    // the nav/router divergence in the strip that exists to prevent it.
+    roleLabel: roleLabel(viewer.activeRole),
   };
 }
 

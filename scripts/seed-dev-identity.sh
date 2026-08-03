@@ -39,9 +39,33 @@ DB_USER="${POSTGRES_USER:-autoworkshop}"
 # only security-relevant assertion in the Playwright suite came to skip in all
 # seven workspaces while reporting green.
 DEV_EMAIL="${DEV_USER_EMAIL:-technician@autoworkshop.local}"
-DEV_FIRST="${DEV_USER_FIRST:-A.}"
-DEV_LAST="${DEV_USER_LAST:-Technician}"
 DEV_ROLE="${DEV_USER_ROLE:-technician}"
+
+# 🔴 THE DISPLAY NAME IS DERIVED FROM THE ROLE, AND IT MUST BE.
+#
+# `DEV_LAST` used to default to the constant `Technician`. Every documented
+# multi-identity seed command — `start-session.sh` §5 and section 1 of
+# `NEXT_SESSION_START_HERE.md` — overrides `DEV_USER_ROLE` and `DEV_USER_EMAIL`
+# AND NOTHING ELSE, so all eight seeded identities were written with
+# `display_name = 'A. Technician'`. `/me` returns that string, the top bar
+# renders it as the User chip, and the owner's report was exactly right:
+# **whoever signed in, the shell named the same person.** Measured in the live
+# dev database 2026-08-03 — eight rows, one name.
+#
+# A constant that only LOOKS like a per-identity value is the same defect class
+# as a comment claiming a rule the code does not have: nothing is missing, so
+# nobody checks it. Deriving it means a new role cannot reintroduce the bug.
+#
+# `workshop_owner` -> `Workshop Owner`. awk rather than `sed -e 's/\b\(.\)/\u\1/g'`
+# because `\u` is a GNU extension and this script runs under Git Bash on Windows.
+role_title() {
+  echo "$1" | tr '_' ' ' | awk '{ for (i = 1; i <= NF; i++) $i = toupper(substr($i, 1, 1)) substr($i, 2); print }'
+}
+# "Dev" rather than a plausible first name: this is a seeded account with a
+# published password, and the top bar is where a user checks whose session they
+# are in. It must not look like a real person's.
+DEV_FIRST="${DEV_USER_FIRST:-Dev}"
+DEV_LAST="${DEV_USER_LAST:-$(role_title "$DEV_ROLE")}"
 # Must satisfy the realm password policy: length(12), upperCase(1),
 # lowerCase(1), digits(1), specialChars(1), notUsername, notEmail.
 DEV_PASSWORD="${DEV_USER_PASSWORD:-Change_me_locally1!}"
@@ -79,8 +103,10 @@ if kcadm create users -r "$REALM" \
      -s "firstName=$DEV_FIRST" \
      -s "lastName=$DEV_LAST" >/dev/null 2>&1; then
   echo "    created"
+  EXISTED=0
 else
   echo "    already present"
+  EXISTED=1
 fi
 
 SUBJECT="$(trim "$(kcadm get users -r "$REALM" -q "username=$DEV_EMAIL" --fields id --format csv 2>/dev/null | tr -d '"' | head -1)")"
@@ -89,6 +115,19 @@ if [ -z "$SUBJECT" ]; then
   exit 1
 fi
 echo "    subject $SUBJECT"
+
+# RECONCILE THE NAME ON AN EXISTING USER — the header calls this script
+# idempotent-reconciling, and for the name half it was not. `create` fails when
+# the user exists, so a user seeded under the old constant-`Technician` default
+# kept that name in Keycloak forever while the database half was corrected by
+# its own ON CONFLICT DO UPDATE. Two stores disagreeing about who somebody is,
+# with only one of them visible in the app, is how a fixed bug looks unfixed the
+# next time anyone reads the realm.
+if [ "$EXISTED" = "1" ]; then
+  kcadm update "users/$SUBJECT" -r "$REALM" \
+    -s "firstName=$DEV_FIRST" -s "lastName=$DEV_LAST" >/dev/null
+  echo "    name reconciled to $DEV_FIRST $DEV_LAST"
+fi
 
 # Set the password only when the user has NO credential.
 #

@@ -45,6 +45,10 @@ export interface AppShellProps {
   organizationLabel?: string;
   branchLabel?: string;
   userLabel?: string;
+  /** The role the viewer is acting as, as a chip in the right-hand cluster. */
+  roleLabel?: string;
+  /** Replaces that chip with the role switcher when the viewer holds several. */
+  roleControl?: React.ReactNode;
   counters?: Record<string, number>;
   warnings?: Record<string, number>;
   topNavActions?: TopNavAction[];
@@ -75,6 +79,8 @@ export function AppShell({
   organizationLabel,
   branchLabel,
   userLabel,
+  roleLabel,
+  roleControl,
   counters,
   warnings,
   topNavActions,
@@ -198,6 +204,8 @@ export function AppShell({
         organizationLabel={organizationLabel}
         branchLabel={branchLabel}
         userLabel={userLabel}
+        roleLabel={roleLabel}
+        roleControl={roleControl}
         // On mobile the same button opens the overlay drawer instead of
         // collapsing an inline column that is not on screen.
         sideNavCollapsed={isMobile ? !mobileNavOpen : collapsed}

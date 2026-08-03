@@ -48,9 +48,16 @@ export { roleLabel } from './role-label';
 export type { RoleOption } from './RoleSwitcher';
 export { setActiveRoleAction, setActiveRoleFromFormAction } from './set-role-action';
 /**
- * Both switchers as ONE server component, so all seven app layouts mount the
- * identical control group instead of each keeping its own copy.
+ * The organisation switcher as a server component, so all seven app layouts
+ * mount the identical control instead of each keeping its own copy.
  */
 export { ViewerSwitchers } from './ViewerSwitchers';
+/**
+ * The role control for the top-RIGHT cluster — the switcher when the viewer
+ * holds several roles, and `null` when they hold one so `TopNav` shows its
+ * read-only "Acting as" chip instead. Owner request 2026-08-03: the role must
+ * be visible to every signed-in user, not only to the few holding two.
+ */
+export { ActingAsControl } from './ActingAsControl';
 export { activeRoleName, ACTIVE_ROLE_COOKIE } from './active-role';
 export { activeRoleHeader } from './viewer';

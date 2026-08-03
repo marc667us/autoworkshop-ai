@@ -353,6 +353,64 @@ describe('viewerLabels — the signed-out contract the account control depends o
     } as never);
     expect(labels.userLabel).toBe('Ama Mensah');
   });
+
+  /**
+   * OWNER REQUEST 2026-08-03: "the login user['s] role must show at the top
+   * right". It did not — the active role appeared only inside the role
+   * switcher's `<option>` text, and that control renders nothing below two
+   * roles, which is the state of most accounts.
+   */
+  it('names the role the viewer is ACTING AS, humanised', () => {
+    const labels = viewerLabels({
+      userId: 'u1',
+      displayName: 'Ama Mensah',
+      tenantId: 't1',
+      organizationId: 'o1',
+      branchId: null,
+      activeRole: 'workshop_supervisor',
+      permissions: [],
+      memberships: [],
+    } as never);
+    // `workshop_supervisor` reads badly in a top bar; `Workshop supervisor`
+    // does. Derived, not looked up, so a role added to `identity.memberships`
+    // is readable the day it exists rather than rendering blank.
+    expect(labels.roleLabel).toBe('Workshop supervisor');
+  });
+
+  /**
+   * 🔴 THE ROLE COMES FROM `activeRole`, NOT FROM THE MATCHED MEMBERSHIP ROW.
+   *
+   * The row is matched by organisation and branch, and one user can hold
+   * SEVERAL roles in one organisation — the dev `owner@` identity holds three.
+   * Reading the role off that row would name whichever happened to sort first
+   * while every page on screen had been fetched as `activeRole`: a top bar
+   * stating one role over another role's data, which is the nav/router
+   * divergence the identity strip exists to prevent.
+   */
+  it('names the RESOLVED role, not the first membership in the active organisation', () => {
+    const labels = viewerLabels({
+      userId: 'u1',
+      displayName: 'Ama Mensah',
+      tenantId: 't1',
+      organizationId: 'o1',
+      branchId: 'b1',
+      activeRole: 'workshop_owner',
+      permissions: [],
+      memberships: [
+        // Sorts first and is NOT the active role.
+        { organizationId: 'o1', organizationName: 'Abossey Motors', branchId: 'b1', branchName: 'Main', roleName: 'technician' },
+        { organizationId: 'o1', organizationName: 'Abossey Motors', branchId: 'b1', branchName: 'Main', roleName: 'workshop_owner' },
+      ],
+    } as never);
+    expect(labels.roleLabel).toBe('Workshop owner');
+  });
+
+  it('states NO role for a signed-out viewer rather than a plausible one', () => {
+    // Same rule as `userLabel` and `organizationLabel`: the strip is where a
+    // user on a shared workshop terminal checks whose session they are in, so
+    // it must never state something false. Absent is the honest answer.
+    expect(viewerLabels(null).roleLabel).toBeUndefined();
+  });
 });
 
 /**
