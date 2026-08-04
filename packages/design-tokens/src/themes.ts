@@ -166,6 +166,29 @@ export function themeToCss(palette: ThemePalette): string {
  */
 export function themeStylesheet(): string {
   return [
+    /*
+     * 🔴 THE TYPEFACE. NOTHING SET ONE UNTIL 2026-08-05.
+     *
+     * `primitive.fontFamily.sans` existed and was used by exactly one surface —
+     * the public landing. No app layout, no shell component and no global
+     * stylesheet ever applied it to `body`, so all seven applications rendered
+     * in the browser's default SERIF. Screenshotted on the owner dashboard:
+     * headings, KPI numerals and table cells all in Times. It is the single
+     * loudest reason the product did not look commercial, and it was one
+     * declaration away the whole time.
+     *
+     * It belongs HERE rather than in each app's layout for the same reason the
+     * colours do: seven copies of a font stack is seven chances to drift, and
+     * the one that drifts is the one nobody screenshots.
+     *
+     * `-webkit-font-smoothing` because the default weight rendering on macOS
+     * makes a UI sans look heavier than designed.
+     */
+    `body{font-family:${primitive.fontFamily.sans};-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;}`,
+    /* Form controls do NOT inherit the document font — a <select>, <input> or
+       <button> falls back to the UA font unless told otherwise, which is how a
+       filter bar ends up in a different typeface from the page around it. */
+    `input,select,textarea,button{font-family:inherit;}`,
     `:root{color-scheme:light;${themeToCss(lightTheme)}}`,
     `@media (prefers-color-scheme: dark){:root:not([data-theme]){color-scheme:dark;${themeToCss(darkTheme)}}}`,
     `:root[data-theme="light"]{color-scheme:light;${themeToCss(lightTheme)}}`,

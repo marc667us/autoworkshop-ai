@@ -1,4 +1,6 @@
 export { visuallyHidden } from './a11y';
+export { DataTable } from './DataTable';
+export type { DataTableColumn, DataTableProps } from './DataTable';
 export { StatusBadge } from './StatusBadge';
 export type { StatusBadgeProps } from './StatusBadge';
 

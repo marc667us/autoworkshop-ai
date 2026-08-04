@@ -126,4 +126,65 @@ export const JOB_QUEUES = {
     emptyTitle: 'No complaints waiting',
     emptyBody: 'Nothing has been recorded yet. Reception records a complaint when a customer calls.',
   },
+  // ── SLICE 0, 2026-08-05 — THE SAME QUEUE UNDER THE NAME EACH TREE USES ────
+  //
+  // These seven routes were signposted screens. Nothing new was needed to make
+  // them real: the queue, its API and its stage vocabulary already existed, and
+  // the route was simply not mounted in the tree that advertises it. §46 calls
+  // it "Repair Requests", §47 "Repair Request Inbox", §48 the same, §34 "New
+  // Complaints" — one capability, four names.
+  //
+  // ⚠️ SAFE TO RE-MOUNT because `JobQueueScreen` links a row to
+  // `jobCardDetailHrefFor(role, id)` — the detail route of the VIEWER'S OWN
+  // tree — not to `${route}/${id}`. A queue that linked to its own path would
+  // need an `[id]` page at each of these routes, and omitting it would be a
+  // dead link on a screen added to remove dead links.
+  '/requests/repair-request-inbox': {
+    stages: ['complaint_received', 'appointment_confirmed', 'vehicle_received'],
+    description: 'Requests that have arrived and not yet reached inspection.',
+    emptyTitle: 'No new requests',
+    emptyBody: 'Nothing new has come in. A request appears here when a complaint is recorded.',
+  },
+  '/requests-and-reception/repair-request-inbox': {
+    stages: ['complaint_received', 'appointment_confirmed', 'vehicle_received'],
+    description: 'Requests that have arrived and not yet reached inspection.',
+    emptyTitle: 'No new requests',
+    emptyBody: 'Nothing new has come in. A request appears here when a complaint is recorded.',
+  },
+  '/requests/customer-complaint-inbox': {
+    stages: ['complaint_received'],
+    description: 'Complaints recorded and not yet turned into a booking.',
+    emptyTitle: 'No complaints waiting',
+    emptyBody: 'Nothing has been recorded yet. A complaint is recorded when a customer calls.',
+  },
+  '/requests-and-reception/customer-complaint-inbox': {
+    stages: ['complaint_received'],
+    description: 'Complaints recorded and not yet turned into a booking.',
+    emptyTitle: 'No complaints waiting',
+    emptyBody: 'Nothing has been recorded yet. A complaint is recorded when a customer calls.',
+  },
+  '/customer-reception/new-complaints': {
+    stages: ['complaint_received'],
+    description: 'Complaints recorded today and not yet turned into a booking.',
+    emptyTitle: 'No complaints waiting',
+    emptyBody: 'Nothing has been recorded yet. A complaint is recorded when a customer calls.',
+  },
+
+  // ⚠️ HISTORY IS A STAGE FILTER, NOT A NEW TABLE. "Every repair this workshop
+  // has done" is the job cards that reached `completed` — plus
+  // `warranty_follow_up`, which is a FINISHED repair the customer has come back
+  // about. Leaving that stage out would hide exactly the jobs somebody looking
+  // up a repair history most wants to find.
+  '/customers-and-vehicles/repair-history': {
+    stages: ['completed', 'warranty_follow_up'],
+    description: 'Every repair this workshop has finished, newest first.',
+    emptyTitle: 'No completed repairs yet',
+    emptyBody: 'Nothing has reached completion. A job appears here once it is collected and closed.',
+  },
+  '/vehicles/vehicle-history': {
+    stages: ['completed', 'warranty_follow_up'],
+    description: 'Repairs this workshop has finished, newest first.',
+    emptyTitle: 'No completed repairs yet',
+    emptyBody: 'Nothing has reached completion. A job appears here once it is collected and closed.',
+  },
 } satisfies Record<string, JobQueue>;

@@ -42,18 +42,6 @@ import type { PlannedScreen } from './planned-content';
  */
 export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   // ── Home ──────────────────────────────────────────────────────────────────
-  '/home/approvals': {
-    does: 'Everything waiting on a decision from you, in one queue.',
-    now: 'Customer proposals are the approvals that exist today, and each carries the quotation it is priced from.',
-    href: '/solution-and-approval/customer-proposals',
-    hrefLabel: 'Customer proposals',
-  },
-  '/home/tasks-and-approvals': {
-    does: 'Your task list and the approvals only you can give, side by side.',
-    now: 'The approvals half is live: every proposal awaiting a customer decision is listed with its quotation.',
-    href: '/repair-control/customer-approvals',
-    hrefLabel: 'Customer approvals',
-  },
   '/home/notification-inbox': {
     does: 'One place for every alert the workshop raises — a job stalled, a part in, an approval overdue.',
     now: 'Alerts are not collected into an inbox yet. The dashboard carries the live counts, and each queue shows what is actually waiting.',
@@ -68,18 +56,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Requests and reception (manager §47) ─────────────────────────────────
-  '/requests-and-reception/repair-request-inbox': {
-    does: 'Repair requests customers have sent in, before any of them becomes a job card.',
-    now: 'Accepted requests appear as job cards, and the job card list is where they are worked.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/requests-and-reception/customer-complaint-inbox': {
-    does: 'Complaints raised against finished work, and what was done about each.',
-    now: 'Complaints are recorded against the job card they concern. Your task list carries the ones assigned to you.',
-    href: '/home/my-tasks',
-    hrefLabel: 'My tasks',
-  },
   '/requests-and-reception/appointments': {
     does: 'Bookings, with the bay and technician each one needs.',
     now: 'Appointments are not scheduled in the app yet. Register the customer when they arrive and open a job card.',
@@ -94,18 +70,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Requests (reception §48) ─────────────────────────────────────────────
-  '/requests/repair-request-inbox': {
-    does: 'Repair requests customers have sent in, waiting to be accepted or declined.',
-    now: 'Accepted requests become job cards. Your task list shows the ones that need you.',
-    href: '/home/my-tasks',
-    hrefLabel: 'My tasks',
-  },
-  '/requests/customer-complaint-inbox': {
-    does: 'Complaints about work already done, and the workshop’s response to each.',
-    now: 'Complaints are recorded against their job card. Anything assigned to you is on your task list.',
-    href: '/home/my-tasks',
-    hrefLabel: 'My tasks',
-  },
   '/requests/appointments': {
     does: 'The booking diary — who is coming in, when, and for what.',
     now: 'Bookings are not kept in the app yet. Search the customer when they arrive; their vehicles are already on file.',
@@ -123,12 +87,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   '/customer-reception/appointments': {
     does: 'Bookings with their bay and technician allocation.',
     now: 'Scheduling is a later phase. The customer list is where a booking would be raised from.',
-    href: '/customer-reception/customers',
-    hrefLabel: 'Customers',
-  },
-  '/customer-reception/new-complaints': {
-    does: 'Complaints received today, ahead of being assigned to somebody.',
-    now: 'A complaint is recorded against the customer it came from, and the customer record carries their history.',
     href: '/customer-reception/customers',
     hrefLabel: 'Customers',
   },
@@ -168,12 +126,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     href: '/vehicles/vehicle-search',
     hrefLabel: 'Find a vehicle',
   },
-  '/vehicles/vehicle-history': {
-    does: 'Every job this vehicle has been through, oldest to newest.',
-    now: 'Open the vehicle from the search — its record lists the jobs recorded against it.',
-    href: '/vehicles/vehicle-search',
-    hrefLabel: 'Find a vehicle',
-  },
 
   // ── Workshop operations (owner §46) ──────────────────────────────────────
   '/workshop-operations/appointments': {
@@ -196,12 +148,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     href: '/customers-and-vehicles/customers',
     hrefLabel: 'Customers',
   },
-  '/customers-and-vehicles/repair-history': {
-    does: 'Every repair this workshop has done, searchable by vehicle or customer.',
-    now: 'Open a vehicle to see the jobs recorded against it — that is the history, one vehicle at a time.',
-    href: '/customers-and-vehicles/vehicles',
-    hrefLabel: 'Vehicles',
-  },
 
   // ── Customers (reception §48) ────────────────────────────────────────────
   '/customers/customer-messages': {
@@ -212,12 +158,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop floor (default §34, manager §47) ────────────────────────────
-  '/workshop-floor/technicians': {
-    does: 'Who is on shift, what each is working on, and who is free.',
-    now: 'The staging board shows every job with the technician assigned to it — the same picture, from the job’s side.',
-    href: '/workshop-floor/repair-staging',
-    hrefLabel: 'Repair staging board',
-  },
   '/workshop-floor/service-bays': {
     does: 'Each bay, what is in it, and how long it has been there.',
     now: 'The staging board is the live floor view — every job and the stage it is at.',
@@ -232,26 +172,8 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Solution and approval (default §34) ──────────────────────────────────
-  '/solution-and-approval/solution-studio': {
-    does: 'Building a repair option set — several ways to fix the fault, each priced.',
-    now: 'Customer proposals carry the options that have been prepared, with the quotation behind each.',
-    href: '/solution-and-approval/customer-proposals',
-    hrefLabel: 'Customer proposals',
-  },
-  '/solution-and-approval/approvals': {
-    does: 'Proposals waiting for a customer decision, and what happened to each.',
-    now: 'The proposal list shows the decision state of every one, and is where a decision is recorded.',
-    href: '/solution-and-approval/customer-proposals',
-    hrefLabel: 'Customer proposals',
-  },
 
   // ── Customer approval (reception §48) ────────────────────────────────────
-  '/customer-approval/modification-requests': {
-    does: 'Customers asking to change work already agreed — add, drop or defer an item.',
-    now: 'A change to agreed work is raised as a variation and lands in the approvals queue.',
-    href: '/customer-approval/pending-approvals',
-    hrefLabel: 'Pending approvals',
-  },
 
   // ── Parts and supply (default §34) ───────────────────────────────────────
   '/parts-and-supply/parts-depot': {
@@ -442,22 +364,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     href: '/home/dashboard',
     hrefLabel: 'Dashboard',
   },
-  '/knowledge-and-staff/technician-competencies': {
-    does: 'What each technician is signed off to do, and what they are not.',
-    now: 'Roles are what currently decide who may do what. Changing them needs organisation-admin rights; the dashboard shows the work the team is carrying today.',
-    // 🔴 RETARGETED 2026-08-05. The obvious target was permission-GATED and this
-    // tree's viewers do not hold the permission, so the signpost 404'd for the
-    // very people it was written for. Found by driving it in a browser, not by
-    // reading the nav — `planned-workshop.spec.ts` now checks the gate too.
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
-  '/knowledge-and-staff/competencies': {
-    does: 'The skills matrix for your team — who can do what, to what level.',
-    now: 'Roles are the working version of this, and they decide what each person may action.',
-    href: '/workshop-management/staff',
-    hrefLabel: 'Staff',
-  },
 
   // ── Finance and warranty (default §34) ───────────────────────────────────
   '/finance-and-warranty/invoices': {
@@ -640,12 +546,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop management (owner §46) ──────────────────────────────────────
-  '/workshop-management/roles-and-permissions': {
-    does: 'What each role may do, and changing it.',
-    now: 'Roles are assigned per staff member, and that is what the API and the database enforce against.',
-    href: '/workshop-management/staff',
-    hrefLabel: 'Staff',
-  },
   '/workshop-management/service-bays': {
     does: 'Your bays, what each is equipped for, and which jobs may use it.',
     now: 'Bays are not modelled yet. The staging board is the live floor view.',

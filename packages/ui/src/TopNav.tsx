@@ -232,16 +232,32 @@ function Selector({
         // Not a button: no role, not focusable, no caret. It is a status
         // readout, and it says so to assistive technology.
         aria-label={`${label}: ${value}`}
+        // ⚠️ `title` IS NOT DECORATION HERE. The chip now truncates, so the full
+        // organisation or branch name has to stay reachable somehow — "Alpha A…"
+        // on its own is not an answer to "which branch am I in".
+        title={`${label}: ${value}`}
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          padding: `${primitive.space[1]} ${primitive.space[2]}`,
+          padding: `${primitive.space[1]} ${primitive.space[3]}`,
           border: `1px solid ${themeVar.borderDefault}`,
-          borderRadius: primitive.radius.md,
+          borderRadius: primitive.radius.full,
           background: themeVar.backgroundSecondary,
           color: themeVar.textSecondary,
           fontSize: primitive.fontSize.sm,
+          fontWeight: 500,
           whiteSpace: 'nowrap',
+          // Shrink before the search does, and degrade to an ellipsis rather
+          // than pushing the bar out of shape.
+          // ⚠️ A FLOOR AS WELL AS A CEILING. With only `minWidth: 0` the chips
+          // shrank all the way to "W:" and "A:" — single letters, which is not
+          // a workspace or an organisation name and is worse than hiding them.
+          // 6rem holds roughly twelve characters; below the breakpoint in the
+          // stylesheet the whole cluster is hidden instead of shredded.
+          minWidth: '6rem',
+          maxWidth: '10rem',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          display: 'block',
+          lineHeight: '1.5rem',
         }}
       >
         {value}
@@ -307,8 +323,13 @@ export function TopNav({
         alignItems: 'center',
         gap: primitive.space[3],
         padding: `${primitive.space[2]} ${primitive.space[4]}`,
-        background: themeVar.backgroundPrimary,
+        // A raised surface, not the page colour. The bar previously used
+        // `backgroundPrimary` — the same value as the canvas behind it — so it
+        // read as part of the page with a stray rule under it rather than as
+        // chrome sitting above the content it scrolls over.
+        background: themeVar.surfaceRaised,
         borderBottom: `1px solid ${themeVar.borderDefault}`,
+        boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
         minHeight: '3.5rem',
       }}
     >
@@ -381,7 +402,22 @@ export function TopNav({
       {/* Workspace / organisation / branch selectors (§5, §6, §7).
           Hidden below the tablet breakpoint: on a 360px phone these three
           would consume the entire bar and leave no room for search. */}
-      <div className="aw-topnav-selectors" style={{ display: 'flex', gap: primitive.space[2] }}>
+      {/*
+        🔴 `minWidth: 0` + `flexShrink` ARE THE FIX FOR THE CLIPPED SEARCH BOX.
+        This cluster had neither, so it refused to give up a single pixel and the
+        search field — the only flexible item in the row — collapsed to its 6rem
+        minimum and rendered as "Search v" with the quick-create button sitting
+        on top of it. Screenshotted at 1440px, i.e. on a wide desktop, not some
+        exotic narrow viewport.
+
+        Context chips are the RIGHT thing to sacrifice first: each one truncates
+        to an ellipsis and keeps its `title`, so the information is still
+        reachable, whereas a 6rem search field is simply unusable.
+      */}
+      <div
+        className="aw-topnav-selectors"
+        style={{ display: 'flex', gap: primitive.space[2], minWidth: 0, flexShrink: 1 }}
+      >
         <Selector label="Workspace" value={workspaceLabel} />
         {/* The switcher REPLACES the chip when one is supplied, rather than
             sitting beside it — two controls naming the same organisation is how
@@ -391,10 +427,19 @@ export function TopNav({
       </div>
 
       {/* ---- Center section (§8 search, §9 quick-create) ---- */}
-      <div style={{ flex: 1, display: 'flex', justifyContent: 'center', minWidth: 0 }}>
+      <div
+        style={{
+          // `flex: 1 1 18rem` rather than `flex: 1`: the search now asks for a
+          // usable width up front instead of being whatever is left over.
+          flex: '1 1 18rem',
+          display: 'flex',
+          justifyContent: 'center',
+          minWidth: 0,
+        }}
+      >
         <label
           className="aw-topnav-search"
-          style={{ position: 'relative', width: '100%', maxWidth: '32rem', minWidth: '6rem' }}
+          style={{ position: 'relative', width: '100%', maxWidth: '32rem', minWidth: '12rem' }}
         >
           {/* Visually hidden but present for screen readers — a placeholder is
               not an accessible name. */}
@@ -410,26 +455,60 @@ export function TopNav({
           >
             Search vehicles, jobs, parts, customers
           </span>
+          {/* The magnifier sits INSIDE the field, which is what makes a search
+              box read as a search box before anybody reads the placeholder.
+              `pointer-events: none` so the icon never steals the click. */}
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: primitive.space[3],
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: themeVar.textSecondary,
+              fontSize: primitive.fontSize.base,
+              lineHeight: 1,
+              pointerEvents: 'none',
+            }}
+          >
+            ⌕
+          </span>
           <input
+            className="aw-topnav-searchfield"
             type="search"
             value={searchValue}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search vehicles, jobs, parts, customers…"
+            // Shorter than the accessible name on purpose. The full sentence is what
+            // screen readers get from the <label>; in the field itself it simply
+            // ran past the right edge and read as "Search vehicles, jobs, p".
+            placeholder="Search…"
             style={{
               width: '100%',
-              padding: `${primitive.space[2]} ${primitive.space[3]}`,
+              // Left padding clears the icon; the right side clears the browser's
+              // own clear button on a `type=search`.
+              padding: `${primitive.space[2]} ${primitive.space[3]} ${primitive.space[2]} ${primitive.space[8]}`,
               border: `1px solid ${themeVar.borderDefault}`,
-              borderRadius: primitive.radius.md,
+              borderRadius: primitive.radius.full,
               background: themeVar.backgroundSecondary,
               color: themeVar.textPrimary,
               fontSize: primitive.fontSize.sm,
+              // `inherit`, because a bare <input> falls back to the UA's font and
+              // that is why the bar looked like a different product from the page.
+              fontFamily: 'inherit',
+              outline: 'none',
             }}
           />
         </label>
       </div>
 
       {/* ---- Right section (§9-§15) ---- */}
-      <nav aria-label="Global actions" style={{ display: 'flex', alignItems: 'center', gap: primitive.space[1] }}>
+      <nav
+        aria-label="Global actions"
+        // Never shrinks. These are icon buttons at their minimum size already;
+        // squeezing them produces overlapping hit targets rather than a smaller
+        // toolbar.
+        style={{ display: 'flex', alignItems: 'center', gap: primitive.space[1], flexShrink: 0 }}
+      >
         {actions.map((a) => {
           // An action with no handler is not yet built. It renders DISABLED and
           // says so in its accessible name, rather than presenting as live and
@@ -510,7 +589,27 @@ export function TopNav({
           queries, and adding a CSS-in-JS runtime for three rules would be a
           dependency this project does not need. */}
       <style>{`
-        @media (max-width: 1024px) {
+        /*
+         * 🔴 100rem (1600px), NOT 1024px — MEASURED, NOT GUESSED.
+         *
+         * The old breakpoint assumed the bar fitted on anything wider than a
+         * tablet. It does not. Screenshotted at 1440px — an ordinary laptop —
+         * the workspace/organisation/branch chips, the search field and the
+         * identity cluster OVERLAPPED each other: "Alpha Accra" was drawn on
+         * top of a notification badge.
+         *
+         * The identity cluster alone is ~460px (user chip + role select + Sign
+         * out + Switch user) and none of it may be dropped: signing out is the
+         * one control §68 says must always survive. So the chips are what give
+         * way, and they must give way well before the bar is actually full.
+         *
+         * The proper fix is to collapse the identity cluster into a single user
+         * menu, which frees ~300px and is how every application of this shape
+         * does it. That is a popover with focus management and is its own
+         * slice; this breakpoint stops the overlap today without pretending to
+         * be that.
+         */
+        @media (max-width: 100rem) {
           .aw-topnav-selectors { display: none !important; }
         }
         /* Phone. The bar cannot hold everything and does not wrap, so the
@@ -525,6 +624,19 @@ export function TopNav({
            which is worse than a narrower but usable field. */
         @media (max-width: 480px) {
           .aw-topnav-search { min-width: 8rem; }
+        }
+
+
+        /* A VISIBLE FOCUS RING. The field had \`outline: none\` and nothing in
+           its place, so a keyboard user tabbing into the one control at the top
+           of every screen got no indication they had arrived. */
+        .aw-topnav-searchfield:focus-visible {
+          border-color: var(--aw-action-primary);
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--aw-action-primary) 22%, transparent);
+        }
+        .aw-topnav-searchfield::placeholder {
+          color: var(--aw-text-secondary);
+          opacity: 1;
         }
       `}</style>
     </header>

@@ -1,6 +1,6 @@
 import { apiGet, registrationStatus, needsWorkshop, viewerHasSession } from '@autoworkshop/next-shell';
 import { CreateWorkshopScreen } from '../../_screens/create-workshop-screen';
-import { PageHeader, StatusBadge } from '@autoworkshop/ui';
+import { PageHeader } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { currentViewer, grantsFor, navRoleFor, requireNavRoute } from '@autoworkshop/next-shell';
 import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
@@ -116,23 +116,103 @@ type TileSpec = {
   hint: string;
 };
 
+/**
+ * A KPI tile.
+ *
+ * ── WHAT WAS WRONG WITH THE OLD ONE ─────────────────────────────────────────
+ *
+ * It ended in a `StatusBadge`, which is an OUTLINED PILL stretched to the width
+ * of the card. Screenshotted at 1440px it read as a disabled text input sitting
+ * under the number — six of them down the dashboard, each looking like a form
+ * field nobody could type in. A badge is right for a status inside a table row,
+ * where it is one short word among others; as the caption of a headline figure
+ * it is the loudest thing on the card and says the least.
+ *
+ * The caption is now a caption: a small coloured dot carrying the §66 status
+ * hue, then the sentence in secondary text. Colour is still never the only
+ * signal — the words are the signal, and the dot only tints them.
+ *
+ * ── THE ACCENT BAR ──────────────────────────────────────────────────────────
+ *
+ * A 3px rule down the left edge in the status colour. It gives the row of tiles
+ * a rhythm and lets somebody scan for the red one without reading six labels —
+ * the thing a workshop owner actually does with a dashboard.
+ */
+const KIND_VAR: Record<TileSpec['kind'], string> = {
+  active: 'var(--aw-status-active)',
+  complete: 'var(--aw-status-complete)',
+  attention: 'var(--aw-status-attention)',
+  blocked: 'var(--aw-status-blocked)',
+};
+
 function Tile({ label, value, kind, hint }: TileSpec) {
+  const accent = KIND_VAR[kind];
   return (
     <div
       style={{
+        position: 'relative',
         border: `1px solid ${themeVar.borderDefault}`,
-        borderRadius: primitive.radius.lg,
-        padding: primitive.space[4],
+        borderRadius: primitive.radius.xl,
+        // The accent rule, drawn as a thick left border so it follows the
+        // card's own radius instead of needing a pseudo-element.
+        borderLeft: `3px solid ${accent}`,
+        padding: `${primitive.space[4]} ${primitive.space[5]}`,
         background: themeVar.surfaceRaised,
         display: 'flex',
         flexDirection: 'column',
-        gap: primitive.space[2],
+        gap: primitive.space[1],
+        boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+        minHeight: '7.5rem',
       }}
     >
-      <span style={{ fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>{label}</span>
-      <span style={{ fontSize: primitive.fontSize['3xl'], fontWeight: 600, color: themeVar.textPrimary }}>{value}</span>
-      {/* Colour is never the only signal (§66) — every tile carries a text label too. */}
-      <StatusBadge kind={kind} label={hint} />
+      <span
+        style={{
+          fontSize: primitive.fontSize.xs,
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: themeVar.textSecondary,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: '2.25rem',
+          fontWeight: 700,
+          lineHeight: 1.1,
+          color: themeVar.textPrimary,
+          // Tabular figures so a column of counts lines up digit for digit
+          // instead of shuffling as the numbers change.
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {value}
+      </span>
+      {/* §66 still holds: the hue is carried by a dot, and the WORDS carry the
+          meaning. A reader who cannot distinguish the colours loses nothing. */}
+      <span
+        style={{
+          marginTop: 'auto',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: primitive.space[2],
+          fontSize: primitive.fontSize.sm,
+          color: themeVar.textSecondary,
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            width: '0.5rem',
+            height: '0.5rem',
+            borderRadius: '999px',
+            background: accent,
+            flexShrink: 0,
+          }}
+        />
+        {hint}
+      </span>
     </div>
   );
 }
@@ -270,76 +350,15 @@ export default async function Dashboard() {
         ))}
       </section>
 
-      <section
-        aria-label="About this build"
-        style={{
-          border: `1px solid ${themeVar.borderDefault}`,
-          borderRadius: primitive.radius.lg,
-          padding: primitive.space[4],
-          background: themeVar.backgroundSecondary,
-        }}
-      >
-        <h2 style={{ margin: 0, fontSize: primitive.fontSize.lg, color: themeVar.textPrimary }}>
-          What is real in this build
-        </h2>
-        <ul style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.sm, lineHeight: 1.7 }}>
-          <li>
-            {/* DERIVED for the same reason as the permissions line below: the
-                counts used to be written out as "11 groups, 55 items" and went
-                wrong the moment T-0027 gave this workspace a per-role tree. */}
-            <strong>Navigation is real and complete.</strong> Every group and item is transcribed from the
-            approved specification — <code>autoworkshop 01 (1).txt</code> §34 for the workspace, and{' '}
-            <code>autoworkshop 07.txt</code> part 2 §46–§49 for the four workshop roles. You are seeing the{' '}
-            <strong>{nav.roleLabel}</strong> navigation: {nav.groupCount} groups, {nav.itemCount} items.
-            Expand, collapse, search the menu, and collapse the whole sidebar from the ☰ button.
-          </li>
-          <li>
-            {/* DERIVED, never restated. This sentence used to name the granted
-                permissions as literal text, and it went false the moment the
-                demo grants changed — describing visible finance items that were
-                by then correctly hidden. A page that explains the permission
-                model must read the permission model, or it becomes confident
-                misinformation. Same lesson as the nav/router grants split. */}
-            <strong>Permission-aware visibility is real.</strong>{' '}
-            {nav.grants.length === 0 ? (
-              <>
-                {/* The signed-out wording is not a nicety. The old sentence read
-                    "This viewer holds , so only the groups those grants unlock
-                    are listed" once the grants became genuinely empty — a
-                    dangling clause that describes nothing. An empty grant list
-                    is now the common case, not an edge one: it is what every
-                    visitor sees before signing in. */}
-                This viewer holds <strong>no permission grants</strong>
-                {nav.signedIn
-                  ? ' — this role has none assigned yet.'
-                  : ', because nobody is signed in.'}{' '}
-                Only ungated modules are listed; everything gated is absent from the menu
-              </>
-            ) : (
-              <>
-                This viewer holds{' '}
-                {nav.grants.map((grant, i, all) => (
-                  <span key={grant}>
-                    <code>{grant}</code>
-                    {i < all.length - 1 ? ' and ' : ''}
-                  </span>
-                ))}
-                , so only the groups those grants unlock are listed. Modules gated behind any other
-                permission — the finance items among them — are absent from the menu
-              </>
-            )}{' '}
-            <em>and</em> answer 404 if their URL is typed directly.
-          </li>
-          <li>
-            <strong>Counters and warning badges are real mechanics, fake numbers.</strong> They resolve through the
-            same code path the API will use.
-          </li>
-          <li>
-            <strong>Page content is not built yet.</strong> Every other route renders an honest “not built” page
-            rather than a convincing mock — Phases 4–7 fill them in.
-          </li>
-        </ul>
-      </section>
+      {/*
+        THE "What is real in this build" PANEL WAS REMOVED HERE (2026-08-05).
+        It explained the navigation model, the permission grants and which
+        counters were placeholders — genuinely useful to the people building
+        this, and the first thing a workshop owner saw on their own dashboard.
+        A build note is not product. What it documented lives in
+        `docs/00-project/` and in this file's own comments, which is where a
+        reader who needs it will look.
+      */}
     </>
   );
 }

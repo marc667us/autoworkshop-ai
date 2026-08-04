@@ -1,7 +1,8 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { ApiFailure, apiGet, viewerRole } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, EmptyState, StatusBadge } from '@autoworkshop/ui';
+import { PageHeader, LoadingState, EmptyState, StatusBadge, DataTable } from '@autoworkshop/ui';
+import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
 import { jobCardDetailHrefFor } from './job-card-detail-href';
 
@@ -137,58 +138,64 @@ async function QueueTable({ queue }: { queue: JobQueue }) {
   }
 
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-      <caption style={{ captionSide: 'top', textAlign: 'left', paddingBottom: 8 }}>
-        {rows.length} {rows.length === 1 ? 'job' : 'jobs'}
-      </caption>
-      <thead>
-        <tr>
-          <Th>Job</Th>
-          <Th>Vehicle</Th>
-          <Th>Customer</Th>
-          <Th>Stage</Th>
-          <Th>Assigned to</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((c) => (
-          <tr key={c.id}>
-            {/*
-              THE PRIMARY ACTION OF THE SCREEN, and now a real one. It was
-              plain text until the detail screen existed, because a link into
-              the "not built yet" catch-all teaches people the queue is broken.
-              The href is per-role — see `jobCardDetailHrefFor`.
-            */}
-            <Td>
-              <Link href={jobCardDetailHrefFor(role, c.id)}>{c.jobNumber}</Link>
-            </Td>
-            <Td>
-              {c.registrationNumber}
-              {c.vehicleDescription ? ` — ${c.vehicleDescription}` : ''}
-            </Td>
-            <Td>{c.customerName}</Td>
-            <Td>
-              <StatusBadge kind={toneFor(c.stage)} label={STAGE_LABEL[c.stage] ?? c.stage} />
-            </Td>
-            {/* Not "Unassigned": a job nobody is on is a thing to act on. */}
-            <Td>{c.assignedTechnicianName ?? 'Nobody yet'}</Td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <DataTable
+      caption={`${queue.description} ${rows.length} shown.`}
+      summary={`${rows.length} ${rows.length === 1 ? 'job card' : 'job cards'}`}
+      rows={rows}
+      rowKey={(c) => c.id}
+      columns={[
+        {
+          key: 'job',
+          header: 'Job',
+          nowrap: true,
+          /*
+            THE PRIMARY ACTION OF THE SCREEN, and a real one. It was plain text
+            until the detail screen existed, because a link into the "not built
+            yet" catch-all teaches people the queue is broken. The href is
+            per-role — see `jobCardDetailHrefFor`.
+          */
+          cell: (c) => (
+            <Link
+              href={jobCardDetailHrefFor(role, c.id)}
+              style={{ fontFamily: primitive.fontFamily.mono, fontWeight: 600 }}
+            >
+              {c.jobNumber}
+            </Link>
+          ),
+        },
+        {
+          key: 'vehicle',
+          header: 'Vehicle',
+          nowrap: true,
+          cell: (c) => (
+            <>
+              <span style={{ fontFamily: primitive.fontFamily.mono, fontWeight: 600 }}>
+                {c.registrationNumber}
+              </span>
+              {c.vehicleDescription ? (
+                <div style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.xs }}>
+                  {c.vehicleDescription}
+                </div>
+              ) : null}
+            </>
+          ),
+        },
+        { key: 'customer', header: 'Customer', cell: (c) => c.customerName },
+        {
+          key: 'stage',
+          header: 'Stage',
+          nowrap: true,
+          cell: (c) => <StatusBadge kind={toneFor(c.stage)} label={STAGE_LABEL[c.stage] ?? c.stage} />,
+        },
+        {
+          key: 'assigned',
+          header: 'Assigned to',
+          secondary: true,
+          // Not "Unassigned": a job nobody is on is a thing to act on.
+          cell: (c) => c.assignedTechnicianName ?? 'Nobody yet',
+        },
+      ]}
+    />
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid #d8dde4' }}>
-      {children}
-    </th>
-  );
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return (
-    <td style={{ padding: '8px 10px', borderBottom: '1px solid #eef1f5' }}>{children}</td>
-  );
-}
