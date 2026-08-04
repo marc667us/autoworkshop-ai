@@ -1,6 +1,16 @@
 # Current phase
 
-**▶ PHASE 5 — Workshop + Repair · Release 0.4 · IN PROGRESS** as of 2026-07-28.
+**▶ PHASE 5 — Workshop + Repair · Release 0.4 · IN PROGRESS.**
+
+**2026-08-04:** the TECHNICIAN chain is structurally COMPLETE — 21/21 screens
+verified reachable in a browser as a technician, from "assigned to me" through
+inspection, diagnosis, planning, execution and testing to quality control. The
+21 §49 entries still on the placeholder are Phase 9 knowledge libraries and
+Phase 6 parts depot; none blocks a job reaching QC.
+
+The CUSTOMER journey is complete end to end and its decision point now works:
+report a problem → track it → **approve the proposal in-app** → collect → read
+the service history. 19/19 in a browser. Customer menu coverage 5/35 → 10/35.
 
 Slice 1 shipped: `repair.job_cards` (migration 006), the 19 stages of
 `1.txt` §322-§360 plus `on_hold`, per-organization job numbers, and three access

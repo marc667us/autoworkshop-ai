@@ -1,111 +1,82 @@
 # Current task
 
-## ▶ START HERE — ONE BLOCKER, AND IT IS UNDERSTOOD
+## ▶ START HERE — ONE BLOCKER, AND ONLY THE OWNER CAN CLEAR IT
 
-`POST /api/v1/registration/workshop` returns **500** on production. Everything
-either side of it works. Diagnosed to the exact line by
-`.github/workflows/diagnose-registration-500.yml` (run it again any time — it
-rehearses against the live database inside a transaction that ROLLS BACK, so it
-creates nothing):
+Migration **037 is written, verified 13/13 and pushed**. Applying it to
+production is classifier-blocked for the assistant, so the owner runs:
 
 ```
-Render log : new row violates row-level security policy for table "tenants"
-rehearsal  : permission denied to set role "autoworkshop_app"
+! C:\Users\USER\bin\gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
 ```
 
-### 🔴 THE CAUSE, AND WHY NO LOCAL TEST COULD EVER HAVE SEEN IT
+Until then `POST /registration/workshop` still 500s live and **no workshop can
+be created**. Afterwards: sign in at `autoworkshop.aiappinvent.com`, create the
+workshop through the form (not by INSERT), then re-run `Seed live catalogue` so
+the mechanic directory stops reading 0.
 
-**Render's `autoworkshop` database user is NOT a superuser. Locally it is.**
+### WHY 037, IN ONE PARAGRAPH
 
-`identity.register_workshop` is `SECURITY DEFINER` and owned by `autoworkshop`.
-A superuser bypasses row-level security entirely, so locally the function's four
-INSERTs sail through. On Render the same user is merely the table owner, and
-`FORCE ROW LEVEL SECURITY` applies to owners — so the first INSERT is refused.
+`identity.register_workshop` is SECURITY DEFINER owned by `autoworkshop`.
+Locally that user is a SUPERUSER and bypasses RLS; on Render it is merely the
+table owner, and `FORCE ROW LEVEL SECURITY` applies to owners. Same function,
+different role — which is why `verify/036` passed 9/9 against a defect that
+existed only in production. 037 opens a narrow, auditable bootstrap door keyed
+on two transaction-local settings and pinned to the registering user, and closes
+it before returning. It also gives `identity.memberships` a narrow SELECT policy,
+because the one-workshop-per-person guard was a SELECT on a FORCE-RLS table with
+no tenant context and **had never been able to fire**.
 
-The function is byte-identical in both places. **The ROLE is not.** `verify/036`
-passed 9 of 9 locally against a defect that exists only in production, which is
-why this file says: for anything touching RLS, **rehearse ON LIVE**.
-
-### THE FIX — MIGRATION 037, NOT AN EDIT TO 036
-
-036 is applied and checksummed in both databases. Fixes go in the next number.
-
-**Preferred shape** — a controlled, auditable bypass scoped to this one
-function:
-
-1. `register_workshop` does `SET LOCAL app.bootstrap = 'on'` as its first
-   statement.
-2. Migration 037 adds a permissive **INSERT** policy to `identity.tenants`,
-   `identity.organizations`, `identity.branches` and `identity.memberships`:
-   `WITH CHECK (current_setting('app.bootstrap', true) = 'on')`.
-
-⚠️ **Do NOT weaken the existing policies generally.** The bypass must be
-reachable only from inside this function, and only for INSERT. Registration is
-the one operation that legitimately has no tenant context — it is what CREATES
-the tenant.
-
-⚠️ **Rejected alternative:** a `BYPASSRLS` role to own the function. Creating
-one needs privileges Render's user probably lacks, and it would move the bypass
-somewhere far less visible than a policy named in a migration.
-
-**Verify with:** `Diagnose registration 500` (must show the four ids returned,
-then roll back), then `apply-migrations.yml` with `confirm=APPLY`, then the real
-thing — sign in at `autoworkshop.aiappinvent.com` and create the workshop.
-
-### THEN: FINISH THE SEED
-
-The owner's application user EXISTS on live (`marc667us@yahoo.com`, provisioned
-2026-08-03) and holds **no membership**. Once 037 is applied, signing in and
-using the "create your workshop" form on `/home/dashboard` completes it. Nothing
-needs to be inserted by hand.
+`verify/037` re-owns the function to a non-superuser inside the transaction —
+the only way this defect class is reproducible locally — and REFUSES to run if
+the owner is still a superuser.
 
 ---
 
-## ✅ DONE 2026-08-03 pt3
+## ✅ DONE 2026-08-04
 
-### The public landing is live on the apex, with NO DNS change
+**Both workflows finished and driven in a browser as the right role:**
 
-Learned by reading Solar: **one service, 421 routes, 88 public**, and `/` renders
-the landing for everyone — signed in or not, no redirect. No second service means
-nothing for a CNAME to point at differently, which is why Solar never needed a
-Namecheap change.
+| suite | result |
+|---|---|
+| `verify-technician-workflow.mjs` | 21/21 screens · 24/24 checks |
+| `verify-customer-workflow.mjs` | 11/11 screens · 19/19 checks, twice running |
 
-The seven-app decision stands, so the public surface became
-**`packages/marketplace-ui`** and `workshop-web` — which already owns the apex —
-mounts it at `/`. `AddToBasket` is a render prop, so the package depends on no
-app.
+⚠️ The customer suite **CONSUMES its fixture**. Run
+`bash scripts/seed-customer-proposal-fixture.sh` before each verification, or
+the approval path is skipped — and it now FAILS rather than passing quietly when
+no answerable proposal exists (`ALLOW_EMPTY_CUSTOMER_PROPOSALS=1` to opt out).
 
-### 🔴 The audience defect: every authenticated call was refused
+**The customer can now approve their own repair.** `POST
+/proposals/:id/customer-decision` — a separate route from the staff one, because
+`decidedByName`, `decisionChannel` and `recorded_by` stop being inputs and are
+derived. The role admits the read; a `c.user_id` predicate scopes it.
 
-```
-aud: account
-"token rejected: jwt audience invalid. expected: autoworkshop-api"
-```
+**Keycloak's `error=Configuration`** is replaced by an honest "starting up"
+screen with one bounded retry, at `/auth/error` in all seven apps.
+⚠️ A 24/7 keep-warm was REJECTED on arithmetic: four free services share one
+750-hour allowance and a month is ~730 hours. `keep-warm.yml` is windowed.
 
-**No audience mapper existed anywhere in the realm.** The API refused every
-authenticated request from every web app while public routes worked — so the
-site looked alive and said "Not signed in" beside a working "Sign out". That
-symptom was misread three times across two sessions.
+### 🔴 THREE GATES WERE NOT GATES
 
-Fixed on 7 clients in `realm-autoworkshop.json` **and applied to the live realm
-directly**, because `deploy-keycloak.yml` imports the realm on FIRST BOOT ONLY.
+- **Codex had never run on a real diff** — prompt passed as argv,
+  `Argument list too long` — **and the runner exited 0 when it failed.**
+- **Package vitest configs collected only `*.test.ts`** while `apps/api` uses
+  `*.spec.ts`; a misnamed file was silently never collected.
 
-### VIN funnel
+Ask of any gate: *would its not-running look different from its passing?*
 
-Offline ISO 3779 decode is the primary (no key, no cost, instant); NHTSA vPIC
-enriches when reachable. `/public/vin/:vin` is free, `/vin/:vin` needs a session.
-**The gate is the API sending less, never the page hiding fields** — and the
-deploy asserts it: if the public endpoint ever returns `detail`, `plantCode` or
-`serial`, the deploy fails.
+### 🔴 AND THINGS THAT LOOKED FINE AND WERE NOT
 
-### Defects only a browser found
-
-A form with **no submit button** (three green gates missed it) · "Not signed in"
-beside "Sign out" in customer-web, permanently, for every customer · onboarding
-replacing the **public** landing · a middleware fix that passed typecheck, lint
-and build then crashed the edge runtime with `Cannot redefine property:
-__import_unsupported` · a leak check that reported two **false** leaks by
-searching the whole page instead of the VIN section.
+- `decidable` was still computed from the STAFF role set, so the customer
+  approval form **rendered nothing** while the service and all ten of its tests
+  passed. Test what the VIEWER is told they may do, not only what the service does.
+- Both decision routes accepted a **superseded** proposal by direct POST.
+  `decidable` hides it; hiding is not refusing.
+- The technician dashboard told a signed-in technician **nobody was signed in**,
+  then my first fix read `currentViewer() !== null`, which is null when `/me`
+  FAILS. It reads `viewerHasSession` now.
+- After approving, the screen still said "contact the workshop to approve" —
+  recording a decision does not move the job card; that is staff's action.
 
 ---
 

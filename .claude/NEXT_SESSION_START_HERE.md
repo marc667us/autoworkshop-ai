@@ -6,6 +6,70 @@ bash scripts/start-session.sh
 
 ---
 
+## SESSION CLOSE 2026-08-04 — BOTH WORKFLOWS FINISHED
+
+**Tip `59e3838`, pushed, tree clean.** Seven commits.
+
+### ▶ THE ONE THING ONLY THE OWNER CAN DO
+
+```
+! C:\Users\USER\bin\gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
+```
+
+Migration **037** is written, committed and verified **13/13** locally under
+production privileges — and proven to FAIL with the exact live error before it.
+Until it is applied, `POST /registration/workshop` still 500s and no workshop
+can be created live. Detail in `.claude/CURRENT_TASK.md`.
+
+### WHAT SHIPPED
+
+- **Technician workflow 21/21**, **customer 19/19**, both driven in a real
+  browser as the role whose tree owns the routes.
+- **A customer can approve their own repair** — new
+  `POST /proposals/:id/customer-decision`, with the consent fields DERIVED
+  rather than accepted.
+- **Keycloak's `error=Configuration`** replaced by an honest "starting up"
+  screen in all seven apps.
+- **Landing cards on Solar's scale** (12px radius, 24px padding).
+
+### ⚠️ RUNNING THE VERIFICATIONS
+
+```bash
+bash scripts/seed-customer-proposal-fixture.sh   # the customer run CONSUMES it
+cd apps/e2e
+node verify/verify-technician-workflow.mjs
+node verify/verify-customer-workflow.mjs
+```
+
+The customer suite now **FAILS** rather than passing quietly when there is no
+answerable proposal, because the whole approve path sits behind that condition.
+
+### 🔴 THE LESSON OF THE DAY, IN ONE LINE
+
+**Ask of any gate: would its not-running look different from its passing?**
+Codex had never run on a real diff (prompt passed as argv → `Argument list too
+long`) *and exited 0 when it failed*. Package vitest configs collected only
+`*.test.ts` while `apps/api` uses `*.spec.ts`. Both fixed.
+
+And its sibling: **hiding is not refusing.** `decidable` hid superseded
+proposals from the screen while both write routes still accepted them by POST.
+
+### Local stack at close
+
+Everything on **plain `localhost`** — API 4000, workshop-web 3001,
+customer-web 3000, Keycloak 8080. Sign in as
+`technician@autoworkshop.local` / `customer@autoworkshop.local`,
+password `Change_me_locally1!`.
+
+⚠️ `scripts/start-local.sh` **HUNG at its `kcadm` step** this session. It was
+bypassed by starting each process with `KEYCLOAK_URL=http://localhost:8080`,
+which keeps the issuer matching `.env` and works because the realm's dev clients
+already allow `http://localhost:<port>/*`. Worth fixing before relying on it.
+
+⚠️ Servers were left RUNNING.
+
+---
+
 ## SESSION CLOSE 2026-08-03 - THE LIVE SITE CAN NOW BE SIGNED INTO
 
 **Tip `386ac55`, pushed, tree clean.** Six commits.
