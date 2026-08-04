@@ -117,6 +117,28 @@ check(
   'the second app displaced the first session — cookies are colliding',
 );
 
+// ── 🔴 IS THE GREEN ABOVE REAL SSO, OR COOKIE SHARING? ────────────────────
+//
+// On localhost COOKIES IGNORE THE PORT, so `:3001`'s session cookie is sent to
+// `:3000` unchanged. Every check above then passes for the WRONG REASON — the
+// second app is not doing SSO, it is reading the first app's session. In
+// production the apps sit on different hosts where that cannot happen, so this
+// suite would otherwise report an experience no real user has ever had.
+//
+// The session cookie must be workspace-scoped. Until it is, this check FAILS on
+// purpose: a green run that depends on a dev-only accident is worse than a red
+// one that names it.
+const jar = await ctx.cookies();
+const sessionCookies = jar.filter((c) => /authjs\.session-token/.test(c.name));
+const scoped = sessionCookies.every((c) => /session-token\.(workshop|customer)/.test(c.name));
+check(
+  '🔴 the session cookie is scoped to ONE workspace',
+  sessionCookies.length > 0 && scoped,
+  `shared cookie name(s): ${sessionCookies.map((c) => c.name).join(', ')} on domain=` +
+    `${sessionCookies[0]?.domain} — cookies ignore the PORT, so every app on localhost reads ` +
+    'this one session. The checks above pass for the wrong reason.',
+);
+
 console.log(`\n  password prompts : ${passwordPrompts}`);
 console.log(`  "Sign in" clicks : ${signInClicks}`);
 
