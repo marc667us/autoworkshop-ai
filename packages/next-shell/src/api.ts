@@ -1,6 +1,6 @@
 import { apiBaseUrl, workspaceAuth } from '@autoworkshop/auth';
 import type { WorkspaceId } from '@autoworkshop/navigation';
-import { activeOrganizationHeader, activeRoleHeader } from './viewer';
+import { activeOrganizationHeader, activeRoleHeader, currentViewer } from './viewer';
 
 /**
  * How a PAGE reads the API. The link that did not exist until now.
@@ -65,10 +65,53 @@ export type ApiResult<T> =
  * who lands on the same rendered route — the most expensive bug this codebase
  * could ship. `viewer.ts` carries the same note for the same reason.
  */
+
+/**
+ * 🔴 THE CUSTOMER WORKSPACE MAY ONLY BE READ BY A CUSTOMER.
+ *
+ * MEASURED 2026-08-04: a workshop manager opened the customer app and its
+ * dashboard showed "Your vehicles (3)" — one belonging to Adjoa Boateng and two
+ * to Kwame Mensah. The API narrows to a person's OWN vehicles only when
+ * `activeRole === 'customer'`; for a `workshop_manager` it correctly returns
+ * the organisation's, which is right for the workshop app and a confidentiality
+ * breach on a page headed "Your vehicles".
+ *
+ * ⚠️ IT LIVES HERE, IN THE DATA CALL, AND NOT ONLY IN THE LAYOUT. A layout gate
+ * was tried first and was NOT enough: the refusal rendered while all three
+ * registrations were still present in the document, because a layout does not
+ * stop the page beneath it executing and its output still ships in the RSC
+ * payload. This repository has recorded that exact lesson once already. Hiding
+ * is not refusing; the request must not be made.
+ *
+ * ⚠️ A VIEWER WITH NO MEMBERSHIPS IS NOT REFUSED. A parts buyer with no
+ * workshop affiliation is a REAL and intended user of this app — `/me` is
+ * behind TenantGuard so they resolve to no viewer at all, and the marketplace
+ * and basket are built for exactly that person. The refusal is narrow: a viewer
+ * who resolved, holds memberships, and none of them is `customer`.
+ *
+ * ⚠️ AND IT IS STILL NOT THE CONTROL. The API scopes and RLS isolates,
+ * independently (CLAUDE.md §8). This closes a workspace the caller should never
+ * have been reading; it does not replace either layer beneath it.
+ */
+async function refusedForWorkspace(
+  workspaceId: WorkspaceId | string,
+): Promise<ApiResult<never> | null> {
+  if (workspaceId !== 'customer') return null;
+  const viewer = await currentViewer(workspaceId);
+  if (!viewer || viewer.memberships.length === 0) return null;
+  const isCustomer = viewer.memberships.some((m) => m.roleName === 'customer');
+  return isCustomer ? null : { ok: false, reason: 'forbidden', status: 403 };
+}
+
 export async function apiGet<T>(
   workspaceId: WorkspaceId | string,
   path: string,
 ): Promise<ApiResult<T>> {
+  // BEFORE the token is even fetched: a caller who may not read this workspace
+  // must not reach the API at all.
+  const refused = await refusedForWorkspace(workspaceId);
+  if (refused) return refused;
+
   const accessToken = await workspaceAuth(workspaceId).getAccessToken();
   // Null means no session or an expired token. Fail closed: never fall back to
   // an unauthenticated call, because these endpoints would then answer 401 and

@@ -11,6 +11,7 @@ import {
   ActingAsControl,
 } from '@autoworkshop/next-shell';
 import { signOutAction } from '../sign-out-action';
+import { NotYourWorkspace } from '../_screens/not-your-workspace';
 
 export const metadata: Metadata = {
   title: 'AutoWorkshop AI — Customer',
@@ -44,6 +45,34 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // every customer page renders inside.
     registrationStatus('customer'),
   ]);
+
+  /**
+   * 🔴 A WORKSHOP EMPLOYEE IS NOT A CUSTOMER, AND THIS APP SAYS "YOUR VEHICLES".
+   *
+   * MEASURED 2026-08-04: signing in as `owner@autoworkshop.local` and opening
+   * this app showed "Your vehicles (3)" — Adjoa Boateng's car and two of Kwame
+   * Mensah's. None of them the owner's. Neither app called
+   * `requireWorkspaceAccess`, and the API narrows to a person's OWN vehicles
+   * only when `activeRole === 'customer'`; for a viewer whose active role is
+   * `workshop_owner` it correctly returns the organisation's, which is right
+   * for the WORKSHOP app and a confidentiality breach on this one.
+   *
+   * ⚠️ THE GATE IS "HOLDS NO CUSTOMER MEMBERSHIP", NOT "HAS NO MEMBERSHIP".
+   * A parts buyer with no membership at all is a REAL and intended user of this
+   * app — `/me` is behind TenantGuard so `currentViewer` returns null for them,
+   * and the marketplace and basket are built for exactly that person. Refusing
+   * on a null viewer would lock out the consumer the app exists for. So the
+   * refusal is narrow: a viewer who resolved, holds memberships, and none of
+   * them is `customer`.
+   *
+   * ⚠️ AND IT IS NOT THE CONTROL. It stops the wrong PRESENTATION; the data is
+   * still the API's to scope and RLS's to isolate (CLAUDE.md §8). Fixing the
+   * screen without fixing the scoping would be hiding, not refusing — so
+   * `verify-workspace-isolation.mjs` asserts the refusal AND that no other
+   * person's registration appears.
+   */
+  const holdsCustomerRole = viewer?.memberships.some((m) => m.roleName === 'customer') ?? false;
+  const wrongWorkspace = Boolean(viewer) && viewer!.memberships.length > 0 && !holdsCustomerRole;
 
   return (
     <WorkspaceShell
@@ -100,7 +129,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             { id: 'help', label: 'Help and support', icon: 'help' },
           ]}
         >
-      {children}
+      {/*
+        Rendered INSIDE the shell, not instead of it: somebody who lands here by
+        mistake needs the wordmark and the sign-out control to get out again.
+        Stripping the shell would strand them on a page with no way back — the
+        same reasoning as the signed-out landing.
+      */}
+      {wrongWorkspace ? <NotYourWorkspace name={viewer?.displayName ?? null} /> : children}
     </WorkspaceShell>
   );
 }
