@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -53,8 +53,11 @@ describe('the auth error route Auth.js is configured to redirect to', () => {
   it('still has pages.error pointing where these routes are', () => {
     // The other direction: if somebody removes or renames the override, these
     // seven pages become dead code and this suite would happily keep passing.
+    // `readFileSync` imported at the top, not `require()`d inline: the lint
+    // rule forbidding require() is not cosmetic here — it is what kept CI red
+    // for this file, and CI red is what nobody reads.
     const config = readdirSync(__dirname).includes('workspace-auth.ts')
-      ? require('node:fs').readFileSync(join(__dirname, 'workspace-auth.ts'), 'utf8')
+      ? readFileSync(join(__dirname, 'workspace-auth.ts'), 'utf8')
       : '';
     expect(config).toContain("pages: { error: '/auth/error' }");
   });

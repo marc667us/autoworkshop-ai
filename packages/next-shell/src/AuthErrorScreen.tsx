@@ -182,7 +182,12 @@ function WakeCountdown({ signInHref }: { signInHref: string }) {
         <span id="aw-auth-countdown" style={{ color: themeVar.textSecondary }} />
       </p>
       <script
-        // eslint-disable-next-line react/no-danger -- a fixed literal, no interpolation
+        // A FIXED LITERAL with no interpolation of any request value — the
+        // `?error=` code is rendered only through JSX, which React escapes.
+        //
+        // No `eslint-disable` here: `react/no-danger` is not configured in this
+        // package, and a disable comment naming an unknown rule is ITSELF a lint
+        // error. It kept CI red, and a red CI is one nobody reads.
         dangerouslySetInnerHTML={{
           __html: `(function(){
   var el = document.getElementById('aw-auth-countdown');
