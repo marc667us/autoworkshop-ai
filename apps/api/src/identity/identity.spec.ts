@@ -232,6 +232,150 @@ describe('MembershipService — the privilege-granting surface', () => {
     }
   });
 
+
+  describe('resolving the person by EMAIL — what made this route reachable', () => {
+    /**
+     * `grant` took a uuid, and the only source of one is `GET /users`, which is
+     * driven FROM memberships and therefore lists people who are ALREADY
+     * members. So there was no path from any possible screen to add somebody
+     * new: the platform's privilege-granting operation had no reachable caller.
+     */
+    it('resolves an email to a user id and grants against THAT id', async () => {
+      const { db, queries } = fakeDb([], (text) =>
+        /FROM identity\.users WHERE lower\(email\)/.test(text)
+          ? [{ id: 'resolved-user-9' }]
+          : /FROM identity\.organizations/.test(text)
+            ? [{ '?column?': 1 }]
+            : [membershipRow],
+      );
+      const svc = new MembershipService(db, fakeAudit());
+      await svc.grant(ctx(), {
+        userEmail: 'New.Person@Example.COM',
+        organizationId: 'org-1',
+        roleName: 'technician',
+      });
+      const insert = queries.find((q) => /INSERT INTO identity\.memberships/.test(q.text));
+      // Position 4 is `user_id`. If the resolution were dropped this would be
+      // undefined and the row would be granted to nobody.
+      expect(insert?.values?.[3]).toBe('resolved-user-9');
+    });
+
+    it('matches the address case-insensitively', async () => {
+      const { db, queries } = fakeDb([], (text) =>
+        /FROM identity\.users WHERE lower\(email\)/.test(text)
+          ? [{ id: 'u1' }]
+          : /FROM identity\.organizations/.test(text)
+            ? [{ '?column?': 1 }]
+            : [membershipRow],
+      );
+      await new MembershipService(db, fakeAudit()).grant(ctx(), {
+        userEmail: 'Person@Example.com',
+        organizationId: 'org-1',
+        roleName: 'technician',
+      });
+      const lookup = queries.find((q) => /lower\(email\)/.test(q.text));
+      // Both sides lowered. Matching raw would refuse a real colleague because
+      // they capitalised their own name when signing up.
+      expect(lookup?.text).toMatch(/lower\(email\) = lower\(\$1\)/);
+    });
+
+    it('🔴 names a REACHABLE next step when the address has no account', async () => {
+      // A refusal with no way forward is a wall, not a rule — the most
+      // expensive defect class recorded in this repository. There is no invite
+      // flow yet, so the honest instruction is that they sign up first.
+      const { db } = fakeDb([], (text) =>
+        /FROM identity\.users WHERE lower\(email\)/.test(text) ? [] : [membershipRow],
+      );
+      await expect(
+        new MembershipService(db, fakeAudit()).grant(ctx(), {
+          userEmail: 'nobody@example.com',
+          organizationId: 'org-1',
+          roleName: 'technician',
+        }),
+      ).rejects.toThrow(/sign up first/);
+    });
+
+    it('checks the ROLE GATE before it ever looks an address up', async () => {
+      // Otherwise the route becomes an existence oracle for anybody with a
+      // session: send an email, read which error comes back. The role check
+      // runs first, so an unauthorised caller learns nothing at all.
+      const { db, queries } = fakeDb();
+      await expect(
+        new MembershipService(db, fakeAudit()).grant(ctx({ activeRole: 'technician' }), {
+          userEmail: 'someone@example.com',
+          organizationId: 'org-1',
+          roleName: 'technician',
+        }),
+      ).rejects.toThrow(/may not grant a membership/);
+      expect(queries.some((q) => /lower\(email\)/.test(q.text))).toBe(false);
+    });
+  });
+
+
+  describe('re-hiring somebody who was removed', () => {
+    /**
+     * A membership is never deleted — withdrawal sets `status = 'revoked'` and
+     * keeps the row, so "was this person ever granted access?" stays
+     * answerable. The row still occupies the unique key, so `ON CONFLICT DO
+     * NOTHING` fired on a re-grant and the owner was told "membership already
+     * exists" about a colleague who demonstrably had no access, with nothing
+     * anywhere to undo it.
+     */
+    it('🔴 REINSTATES a revoked membership instead of refusing', async () => {
+      let insertDone = false;
+      const { db, queries } = fakeDb([], (text) => {
+        if (/INSERT INTO identity\.memberships/.test(text)) {
+          insertDone = true;
+          return []; // ON CONFLICT DO NOTHING — the revoked row holds the key
+        }
+        if (/UPDATE identity\.memberships/.test(text) && insertDone) {
+          return [{ ...membershipRow, status: 'active' }];
+        }
+        if (/FROM identity\.organizations/.test(text)) return [{ '?column?': 1 }];
+        return [membershipRow];
+      });
+      await expect(
+        new MembershipService(db, fakeAudit()).grant(ctx(), {
+          userId: 'user-2',
+          organizationId: 'org-1',
+          roleName: 'technician',
+        }),
+      ).resolves.toMatchObject({ status: 'active' });
+
+      const update = queries.find((q) => /UPDATE identity\.memberships/.test(q.text));
+      // Only a WITHDRAWN row is reinstated — without this predicate the branch
+      // would also "reinstate" an already-active one and report a change that
+      // did not happen.
+      expect(update?.text).toMatch(/status <> 'active'/);
+    });
+
+    it('🔴 audits the RESOLVED user id, not the request field', async () => {
+      // `input.userId` is undefined for every grant made by email, so the audit
+      // entry for the privilege-granting operation would have lost the one fact
+      // it exists to preserve.
+      // A spy rather than the shared `fakeAudit`, because this assertion is
+      // about WHAT was written, not that writing happened.
+      // Typed loosely on purpose: `vi.fn(async () => undefined)` infers a
+      // zero-argument signature, so `mock.calls[0][2]` is a tuple index that
+      // does not exist and tsc rejects the assertion rather than the code.
+      const audit = { write: vi.fn(async (..._args: unknown[]) => undefined) };
+      const { db } = fakeDb([], (text) =>
+        /FROM identity\.users WHERE lower\(email\)/.test(text)
+          ? [{ id: 'resolved-99' }]
+          : /FROM identity\.organizations/.test(text)
+            ? [{ '?column?': 1 }]
+            : [membershipRow],
+      );
+      await new MembershipService(db, audit as never).grant(ctx(), {
+        userEmail: 'someone@example.com',
+        organizationId: 'org-1',
+        roleName: 'technician',
+      });
+      const detail = (audit.write.mock.calls[0]?.[2] as { detail?: unknown } | undefined)?.detail;
+      expect(detail).toMatchObject({ userId: 'resolved-99' });
+    });
+  });
+
   it('refuses to grant into an organization from another tenant', async () => {
     const { db, queries } = fakeDb([], (text) =>
       /FROM identity\.organizations/.test(text) ? [] : [membershipRow],
@@ -274,8 +418,15 @@ describe('MembershipService — the privilege-granting surface', () => {
     //
     // The organization lookup must still succeed here, or this would assert the
     // ownership check rather than the conflict path.
+    // ⚠️ THE REINSTATE UPDATE MUST ALSO MATCH NOTHING. Since the revoked-row
+    // reinstatement was added, an unmatched UPDATE is exactly what an ALREADY
+    // ACTIVE membership produces (the statement carries `status <> 'active'`).
+    // Without this the fake answered the UPDATE with a row, the conflict path
+    // stopped firing, and this test silently changed meaning.
     const { db } = fakeDb([], (text) =>
-      /INSERT INTO identity\.memberships/.test(text) ? [] : [{ '?column?': 1 }],
+      /INTO identity\.memberships|UPDATE identity\.memberships/.test(text)
+        ? []
+        : [{ '?column?': 1 }],
     );
     const svc = new MembershipService(db, fakeAudit());
     await expect(

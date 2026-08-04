@@ -99,6 +99,43 @@ describe('validatedBody', () => {
   });
 });
 
+
+describe('a REFINED schema keeps BOTH its rule and its strictness', () => {
+  /**
+   * 🔴 `.refine()` returns a `ZodEffects` WRAPPER, not an object. `deepStrict`
+   * rebuilds objects; before it learned about the wrapper it fell straight
+   * through, preserving the refinement and SILENTLY DROPPING the strict
+   * rebuild. So the first body to gain a cross-field rule would have quietly
+   * started accepting unknown keys — and the first one was
+   * `GrantMembershipBody`, the platform's privilege-granting route.
+   *
+   * Neither property is worth anything without the other, so both are asserted
+   * here on the same schema.
+   */
+  const refined = z
+    .object({ a: requiredText(20).optional(), b: requiredText(20).optional() })
+    .refine((v) => Boolean(v.a) !== Boolean(v.b), {
+      message: 'send exactly one of a or b',
+      path: ['b'],
+    });
+
+  it('still enforces the cross-field rule', () => {
+    const pipe = validatedBody(refined);
+    expect(problemsFrom(() => run(pipe, {}))).toHaveLength(1);
+    expect(problemsFrom(() => run(pipe, { a: 'x', b: 'y' }))).toHaveLength(1);
+    expect(run(pipe, { a: 'x' })).toEqual({ a: 'x' });
+  });
+
+  it('🔴 STILL REJECTS AN UNKNOWN KEY — the property the wrapper used to eat', () => {
+    const pipe = validatedBody(refined);
+    const problems = problemsFrom(() => run(pipe, { a: 'x', smuggled: 'value' }));
+    expect(
+      problems.length,
+      'an unknown key was accepted: deepStrict did not reach through the refinement',
+    ).toBeGreaterThan(0);
+  });
+});
+
 describe('shared primitives', () => {
   it('requiredText refuses empty and whitespace-only', () => {
     const pipe = validatedBody(z.object({ v: requiredText() }));

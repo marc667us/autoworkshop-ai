@@ -120,7 +120,9 @@ export class MembershipService {
   async grant(
     ctx: TenantContext,
     input: {
-      userId: string;
+      userId?: string;
+      /** The person's email — resolved here, so no lookup endpoint exists to harvest. */
+      userEmail?: string;
       organizationId: string;
       branchId?: string | null;
       roleName: string;
@@ -139,6 +141,35 @@ export class MembershipService {
     }
 
     return this.db.withTenant(ctx, async (client) => {
+      // ── resolve WHO, before anything else ────────────────────────────────
+      //
+      // `identity.users` is deliberately NOT tenant-scoped (one human may hold
+      // memberships in several tenants), so this lookup can see an account that
+      // is not yet a member — which is the entire point: without it there was
+      // no way to add anybody who was not already inside.
+      //
+      // ⚠️ EXACT MATCH, CASE-INSENSITIVE, ONE ROW. Not a prefix, not a LIKE.
+      // The caller learns only whether the single address they already typed
+      // has an account, and only after passing the role gate above. That is not
+      // an enumeration oracle; a search endpoint would have been one.
+      let userId = input.userId ?? null;
+      if (!userId) {
+        const found = await client.query(
+          `SELECT id FROM identity.users WHERE lower(email) = lower($1)`,
+          [input.userEmail],
+        );
+        if (found.rows.length === 0) {
+          // Names the way forward rather than just refusing. There is no invite
+          // flow yet (T-0028), so the honest instruction is that the person
+          // signs up first — a refusal with no reachable next step is the wall
+          // this repository keeps writing down.
+          throw new NotFoundException(
+            'no account with that email address. Ask them to sign up first, then add them here.',
+          );
+        }
+        userId = found.rows[0].id as string;
+      }
+
       // The organization must belong to the ACTIVE TENANT, and the branch (if
       // given) must belong to that organization. Nothing else in the stack
       // checks either of these.
@@ -185,17 +216,42 @@ export class MembershipService {
           ctx.tenantId,
           input.organizationId,
           input.branchId ?? null,
-          input.userId,
+          userId,
           input.roleName,
           ctx.userId,
         ],
       );
 
-      const row = res.rows[0];
+      let row = res.rows[0];
       if (!row) {
-        // The unique constraint fired: this exact grant already exists. Report
-        // it as a conflict rather than silently returning success, so an
-        // "invitation" that changed nothing cannot read as one that did.
+        // ── the unique constraint fired: this grant already exists ──────────
+        //
+        // 🔴 AND IT MAY BE A REVOKED ONE, WHICH USED TO BE A DEAD END. A
+        // membership is never deleted — withdrawal sets `status = 'revoked'`
+        // and keeps the row so "was this person ever granted access?" stays
+        // answerable. But the row still occupies the unique key, so re-hiring
+        // somebody previously removed hit `ON CONFLICT DO NOTHING` and was
+        // refused with "membership already exists" — a message that is the
+        // OPPOSITE of the truth, told to an owner looking at a colleague who
+        // demonstrably has no access, with nothing anywhere to undo it.
+        //
+        // A rule whose escape hatch is unreachable is a wall, not a rule.
+        const existing = await client.query(
+          `UPDATE identity.memberships
+              SET status = 'active', updated_at = now(), updated_by = $1
+            WHERE organization_id = $2 AND user_id = $3 AND role_name = $4
+              AND tenant_id = $5
+              -- Only a WITHDRAWN one is reinstated. An ACTIVE row matches
+              -- nothing here and still falls through to the refusal below,
+              -- because "add them again" when they are already there changed
+              -- nothing and must not read as though it did.
+              AND status <> 'active'
+            RETURNING id, organization_id, branch_id, user_id, role_name, status, created_at`,
+          [ctx.userId, input.organizationId, userId, input.roleName, ctx.tenantId],
+        );
+        row = existing.rows[0];
+      }
+      if (!row) {
         throw new BadRequestException('membership already exists');
       }
 
@@ -204,7 +260,12 @@ export class MembershipService {
         resourceType: 'membership',
         resourceId: row.id,
         detail: {
-          userId: input.userId,
+          // 🔴 THE RESOLVED ID, NOT `input.userId`. Once `userEmail` became an
+          // accepted input, `input.userId` was undefined for every grant made
+          // by email — so the audit entry for the platform's PRIVILEGE-GRANTING
+          // operation would have recorded `userId: undefined` and lost the one
+          // fact it exists to preserve: who was given access.
+          userId,
           organizationId: input.organizationId,
           branchId: input.branchId ?? null,
           roleName: input.roleName,

@@ -31,8 +31,27 @@ export const CreateBranchBody = z.object({
 });
 export type CreateBranchBody = z.infer<typeof CreateBranchBody>;
 
+/**
+ * 🔴 `userEmail` EXISTS BECAUSE `userId` MADE THIS ROUTE UNREACHABLE.
+ *
+ * `grant` took a uuid, and the only way to discover one is `GET /users` — which
+ * is driven FROM `identity.memberships`, so it lists people who are ALREADY
+ * members. There was therefore no path, from any screen that could exist, to
+ * add somebody new: the platform's privilege-granting operation had no
+ * reachable caller. Exactly the shape that made Solar's third-level approval
+ * unreachable, and the repo's own rule — a rule whose escape hatch is
+ * unreachable is a wall, not a rule.
+ *
+ * ⚠️ AN EMAIL, NOT A SEARCH ENDPOINT, AND THAT IS THE SECURITY CHOICE. A
+ * `GET /users?q=` lookup would be an enumeration oracle over every account on
+ * the platform. Resolving the address inside `grant` means the only thing a
+ * caller learns is whether ONE address they already typed has an account — and
+ * only if they already hold a role permitted to grant memberships in this
+ * tenant. No listing, no prefix matching, nothing to harvest.
+ */
 export const GrantMembershipBody = z.object({
-  userId: uuid(),
+  userId: uuid().optional(),
+  userEmail: z.string().trim().email('must be an email address').optional(),
   organizationId: uuid(),
   // ⚠️ Nullable AND optional: absent means "no branch", and an explicit null
   // is how the UI clears one. Collapsing them would change the meaning of a
@@ -47,7 +66,15 @@ export const GrantMembershipBody = z.object({
     // rejects whitespace, punctuation and casing mistakes that would otherwise
     // become a permanent row granting nothing.
     .regex(/^[a-z][a-z0-9_]*$/, 'must be lower_snake_case'),
-});
+})
+  // EXACTLY ONE of the two. Both optional individually would let a caller send
+  // neither and reach the service with nothing to resolve; sending BOTH would
+  // leave the service picking a winner, which is a silent disagreement about
+  // WHO is being granted access on the platform's privilege-granting route.
+  .refine((b) => Boolean(b.userId) !== Boolean(b.userEmail), {
+    message: 'send exactly one of userId or userEmail',
+    path: ['userEmail'],
+  });
 export type GrantMembershipBody = z.infer<typeof GrantMembershipBody>;
 
 /**

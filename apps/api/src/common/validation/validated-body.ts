@@ -166,6 +166,26 @@ function deepStrict(schema: ZodTypeAny): ZodTypeAny {
   if (schema instanceof z.ZodNullable) {
     return deepStrict(schema.unwrap() as ZodTypeAny).nullable();
   }
+  // 🔴 A REFINED SCHEMA IS A WRAPPER, AND WITHOUT THIS IT ESCAPES STRICTNESS.
+  //
+  // `.refine()` / `.superRefine()` return a `ZodEffects` around the object, not
+  // an object. Falling through to `return schema` would preserve the refinement
+  // and SILENTLY DROP the strict rebuild — so the moment any body gained a
+  // cross-field rule, that same body would start accepting unknown keys.
+  //
+  // It was `GrantMembershipBody` that would have gone first, which is the
+  // platform's privilege-granting route. Exactly the failure the ZodArray
+  // branch above already records: a strictness pass that quietly deletes a
+  // different guard while adding its own.
+  //
+  // The inner type is rebuilt strict and the effect re-applied over it, so both
+  // survive.
+  if (schema instanceof z.ZodEffects) {
+    return new z.ZodEffects({
+      ...schema._def,
+      schema: deepStrict(schema.innerType() as ZodTypeAny),
+    });
+  }
   return schema;
 }
 
