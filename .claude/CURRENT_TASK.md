@@ -30,6 +30,15 @@ no tenant context and **had never been able to fire**.
 the only way this defect class is reproducible locally — and REFUSES to run if
 the owner is still a superuser.
 
+**Migration 038 goes with it.** 037's header claimed the bootstrap door was
+"reachable only from inside this function"; it was not. `set_config` is not
+privileged and the app role holds INSERT on every `identity` table, so it could
+set the flag itself and write directly — measured, `INSERT 0 1`. 038 adds a
+predicate the app role cannot satisfy: the effective user must be the function's
+OWNER, looked up rather than hardcoded. `verify/038` creates a third role so the
+owner and the caller differ as they do in production, and REFUSES to run if they
+are the same. 5/5, with 037 still 13/13.
+
 ---
 
 ## ✅ DONE 2026-08-04
@@ -40,6 +49,9 @@ the owner is still a superuser.
 |---|---|
 | `verify-technician-workflow.mjs` | 21/21 screens · 24/24 checks |
 | `verify-customer-workflow.mjs` | 11/11 screens · 19/19 checks, twice running |
+
+Screens and checks are DIFFERENT numbers and both are quoted everywhere, because
+mixing them is how skipped coverage hides.
 
 ⚠️ The customer suite **CONSUMES its fixture**. Run
 `bash scripts/seed-customer-proposal-fixture.sh` before each verification, or
@@ -56,14 +68,23 @@ screen with one bounded retry, at `/auth/error` in all seven apps.
 ⚠️ A 24/7 keep-warm was REJECTED on arithmetic: four free services share one
 750-hour allowance and a month is ~730 hours. `keep-warm.yml` is windowed.
 
-### 🔴 THREE GATES WERE NOT GATES
+### 🔴 THE GATES THAT WERE NOT GATES
 
 - **Codex had never run on a real diff** — prompt passed as argv,
   `Argument list too long` — **and the runner exited 0 when it failed.**
 - **Package vitest configs collected only `*.test.ts`** while `apps/api` uses
   `*.spec.ts`; a misnamed file was silently never collected.
+- **The customer verifier passed on an empty proposal table** — the whole
+  approve path sat inside `if (offersAnswer)`. It now fails instead.
 
 Ask of any gate: *would its not-running look different from its passing?*
+
+⚠️ NOT the same "four gates" as CLAUDE.md §14 (Codex → Supervisor → Work
+Reviewer → Work Scheduler). Those are the PROCESS gates; these three were
+mechanical faults in the tooling. Of the four process gates this session: Codex
+RAN (twice, 10 findings, all fixed), the Supervisor security review RAN, and the
+two ADK governance agents were NOT run — the owner's standing instruction is not
+to open ADK without approval.
 
 ### 🔴 AND THINGS THAT LOOKED FINE AND WERE NOT
 

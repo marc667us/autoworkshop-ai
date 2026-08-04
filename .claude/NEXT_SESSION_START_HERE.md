@@ -8,7 +8,11 @@ bash scripts/start-session.sh
 
 ## SESSION CLOSE 2026-08-04 — BOTH WORKFLOWS FINISHED
 
-**Tip `59e3838`, pushed, tree clean.** Seven commits.
+**Nine commits.** For the exact tip and worktree state run `git log -1 --oneline`
+and `git status --short` — this file deliberately does NOT restate them, because
+a hardcoded "tip X, tree clean" line goes stale the moment anything else lands
+and the next session then starts from a false baseline. (Codex flagged exactly
+that here.)
 
 ### ▶ THE ONE THING ONLY THE OWNER CAN DO
 
@@ -23,8 +27,9 @@ can be created live. Detail in `.claude/CURRENT_TASK.md`.
 
 ### WHAT SHIPPED
 
-- **Technician workflow 21/21**, **customer 19/19**, both driven in a real
-  browser as the role whose tree owns the routes.
+- **Technician 21/21 screens (24/24 checks)** and **customer 11/11 screens
+  (19/19 checks)**, both driven in a real browser as the role whose tree owns
+  the routes. Screens and checks are different numbers — both are quoted.
 - **A customer can approve their own repair** — new
   `POST /proposals/:id/customer-decision`, with the consent fields DERIVED
   rather than accepted.

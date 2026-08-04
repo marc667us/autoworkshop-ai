@@ -2,7 +2,17 @@
 
 **The Complete AI-Powered Automotive Service, Repair and Workshop Operating System.**
 
-Live target: [`autoworkshop.aiappinvent.com`](https://autoworkshop.aiappinvent.com) · Status: **Phase 1 — Release 0.1 (foundation)**
+Live target: [`autoworkshop.aiappinvent.com`](https://autoworkshop.aiappinvent.com) · Status: **Phase 5 — Release 0.4 (workshop + repair), in progress**
+
+> ⚠️ **`master` IS NOT DEPLOYABLE AS IT STANDS.** Workshop registration returns
+> 500 in production until migration **037** is applied — `register_workshop`
+> runs as a non-superuser there, where `FORCE ROW LEVEL SECURITY` applies to
+> table owners. The fix is committed and verified; applying it is one workflow
+> run, recorded in `.claude/CURRENT_TASK.md`. Everything else on `master` is
+> green. This banner comes down when that workflow has run.
+>
+> `.claude/CURRENT_PHASE.md` carries the detailed phase state; this line is the
+> release-level summary and the two must agree.
 
 One platform connecting vehicle owners, workshops, technicians, auto electricians, electronics
 specialists, body repairers, spray painters, welders, vulcanizers, upholsterers, suppliers, fleet
