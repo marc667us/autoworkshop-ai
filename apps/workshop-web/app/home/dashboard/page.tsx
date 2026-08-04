@@ -37,6 +37,17 @@ async function describeNavigation() {
 
   return {
     grants: grantsFor(viewer),
+    /**
+     * 🔴 WHETHER THERE IS A SESSION, read directly rather than INFERRED from an
+     * empty grant list. The copy below used to reason "no grants, therefore
+     * nobody is signed in" — and a signed-in TECHNICIAN holds no grants today
+     * (viewerGrants() still carries its demo body, T-0003), so the dashboard
+     * told a technician who had just signed in that nobody was signed in.
+     *
+     * Exactly the family of defect that produced "Not signed in" beside a
+     * working "Sign out" twice already: a truth about A used as evidence for B.
+     */
+    signedIn: viewer !== null && viewer !== undefined,
     groupCount: visible.length,
     itemCount: visible.reduce((n, g) => n + g.items.length, 0),
     roleLabel: role ? `${role} role` : 'workspace default',
@@ -292,7 +303,10 @@ export default async function Dashboard() {
                     dangling clause that describes nothing. An empty grant list
                     is now the common case, not an edge one: it is what every
                     visitor sees before signing in. */}
-                This viewer holds <strong>no permission grants</strong>, because nobody is signed in.
+                This viewer holds <strong>no permission grants</strong>
+                {nav.signedIn
+                  ? ' — this role has none assigned yet.'
+                  : ', because nobody is signed in.'}{' '}
                 Only ungated modules are listed; everything gated is absent from the menu
               </>
             ) : (

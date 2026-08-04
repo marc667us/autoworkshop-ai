@@ -960,6 +960,13 @@ export class ProposalService {
          */
         decidable:
           status === 'issued' &&
+          // A SUPERSEDED version is never answerable, even if its status still
+          // reads `issued`. The real flow cannot produce that pair — prepare()
+          // refuses a new version while one is with the customer — but the flag
+          // costs nothing and offering somebody a decision on a document the
+          // workshop has since replaced is the worst kind of control to get
+          // wrong. Found while a fixture manufactured exactly that state.
+          row.superseded_by === null &&
           (CAN_RECORD_DECISION.has(ctx.activeRole) || CAN_DECIDE_AS_CUSTOMER.has(ctx.activeRole)),
       };
     });

@@ -91,11 +91,21 @@ const WORKFLOW = [
  * What the catch-all renders for an unbuilt route. Matching this is a FAILURE:
  * the page loaded, the shell rendered, and the screen does not exist.
  *
- * Taken from the real placeholder copy — if that wording ever changes this
- * script starts passing everything, so the sentinel check below asserts the
- * placeholder is still detectable before any route is judged.
+ * 🔴 THE SENTENCE, NOT THE PHRASE. This regex also carried `not built yet` on
+ * its first run and produced a FALSE FAILURE on the technician dashboard —
+ * a screen that is entirely real, and whose own explanatory copy says "Page
+ * content is not built yet" about OTHER routes. The check reported the first
+ * screen a technician ever sees as unbuilt.
+ *
+ * That is this repo's most-repeated defect wearing the reviewer's hat: a
+ * measurement that walks through its own gap. A detector keyed on a phrase that
+ * appears in ordinary prose will keep finding it in prose.
+ *
+ * `scheduled for a later phase` is the exact sentence `ModulePage.tsx` renders
+ * and nothing else in the product says it. If that copy changes, the SENTINEL
+ * check below fails loudly rather than letting every route pass.
  */
-const PLACEHOLDER = /scheduled for a later phase|not built yet/i;
+const PLACEHOLDER = /scheduled for a later phase/i;
 
 const browser = await chromium.launch();
 const consoleErrors = [];
