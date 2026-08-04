@@ -74,8 +74,19 @@ concurrency:
 jobs:
   warm:
     runs-on: ubuntu-latest
-    # The loop stops itself at the window's end; this is a backstop only.
-    timeout-minutes: 335
+    # 🔴 300, AND THE LOOP STOPS ITSELF AT 290 — the two must not be the other
+    # way round. The first version paired `timeout-minutes: 335` with a loop
+    # bounded only by an 18:00 UTC window. A fire landing at 08:03 would then run
+    # for 597 minutes and be KILLED by the timeout at 13:38, which GitHub records
+    # as `failure` — so the workflow whose header promises "staying green is
+    # deliberate" would have gone red on every normal morning start, and a red
+    # warmer is one nobody looks at. Caught by Codex, 2026-08-04.
+    #
+    # The loop now ends itself BEFORE the cap, which is what makes the handoff
+    # work: it exits cleanly, the fire already queued behind it (see
+    # `cancel-in-progress: false`) starts within seconds, and a 10-hour window is
+    # covered by two green runs instead of one killed one.
+    timeout-minutes: 300
     steps:
       - name: Warm Keycloak until the window closes
         run: |
@@ -89,6 +100,12 @@ jobs:
           # 16:40 warms for 80 minutes and stops, instead of running past the
           # window and spending hours nobody is awake for.
           WINDOW_END_HOUR=18
+          # 290 min, ten short of the job's 300-minute cap. Whichever comes
+          # first — the window closing or this budget running out — ends the run
+          # CLEANLY, so it is recorded green and the queued successor takes over.
+          # Being killed by the cap instead would mark the run failed and teach
+          # everyone to ignore this workflow's status.
+          MAX_RUN_SECONDS=17400
           INTERVAL=300        # 5 min, comfortably inside Render's 15-min idle
           # 150s, not 90s. A free-tier wake was measured at 136s on 2026-08-03,
           # and a cap that expires MID-WAKE aborts the very wake it triggered —
@@ -102,6 +119,7 @@ jobs:
           URL="https://autoworkshop-keycloak.onrender.com/realms/autoworkshop/.well-known/openid-configuration"
 
           START=$(date +%s); ROUNDS=0; FAILURES=0
+          DEADLINE=$((START + MAX_RUN_SECONDS))
 
           summary() {
             MINS=$(( ($(date +%s) - START) / 60 ))
@@ -119,7 +137,9 @@ jobs:
           # leaves no record of what happened.
           trap 'summary; exit 0' TERM INT
 
-          while [ "$(date -u +%H)" -lt "$WINDOW_END_HOUR" ]; do
+          # BOTH bounds, every cycle: the working-hours window AND this run's own
+          # budget. Either one alone leaves the failure the other prevents.
+          while [ "$(date -u +%H)" -lt "$WINDOW_END_HOUR" ] && [ "$(date +%s)" -lt "$DEADLINE" ]; do
             ROUNDS=$((ROUNDS + 1))
             # No -f: curl exits 0 for ANY HTTP response, including 5xx. Correct
             # for a warmer — a 500 still proves the container answered, which is
@@ -131,9 +151,10 @@ jobs:
             else
               echo "  ok   ${OUT}"
             fi
-            # Re-check the hour BEFORE sleeping, so the last cycle of the day
-            # does not sleep five minutes past the window just to exit.
+            # Re-check BEFORE sleeping, so the last cycle does not sleep five
+            # minutes past the window — or past the run budget — just to exit.
             [ "$(date -u +%H)" -lt "$WINDOW_END_HOUR" ] || break
+            [ $(( $(date +%s) + INTERVAL )) -lt "$DEADLINE" ] || break
             sleep "$INTERVAL"
           done
 

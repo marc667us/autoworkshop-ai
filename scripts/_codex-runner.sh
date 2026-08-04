@@ -94,12 +94,18 @@ codex_run() {
 
   case "$REVIEWER_BACKEND" in
     ollama)
-      _run_ollama "$prompt" >> "$out_file" 2>>"$out_file" \
-        || echo -e "\n\n_Ollama call failed — check that the daemon is running (\`ollama serve\` / Ollama tray app) and the model is pulled (\`ollama pull ${REVIEWER_MODEL}\`)._" >> "$out_file"
+      # Same rule as the codex branch below: a reviewer that did not run is a
+      # gate that did not run, and must not exit 0.
+      if ! _run_ollama "$prompt" >> "$out_file" 2>>"$out_file"; then
+        echo -e "\n\n_Ollama call failed — check that the daemon is running (\`ollama serve\` / Ollama tray app) and the model is pulled (\`ollama pull ${REVIEWER_MODEL}\`)._" >> "$out_file"
+        reviewer_failed=1
+      fi
       ;;
     codex)
-      _run_codex "$prompt" >> "$out_file" 2>>"$out_file" \
-        || echo -e "\n\n_Codex call failed — check auth (OPENAI_API_KEY or \`codex login\`)._" >> "$out_file"
+      if ! _run_codex "$prompt" >> "$out_file" 2>>"$out_file"; then
+        echo -e "\n\n_Codex call failed — check auth (OPENAI_API_KEY or \`codex login\`)._" >> "$out_file"
+        reviewer_failed=1
+      fi
       ;;
     *)
       echo "ERROR: unknown REVIEWER_BACKEND='$REVIEWER_BACKEND' (expected: ollama | codex)" >&2
@@ -108,6 +114,23 @@ codex_run() {
   esac
 
   echo "Wrote: $out_file"
+
+  # 🔴 A REVIEW THAT NEVER RAN MUST NOT EXIT 0.
+  #
+  # Until 2026-08-04 a failed reviewer wrote "_Codex call failed_" into the
+  # report and the script exited 0 anyway — so `quality-gate.sh` went green,
+  # the four-gate bar was recorded as met, and the only trace was one italic
+  # line at the bottom of a 900-line file nobody scrolls to. That is the same
+  # failure this repo has already recorded twice at larger scale: `pnpm e2e`
+  # exiting 0 while collecting ZERO tests for two days, and a live suite passing
+  # 24/24 against an empty catalogue.
+  #
+  # CLAUDE.md is explicit that Codex is a mandatory gate. A gate whose
+  # not-running is indistinguishable from its passing is not a gate.
+  if [ "${reviewer_failed:-0}" = "1" ]; then
+    echo "::error::${REVIEWER_BACKEND} produced no review — this gate did NOT run. See $out_file" >&2
+    return 1
+  fi
 }
 
 _run_ollama() {
@@ -176,5 +199,18 @@ _run_codex() {
   #                     Reads + writes confined to the workspace root; nothing outside is touched.
   #                     Without this, Codex's default read-only sandbox blocks the discovery calls
   #                     it needs to investigate findings, and reviews fall back to web-search only.
-  "$codex_bin" exec --skip-git-repo-check -s workspace-write "$prompt"
+  #
+  # 🔴 THE PROMPT GOES ON STDIN, AND THE TRAILING `-` IS WHAT SAYS SO.
+  #
+  # Passed as an argv string — which is what this did until 2026-08-04 — a review
+  # of any real diff dies with:
+  #
+  #     C:\Users\USER\nodejs/node: Argument list too long
+  #
+  # Windows caps a command line at ~32 KB. A 900-line diff is comfortably past
+  # it, so the gate failed on exactly the changes worth reviewing and passed on
+  # trivial ones. Worse, `codex exec` given a multi-line argv string reads only
+  # the FIRST LINE and blocks waiting for the rest, so even under the limit the
+  # review was of the prompt's opening sentence.
+  printf '%s' "$prompt" | "$codex_bin" exec --skip-git-repo-check -s workspace-write -
 }

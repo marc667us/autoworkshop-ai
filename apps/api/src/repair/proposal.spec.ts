@@ -421,6 +421,152 @@ describe('recordDecision — §7 and the attribution', () => {
 
 // ── §424 in the service ────────────────────────────────────────────────────
 
+
+describe('recordCustomerDecision — the customer answers for themselves', () => {
+  // The lookup this route uses is the decision lookup PLUS the customer's own
+  // name, and it is constrained to a card that customer owns.
+  const mine = [
+    Q.decisionLookup,
+    [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1', display_name: 'Kwame Mensah' }],
+  ] as [RegExp, unknown[]];
+
+  const customerCtx = () => ctx({ activeRole: 'customer', userId: 'cust-1' });
+
+  it('🔴 refuses any role that is not the customer', async () => {
+    // Staff have their own route, where the two attributions stay separate.
+    // Letting reception in here would file THEIR name as the decider.
+    for (const role of ['reception_staff', 'workshop_owner', 'technician']) {
+      await expect(
+        new ProposalService(fakeDb([mine]).db, fakeAudit()).recordCustomerDecision(
+          ctx({ activeRole: role, userId: 'staff-1' }),
+          PROPOSAL_ID,
+          { decision: 'approved', approvedOption: 'recommended' },
+        ),
+      ).rejects.toThrow(/may not decide as the customer/);
+    }
+  });
+
+  it('🔴 scopes the lookup to the calling customer, not just to the tenant', async () => {
+    // THE CONTROL. The role check says a customer may use this route; THIS is
+    // what stops them approving somebody else's repair. Position 4 is
+    // `c.user_id`, and it must be the session's user — never a request value.
+    const { db, queries } = fakeDb([mine, [Q.update, []], ...readHandlers()]);
+    await new ProposalService(db, fakeAudit()).recordCustomerDecision(
+      customerCtx(), PROPOSAL_ID, { decision: 'approved', approvedOption: 'recommended' },
+    );
+    const lookup = queries.find((q) => Q.decisionLookup.test(q.text));
+    expect(lookup?.values?.[3]).toBe('cust-1');
+    expect(lookup?.text).toMatch(/c\.user_id = \$4/);
+  });
+
+  it('🔴 derives the decider and the channel — a request cannot set either', async () => {
+    // The whole reason this is a separate route. `decidedByName` comes from the
+    // CUSTOMER RECORD and the channel from the route, so a customer cannot
+    // approve under another name or file a portal approval as a phone call.
+    const { db, queries } = fakeDb([mine, [Q.update, []], ...readHandlers()]);
+    await new ProposalService(db, fakeAudit()).recordCustomerDecision(
+      customerCtx(),
+      PROPOSAL_ID,
+      // Deliberately smuggling both fields in. The type does not admit them and
+      // Zod strips them; this asserts the SERVICE ignores them even so.
+      {
+        decision: 'approved',
+        approvedOption: 'recommended',
+        decidedByName: 'Somebody Else',
+        decisionChannel: 'telephone',
+      } as never,
+    );
+    const update = queries.find((q) => Q.update.test(q.text));
+    expect(update?.values?.[2]).toBe('Kwame Mensah');
+    expect(update?.text).toMatch(/decision_channel = 'customer_portal'/);
+    // And the customer is BOTH decider and recorder here — one person, which is
+    // the strongest form of the record.
+    expect(update?.values?.[4]).toBe('cust-1');
+  });
+
+  it('marks the audit entry as self-service so a dispute can tell the two apart', async () => {
+    const audit = spyAudit();
+    const { db } = fakeDb([mine, [Q.update, []], ...readHandlers()]);
+    await new ProposalService(db, audit as never).recordCustomerDecision(
+      customerCtx(), PROPOSAL_ID, { decision: 'approved', approvedOption: 'recommended' },
+    );
+    expect(audit.write.mock.calls[0]?.[2]?.detail).toMatchObject({
+      decision: 'approved',
+      channel: 'customer_portal',
+      selfService: true,
+    });
+  });
+
+  it('still requires a reason for anything that is not an approval', async () => {
+    // Not relaxed just because the customer typed it themselves — a refusal with
+    // no reason leaves the workshop nothing to act on either way.
+    await expect(
+      new ProposalService(fakeDb([mine]).db, fakeAudit()).recordCustomerDecision(
+        customerCtx(), PROPOSAL_ID, { decision: 'declined' },
+      ),
+    ).rejects.toThrow(/must record why/);
+  });
+
+  it('still requires an option when approving', async () => {
+    await expect(
+      new ProposalService(fakeDb([mine]).db, fakeAudit()).recordCustomerDecision(
+        customerCtx(), PROPOSAL_ID, { decision: 'approved' },
+      ),
+    ).rejects.toThrow(/approvedOption/);
+  });
+
+  it('404s rather than 403s when the proposal is not theirs', async () => {
+    // The non-oracle rule: a customer must not be able to learn that somebody
+    // else's proposal exists by the shape of the refusal.
+    await expect(
+      new ProposalService(fakeDb([[Q.decisionLookup, []]]).db, fakeAudit()).recordCustomerDecision(
+        customerCtx(), PROPOSAL_ID, { decision: 'approved', approvedOption: 'recommended' },
+      ),
+    ).rejects.toThrow(/proposal not found/);
+  });
+
+  it('refuses to answer a proposal that was never sent, or was already answered', async () => {
+    const draft = [
+      Q.decisionLookup,
+      [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1', display_name: 'K' }],
+    ] as [RegExp, unknown[]];
+    await expect(
+      new ProposalService(fakeDb([draft]).db, fakeAudit()).recordCustomerDecision(
+        customerCtx(), PROPOSAL_ID, { decision: 'approved', approvedOption: 'recommended' },
+      ),
+    ).rejects.toThrow(/not been sent to you yet/);
+
+    const answered = [
+      Q.decisionLookup,
+      [{ id: PROPOSAL_ID, status: 'approved', version_no: 2, job_number: 'JC-1', display_name: 'K' }],
+    ] as [RegExp, unknown[]];
+    await expect(
+      new ProposalService(fakeDb([answered]).db, fakeAudit()).recordCustomerDecision(
+        customerCtx(), PROPOSAL_ID, { decision: 'declined', note: 'changed my mind' },
+      ),
+    ).rejects.toThrow(/already answered version 2/);
+  });
+});
+
+describe('a customer reading proposals', () => {
+  it('🔴 is narrowed to their own cards by the QUERY, not by the role check', async () => {
+    // CAN_READ_PROPOSAL admits the role; position 6 is what scopes it. Without
+    // this predicate a customer receives every proposal in the organisation —
+    // prices, contact details and all.
+    const { db, queries } = fakeDb(readHandlers());
+    await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'customer', userId: 'cust-9' }));
+    expect(queries.find((q) => Q.header.test(q.text))?.values?.[5]).toBe('cust-9');
+  });
+
+  it('does NOT narrow a staff viewer by customer', async () => {
+    // The predicate must bind to the CUSTOMER role only. Applied to staff it
+    // would empty every workshop screen that reads proposals.
+    const { db, queries } = fakeDb(readHandlers());
+    await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'workshop_owner' }));
+    expect(queries.find((q) => Q.header.test(q.text))?.values?.[5]).toBeNull();
+  });
+});
+
 describe('§424 — immutability', () => {
   it('refuses to edit an issued or decided proposal, naming the rule', async () => {
     const issuedRow = [Q.draft, [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1' }]] as [RegExp, unknown[]];

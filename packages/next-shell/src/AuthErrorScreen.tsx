@@ -82,7 +82,17 @@ export interface AuthErrorScreenProps {
 }
 
 export function AuthErrorScreen({ error, signInHref = '/api/auth/signin' }: AuthErrorScreenProps) {
-  const message = (error && MESSAGES[error]) ?? FALLBACK;
+  /**
+   * ⚠️ A TERNARY, NOT `(error && MESSAGES[error]) ?? FALLBACK`.
+   *
+   * That was the first version and it CRASHES on `/auth/error?error=`. With an
+   * empty string, `error && …` short-circuits to `''`, and `??` only replaces
+   * `null`/`undefined` — so `message` becomes `''` and `message.title` throws.
+   * An empty `?error=` is not hypothetical: it is what a hand-trimmed URL or a
+   * provider that redirects with a blank code produces, and it would white-screen
+   * the one page a visitor reaches only when something has ALREADY gone wrong.
+   */
+  const message = (error ? MESSAGES[error] : undefined) ?? FALLBACK;
 
   return (
     <main
@@ -178,6 +188,16 @@ function WakeCountdown({ signInHref }: { signInHref: string }) {
   var el = document.getElementById('aw-auth-countdown');
   var link = document.getElementById('aw-auth-retry');
   if (!el || !link) return;
+  // 🔴 CHECK BEFORE COUNTING, NOT AFTER. The first version started the
+  // countdown unconditionally and only consulted sessionStorage when it
+  // reached zero — so on the SECOND visit the page spent 140 seconds
+  // promising "retrying automatically" and then did nothing. A screen whose
+  // whole purpose is to stop lying about a cold start must not close by
+  // lying about itself. (Codex, 2026-08-04.)
+  if (sessionStorage.getItem('aw-auth-retried')) {
+    el.textContent = '— automatic retry already used; use the link above';
+    return;
+  }
   // 140s: the 136s cold start measured on 2026-08-03, plus a little. Retrying
   // sooner than the wake takes just produces the same error page twice.
   var left = 140;
@@ -188,10 +208,8 @@ function WakeCountdown({ signInHref }: { signInHref: string }) {
       el.textContent = '';
       // ONE automatic attempt. If it fails again the visitor sees this page
       // once more, with the countdown spent, and decides for themselves.
-      if (!sessionStorage.getItem('aw-auth-retried')) {
-        sessionStorage.setItem('aw-auth-retried', '1');
-        window.location.href = link.getAttribute('href');
-      }
+      sessionStorage.setItem('aw-auth-retried', '1');
+      window.location.href = link.getAttribute('href');
       return;
     }
     el.textContent = '— retrying automatically in ' + left + 's';

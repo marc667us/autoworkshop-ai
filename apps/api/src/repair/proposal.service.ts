@@ -11,6 +11,7 @@ import type { TenantContext } from '../tenancy/tenant-context';
 import { optionalText, requireOneOf, requireText, requireUuid } from '../core/validate';
 import {
   CAN_PREPARE_PROPOSAL,
+  CAN_DECIDE_AS_CUSTOMER,
   CAN_READ_PROPOSAL,
   CAN_RECORD_DECISION,
   DECISION_CHANNELS,
@@ -535,6 +536,139 @@ export class ProposalService {
     });
   }
 
+
+  /**
+   * §7 — the customer records their OWN answer, from the customer workspace.
+   *
+   * ── WHY THIS IS A SEPARATE ROUTE AND NOT A FLAG ON `recordDecision` ────────
+   *
+   * `recordDecision` is written for STAFF CAPTURE: a customer answers by phone,
+   * a staff member types it in, and the record keeps those two people apart —
+   * `decided_by_name` is the customer, `recorded_by` is whoever took the call.
+   * That separation is the entire evidential value of the row.
+   *
+   * When the customer decides in the portal there is no intermediary, and three
+   * of that method's inputs stop being inputs at all:
+   *
+   *   · `decidedByName`   — IS the session. Accepting it from the body would let
+   *                         a customer approve under somebody else's name, which
+   *                         is the confused-deputy shape `1.txt` §9 forbids.
+   *   · `decisionChannel` — is `customer_portal` by construction. Taking it from
+   *                         the request would let the strongest form of approval
+   *                         be filed as a phone call nobody can check.
+   *   · `recorded_by`     — is the customer themselves.
+   *
+   * A boolean on the existing method would have left all three settable and
+   * relied on a caller passing the right combination. These are DERIVED here,
+   * so there is no combination to get wrong.
+   *
+   * ⚠️ THE ROLE CHECK IS NOT THE SCOPE CHECK. `CAN_DECIDE_AS_CUSTOMER` says a
+   * customer may use this route; `assertCardVisible` with the `c.user_id`
+   * predicate is what stops them deciding on somebody else's proposal. Both are
+   * required, and RLS is under both.
+   */
+  async recordCustomerDecision(
+    ctx: TenantContext,
+    proposalId: string,
+    input: { decision?: string; approvedOption?: string; note?: string },
+  ): Promise<RepairProposal> {
+    if (!CAN_DECIDE_AS_CUSTOMER.has(ctx.activeRole)) {
+      throw new ForbiddenException(
+        `role '${ctx.activeRole}' may not decide as the customer; staff use POST /proposals/:id/decision`,
+      );
+    }
+    const id = requireUuid(proposalId, 'id');
+    const decision: ProposalDecision = requireOneOf(input.decision, PROPOSAL_DECISIONS, 'decision');
+    const note = optionalText(input.note, 'note', 8000);
+
+    // Identical rule to the staff route, deliberately restated rather than
+    // relaxed: a refusal with no reason leaves the workshop nothing to act on,
+    // and it is no less true because the customer typed it themselves.
+    if (decision !== 'approved' && note === null) {
+      throw new BadRequestException(
+        decision === 'declined'
+          ? 'a declined proposal must record why; note is required'
+          : 'say what you would like changed or explained; note is required',
+      );
+    }
+
+    const approvedOption: ProposalOption | null =
+      decision === 'approved'
+        ? requireOneOf(input.approvedOption, PROPOSAL_OPTIONS, 'approvedOption')
+        : null;
+
+    return this.db.withTenant(ctx, async (client) => {
+      // The proposal, its card, and the customer's OWN name — all in one read,
+      // and all constrained to a card this customer owns. `c.user_id` is the
+      // scope; `c.display_name` is the attribution, taken from the customer
+      // record rather than from the request.
+      const found = await client.query(
+        `SELECT p.id, p.status, p.version_no, j.job_number, c.display_name
+           FROM repair.repair_proposals p
+           JOIN repair.job_cards j ON j.id = p.job_card_id AND j.tenant_id = p.tenant_id
+           JOIN core.customers c ON c.id = j.customer_id AND c.tenant_id = j.tenant_id
+          WHERE p.id = $1 AND p.tenant_id = $2 AND p.organization_id = $3
+            AND c.user_id = $4
+          FOR UPDATE OF p`,
+        [id, ctx.tenantId, ctx.organizationId, ctx.userId],
+      );
+      const row = found.rows[0] as
+        | { id: string; status: ProposalStatus; version_no: number; job_number: string; display_name: string }
+        | undefined;
+      // 404, not 403 — the non-oracle rule this codebase holds everywhere. A
+      // customer must not be able to learn that somebody else's proposal exists.
+      if (!row) throw new NotFoundException('proposal not found');
+
+      if (row.status === 'draft') {
+        throw new ConflictException(
+          'this proposal has not been sent to you yet, so there is nothing to answer',
+        );
+      }
+      if (row.status !== 'issued') {
+        throw new ConflictException(
+          `you already answered version ${row.version_no} (${row.status}). If something has ` +
+            'changed, ask the workshop to send a revised proposal',
+        );
+      }
+
+      await client.query(
+        `UPDATE repair.repair_proposals
+            SET status = $1, decision = $1, approved_option = $2,
+                decided_at = now(), decided_by_name = $3, decision_channel = 'customer_portal',
+                decision_note = $4, recorded_by = $5,
+                updated_at = now(), updated_by = $5
+          WHERE id = $6 AND tenant_id = $7`,
+        [decision, approvedOption, row.display_name, note, ctx.userId, id, ctx.tenantId],
+      );
+
+      await this.audit.write(client, ctx, {
+        action:
+          decision === 'approved'
+            ? 'proposal.approved_by_customer'
+            : decision === 'declined'
+              ? 'proposal.declined_by_customer'
+              : 'proposal.changes_requested',
+        resourceType: 'proposal',
+        resourceId: id,
+        // `selfService: true` is the fact that distinguishes this entry from the
+        // staff-captured one. Same actions, so existing queries keep working;
+        // one extra key, so a dispute can tell a portal approval from a phone
+        // call written down afterwards.
+        detail: {
+          jobNumber: row.job_number,
+          versionNo: row.version_no,
+          decision,
+          approvedOption,
+          channel: 'customer_portal',
+          selfService: true,
+        },
+      });
+
+      const rows = await this.readProposals(client, ctx, { proposalId: id });
+      return ProposalService.one(rows);
+    });
+  }
+
   // ── reads ────────────────────────────────────────────────────────────────
 
   /**
@@ -610,11 +744,23 @@ export class ProposalService {
           -- The same narrowing the job card carries: a technician sees the approval
           -- only for a card assigned to them.
           AND ($5::uuid IS NULL OR j.assigned_technician_id = $5::uuid)
+          -- 🔴 AND THE CUSTOMER SEES ONLY THEIR OWN. The customer role was added
+          -- to CAN_READ_PROPOSAL on 2026-08-04; the role admits the read and
+          -- THIS LINE is what scopes it. Without it a customer would receive
+          -- every proposal in the organisation — prices, contact details and
+          -- all — because the role check alone says nothing about whose card it
+          -- is. Same predicate assertCardVisible already uses.
+          --
+          -- NO BACKTICKS IN THIS COMMENT. It sits inside a TS template literal,
+          -- so a backtick TERMINATES THE STRING and the file stops parsing with
+          -- a misleading "',' expected". Four times now.
+          AND ($6::uuid IS NULL OR c.user_id = $6::uuid)
         ORDER BY p.version_no DESC`,
       [
         ctx.tenantId, ctx.organizationId,
         filter.jobCardId ?? null, filter.proposalId ?? null,
         ctx.activeRole === 'technician' ? ctx.userId : null,
+        ctx.activeRole === 'customer' ? ctx.userId : null,
       ],
     );
 

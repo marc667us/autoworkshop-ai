@@ -54,7 +54,17 @@ export function ServiceHistoryScreen() {
     <>
       <PageHeader
         title="Service History"
-        description="Everything this workshop has done to each of your vehicles, most recent first. Useful when a fault comes back — or when you sell the car."
+        /*
+          ⚠️ THE COPY NAMES EXACTLY WHAT IS ON THE PAGE. It used to say
+          "everything this workshop has done", and the page renders the
+          complaint, job number, date and intake mileage — NOT the work carried
+          out, the parts fitted or the warranty terms, none of which this
+          endpoint returns. Someone reading it for a resale or a recurring fault
+          would have taken an incomplete record as a complete one. Widening the
+          data is its own slice (it needs an execution/parts summary endpoint);
+          overclaiming in the meantime is the defect. (Codex, 2026-08-04.)
+        */
+        description="A dated record of the repairs this workshop has completed on each of your vehicles, newest first. Ask the workshop for the full job detail — parts fitted, work carried out and warranty terms."
       />
       <Suspense fallback={<LoadingState label="Loading your service history…" />}>
         <History />

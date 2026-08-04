@@ -4,6 +4,7 @@ import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { EmptyState, LoadingState, PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { primitive, themeVar } from '@autoworkshop/design-tokens';
 import { customerStage, needsCustomer, type JourneyPhase } from './repair-journey';
+import { ProposalDecisionForm } from './proposal-decision-form';
 
 /**
  * The customer's repair journey — `01 (1).txt` §33's `service-and-repairs` group.
@@ -53,6 +54,35 @@ interface JobCardRow {
 }
 
 export type JourneyView = 'all' | 'open' | 'needs-you' | 'finished';
+
+/**
+ * The slice of RepairProposal these screens read.
+ *
+ * WARNING: NAMES TAKEN FROM apps/api/src/repair/proposal.service.ts, not
+ * invented. `presentation` carries the disclosures of 410-422; only the money
+ * and the two option totals are rendered here, with the narrative the workshop
+ * wrote. `decidable` is the API's OWN judgement of whether an answer is still
+ * possible - the form is shown on THAT, never on a status string this file
+ * re-derives. A superseded version is therefore never offered.
+ */
+interface ProposalRow {
+  id: string;
+  jobCardId: string;
+  jobNumber: string;
+  versionNo: number;
+  status: string;
+  expectedResult: string | null;
+  riskAndLimitations: string | null;
+  uncertainties: string | null;
+  decidable: boolean;
+  presentation: {
+    currency: string;
+    recommendedTotal: number;
+    comprehensiveTotal: number;
+    estimatedLabourHours: number;
+    documentReference: string;
+  };
+}
 
 const VIEWS: Record<
   JourneyView,
@@ -129,6 +159,15 @@ async function JourneyList({ view }: { view: JourneyView }) {
   const config = VIEWS[view];
   const result = await apiGet<JobCardRow[]>('customer', '/job-cards');
 
+  /*
+    Proposals are read ONLY on the view that can act on them. The other three
+    would pay for a second round trip to render nothing - and this endpoint was
+    closed to customers entirely until 2026-08-04, so a failure here must not
+    take the repair list down with it. Hence a separate, tolerated result.
+  */
+  const proposals =
+    view === 'needs-you' ? await apiGet<ProposalRow[]>('customer', '/proposals') : null;
+
   if (!result.ok) {
     // Covers `unauthenticated` too, which is the normal state for a signed-out
     // visitor: `requireNavRoute` does not refuse them (see the page comment),
@@ -175,14 +214,27 @@ async function JourneyList({ view }: { view: JourneyView }) {
 
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: primitive.space[4] }}>
         {ordered.map((card) => (
-          <JourneyCard key={card.id} card={card} />
+          <JourneyCard
+            key={card.id}
+            card={card}
+            /*
+              The proposal still OPEN on this card. `decidable` is the API's
+              judgement, so an already-answered or superseded version is not
+              offered and the customer cannot answer the same thing twice.
+            */
+            proposal={
+              proposals?.ok
+                ? proposals.data.find((p) => p.jobCardId === card.id && p.decidable)
+                : undefined
+            }
+          />
         ))}
       </ul>
     </>
   );
 }
 
-function JourneyCard({ card }: { card: JobCardRow }) {
+function JourneyCard({ card, proposal }: { card: JobCardRow; proposal?: ProposalRow }) {
   const stage = customerStage(card.stage);
   const yours = stage.phase === 'needs_you';
 
@@ -269,25 +321,73 @@ function JourneyCard({ card }: { card: JobCardRow }) {
       </dl>
 
       {yours ? (
-        <p
-          style={{
-            margin: `${primitive.space[4]} 0 0`,
-            fontSize: primitive.fontSize.sm,
-            fontWeight: 600,
-          }}
-        >
-          {/*
-            🔴 AN HONEST NEXT STEP, NOT A BUTTON THAT DOES NOTHING.
-            Approving a proposal in-app is `POST /proposals/:id/decision`, and
-            that route is written for a staff member CAPTURING the customer's
-            answer — `decidedByName` is the customer while the session is the
-            workshop's. A self-service decision needs its own authenticated
-            route; until it exists, offering a button here would be a control
-            that silently fails, which this repo has now shipped once (a form
-            with no submit button) and does not need again.
-          */}
-          Contact the workshop to {actionFor(card.stage)}.
-        </p>
+        <div style={{ marginTop: primitive.space[4] }}>
+          {proposal ? (
+            <>
+              {/*
+                THE PROPOSAL ITSELF, then the controls. Until 2026-08-04 this
+                said "contact the workshop": the screen could tell a customer
+                their approval was the hold-up and gave them no way to give it,
+                so every approval happened by telephone and was typed in by a
+                staff member. The customer role is now in CAN_READ_PROPOSAL,
+                scoped by a c.user_id predicate inside the query itself.
+              */}
+              <p style={{ margin: 0, fontSize: primitive.fontSize.sm, fontWeight: 600 }}>
+                Repair proposal {proposal.presentation.documentReference} is waiting for your answer.
+              </p>
+              {proposal.expectedResult ? (
+                <p style={{ margin: `${primitive.space[2]} 0 0`, fontSize: primitive.fontSize.sm }}>
+                  {proposal.expectedResult}
+                </p>
+              ) : null}
+              {/*
+                The risks, and what remains SUSPECTED rather than confirmed.
+                These are the fields most likely to be dropped and the ones a
+                customer agreeing to a repair is entitled to read: without them
+                the first unexpected extra reads as incompetence rather than as
+                a stated unknown.
+              */}
+              {proposal.riskAndLimitations ? (
+                <p
+                  style={{
+                    margin: `${primitive.space[2]} 0 0`,
+                    fontSize: primitive.fontSize.sm,
+                    color: themeVar.textSecondary,
+                  }}
+                >
+                  <strong>Risks and limitations:</strong> {proposal.riskAndLimitations}
+                </p>
+              ) : null}
+              {proposal.uncertainties ? (
+                <p
+                  style={{
+                    margin: `${primitive.space[2]} 0 0`,
+                    fontSize: primitive.fontSize.sm,
+                    color: themeVar.textSecondary,
+                  }}
+                >
+                  <strong>Still to be confirmed:</strong> {proposal.uncertainties}
+                </p>
+              ) : null}
+              <ProposalDecisionForm
+                proposalId={proposal.id}
+                recommendedTotal={proposal.presentation.recommendedTotal}
+                comprehensiveTotal={proposal.presentation.comprehensiveTotal}
+                currency={proposal.presentation.currency}
+              />
+            </>
+          ) : (
+            /*
+              No open proposal on this card. The customer is still the hold-up -
+              a deposit, a question, or a vehicle to collect - and none of those
+              is answerable in this build, so it says what to do rather than
+              offering a control that would silently fail.
+            */
+            <p style={{ margin: 0, fontSize: primitive.fontSize.sm, fontWeight: 600 }}>
+              Contact the workshop to {actionFor(card.stage)}.
+            </p>
+          )}
+        </div>
       ) : null}
     </li>
   );

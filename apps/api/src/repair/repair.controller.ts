@@ -38,6 +38,7 @@ import {
   MoveTaskBody,
   OpenQualityInspectionBody,
   ProposalDecisionBody,
+  CustomerProposalDecisionBody,
   RecordDiagnosisSummaryBody,
   RecordEvidenceBody,
   RecordInspectionItemsBody,
@@ -862,6 +863,29 @@ export class ProposalController {
     @Body(validatedBody(ProposalDecisionBody)) body: ProposalDecisionBody,
   ) {
     return this.proposals.recordDecision(req.tenantContext, id, body ?? {});
+  }
+
+  /**
+   * §7 — the customer answers for THEMSELVES, from the customer workspace.
+   *
+   * A SEPARATE ROUTE from `:id/decision`, and the body is the reason: this one
+   * accepts only the decision, the option and a note. `decidedByName`,
+   * `decisionChannel` and `recorded_by` are DERIVED from the session and the
+   * customer record, because on this route they are not the caller's to state —
+   * accepting `decidedByName` here would let a customer approve under another
+   * person's name, and accepting `decisionChannel` would let a portal approval
+   * be filed as a telephone call nobody can check.
+   *
+   * A flag on the staff route would have left all three settable and relied on
+   * callers passing the right combination.
+   */
+  @Post(':id/customer-decision')
+  recordCustomerDecision(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(validatedBody(CustomerProposalDecisionBody)) body: CustomerProposalDecisionBody,
+  ) {
+    return this.proposals.recordCustomerDecision(req.tenantContext, id, body ?? {});
   }
 }
 

@@ -142,7 +142,40 @@ export const CAN_READ_PROPOSAL = new Set([
   'storekeeper',
   'technician',
   'quality_control_inspector',
+  /**
+   * 🔴 THE CUSTOMER — added 2026-08-04, and the point of the whole document.
+   *
+   * §410-§422 enumerates twelve things "the customer must be shown", and until
+   * now the one party that list is written for was the only one who could not
+   * read it. The customer workspace could see that a repair was
+   * `awaiting_customer_approval` and had no way to see WHAT it was waiting for,
+   * so every approval had to happen by telephone and be typed in by staff.
+   *
+   * ⚠️ THE ROLE ADMITS THE READ; IT DOES NOT SCOPE IT. `readProposals` narrows a
+   * `customer` viewer to proposals on job cards raised against their own
+   * vehicles, with the same `c.user_id` predicate `assertCardVisible` already
+   * uses — and RLS isolates the tenant underneath both. Adding the role without
+   * that predicate would have handed every customer the whole workshop's
+   * proposals, prices and customer contact details.
+   */
+  'customer',
 ]);
+
+/**
+ * Roles that may record a decision AS THE CUSTOMER THEMSELVES.
+ *
+ * Deliberately NOT folded into `CAN_RECORD_DECISION`. The two are different
+ * facts and the audit trail has to keep them apart:
+ *
+ *   staff route    — `decided_by_name` is the customer, `recorded_by` is the
+ *                    staff member who took the call. Two people.
+ *   customer route — both are the customer. One person, no intermediary, and
+ *                    the strongest form of the record.
+ *
+ * Conflating them would make "who agreed to this" unanswerable in exactly the
+ * dispute the column exists for.
+ */
+export const CAN_DECIDE_AS_CUSTOMER = new Set(['customer']);
 
 /**
  * The stages at which a proposal is the work in hand.

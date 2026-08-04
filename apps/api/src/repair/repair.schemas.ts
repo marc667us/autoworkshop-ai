@@ -264,6 +264,32 @@ export const ProposalDecisionBody = z.object({
 });
 export type ProposalDecisionBody = z.infer<typeof ProposalDecisionBody>;
 
+/**
+ * The customer's decision, made BY the customer in their own workspace.
+ *
+ * 🔴 THE ABSENCE OF `decidedByName` AND `decisionChannel` IS THE SECURITY
+ * PROPERTY, not an omission. Zod strips unknown keys, so a request that sends
+ * either one has it DISCARDED rather than honoured — the service derives both:
+ * the name from the customer record the proposal hangs off, the channel from
+ * the route itself (`customer_portal`).
+ *
+ * If they were listed here, a customer could approve chargeable work under
+ * somebody else's name, or file a portal approval as a telephone call that no
+ * recording exists for. `decided_by_name` and `decision_channel` are the consent
+ * record a disputed authorisation is settled from; on this route neither is the
+ * caller's to state.
+ *
+ * ⚠️ DO NOT "TIDY" THIS BY EXTENDING `ProposalDecisionBody`. `.extend()` or a
+ * shared base would re-admit exactly the two fields this schema exists to keep
+ * out, and nothing would fail — the fields would simply start being believed.
+ */
+export const CustomerProposalDecisionBody = z.object({
+  decision: optionalText(40),
+  approvedOption: optionalText(200),
+  note: optionalText(4000),
+});
+export type CustomerProposalDecisionBody = z.infer<typeof CustomerProposalDecisionBody>;
+
 // ── executions ─────────────────────────────────────────────────────────────
 
 export const StartExecutionBody = z.object({
