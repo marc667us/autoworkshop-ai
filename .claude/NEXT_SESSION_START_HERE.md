@@ -36,6 +36,8 @@ can be created live. Detail in `.claude/CURRENT_TASK.md`.
 - **Keycloak's `error=Configuration`** replaced by an honest "starting up"
   screen in all seven apps.
 - **Landing cards on Solar's scale** (12px radius, 24px padding).
+- **Staff management** — the owner can hire, remove and re-hire. `grant()` had
+  had no reachable caller since Phase 2. 9/9 and 4/4 in a browser.
 
 ### ⚠️ RUNNING THE VERIFICATIONS
 

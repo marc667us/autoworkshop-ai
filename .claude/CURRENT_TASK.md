@@ -49,6 +49,8 @@ are the same. 5/5, with 037 still 13/13.
 |---|---|
 | `verify-technician-workflow.mjs` | 21/21 screens · 24/24 checks |
 | `verify-customer-workflow.mjs` | 11/11 screens · 19/19 checks, twice running |
+| `verify-staff-screen.mjs` | 9/9 — add form, and the refusal names a way forward |
+| `verify-staff-rehire.mjs` | 4/4 — remove then re-hire, against the real unique index |
 
 Screens and checks are DIFFERENT numbers and both are quoted everywhere, because
 mixing them is how skipped coverage hides.
@@ -62,6 +64,16 @@ no answerable proposal exists (`ALLOW_EMPTY_CUSTOMER_PROPOSALS=1` to opt out).
 /proposals/:id/customer-decision` — a separate route from the staff one, because
 `decidedByName`, `decisionChannel` and `recorded_by` stop being inputs and are
 derived. The role admits the read; a `c.user_id` predicate scopes it.
+
+**A workshop owner can finally hire somebody.** `MembershipService.grant()` has
+been complete since Phase 2 and had NO REACHABLE CALLER: it took a `userId`, and
+the only source of one is `GET /users`, which lists people who are ALREADY
+members. It accepts `userEmail` now — an email, NOT a search endpoint, because a
+lookup route would be an enumeration oracle over every account on the platform.
+Screen at `/workshop-management/staff` and `/settings/staff-and-roles`.
+
+⚠️ There is no INVITE flow (T-0028). A colleague must sign up first, and the
+screen says so up front rather than letting them discover it through a refusal.
 
 **Keycloak's `error=Configuration`** is replaced by an honest "starting up"
 screen with one bounded retry, at `/auth/error` in all seven apps.
