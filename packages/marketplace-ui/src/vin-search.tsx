@@ -1,32 +1,20 @@
 import Link from 'next/link';
 import { primitive } from '@autoworkshop/design-tokens';
+import { BUTTON_PRIMARY, CARD, FIELD, SOLAR, SectionHeading } from './solar-theme';
+import type { PublicVin } from './public-api';
 
 /**
- * Solar's landing palette — the same constants the landing uses, because this
- * panel sits ON that page. Left on the theme tokens it rendered a light card in
- * the middle of a dark shop front, which is precisely how the page came to look
- * wrong. Read from `solar-pv-designer-lite/templates/base.html` `:root`.
+ * ⚠️ THE PALETTE USED TO BE DUPLICATED IN THIS FILE, with a comment arguing that
+ * eleven literals beat a circular import between this panel and the landing. The
+ * reasoning was sound and it drifted anyway: the copy covered the CARD but not
+ * the CONTROLS, so this panel kept `primitive.color.blue[600]` buttons while the
+ * page around it went gold — a blue submit button in the middle of an amber shop
+ * front, on the one panel the whole sign-up funnel runs through.
  *
- * ⚠️ Duplicated rather than exported from the landing: this file is imported on
- * its own, and a circular import between the two would be a worse trade than
- * eleven literals. If a third file ever needs them, they move to a module of
- * their own — not into `@autoworkshop/design-tokens`, which would repaint the
- * whole application shell.
+ * `./solar-theme` is a module neither file owns, so there is no cycle and one
+ * definition. The lesson is worth keeping: duplication defended as "only a few
+ * literals" drifts in the parts nobody duplicated.
  */
-const SOLAR = {
-  bg: '#0a0a14',
-  card: '#0f0f22',
-  cardAlt: '#0a0a14',
-  border: '#1e1e3a',
-  text: '#e2e2f0',
-  sub: '#9090c0',
-  muted: '#6868a0',
-  gold: '#f59e0b',
-  orange: '#ea580c',
-  green: '#22c55e',
-  radius: '14px',
-} as const;
-import type { PublicVin } from './public-api';
 
 /**
  * VIN SEARCH — the landing page's hook, and the top of the sign-up funnel.
@@ -56,12 +44,6 @@ import type { PublicVin } from './public-api';
  * rendered half would be a lock with the key taped to it.
  */
 
-const CARD: React.CSSProperties = {
-  border: `1px solid ${SOLAR.border}`,
-  borderRadius: primitive.radius.lg,
-  padding: primitive.space[4],
-};
-
 export function VinSearch({
   vinQuery,
   result,
@@ -72,28 +54,13 @@ export function VinSearch({
   result: PublicVin | null;
 }) {
   return (
-    <section aria-labelledby="vin-search" style={CARD}>
-      <h2
+    <section aria-labelledby="vin-search">
+      <SectionHeading
         id="vin-search"
-        style={{
-          margin: 0,
-          fontSize: primitive.fontSize.lg,
-          color: SOLAR.text,
-        }}
-      >
-        Check any vehicle by VIN — free
-      </h2>
-      <p
-        style={{
-          color: SOLAR.sub,
-          fontSize: primitive.fontSize.sm,
-          margin: `${primitive.space[2]} 0 ${primitive.space[4]}`,
-          maxWidth: '48rem',
-        }}
-      >
-        The 17-character number on your dashboard, door frame, or insurance
-        papers. No account needed to check who made it and when.
-      </p>
+        kicker="Free tool"
+        title="Check any vehicle by VIN"
+        blurb="The 17-character number on your dashboard, door frame, or insurance papers. No account needed to check who built it and when."
+      />
 
       {/* GET, not POST: the result must be a URL somebody can share or return
           to. A POST would make every result unreachable by the back button. */}
@@ -113,34 +80,20 @@ export function VinSearch({
           autoComplete="off"
           spellCheck={false}
           style={{
+            ...FIELD,
             flex: '1 1 20rem',
             minWidth: '14rem',
-            padding: `${primitive.space[3]} ${primitive.space[3]}`,
-            border: `1px solid ${SOLAR.border}`,
-            borderRadius: primitive.radius.md,
-            background: SOLAR.card,
-            color: SOLAR.text,
-            fontSize: primitive.fontSize.base,
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            width: 'auto',
+            padding: '12px 14px',
+            fontSize: '16px',
+            fontFamily: primitive.fontFamily.mono,
+            letterSpacing: '.5px',
             // A VIN is upper-case; typing it lower and seeing it stay lower
             // makes people wonder whether it registered.
             textTransform: 'uppercase',
           }}
         />
-        <button
-          type="submit"
-          style={{
-            padding: `${primitive.space[3]} ${primitive.space[6]}`,
-            border: 'none',
-            borderRadius: primitive.radius.md,
-            background: primitive.color.blue[600],
-            color: primitive.color.grey[0],
-            fontSize: primitive.fontSize.base,
-            fontWeight: 600,
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-          }}
-        >
+        <button type="submit" style={{ ...BUTTON_PRIMARY, padding: '12px 28px', fontSize: '15px' }}>
           Check this VIN
         </button>
       </form>
@@ -158,10 +111,11 @@ function VinResult({ result }: { result: PublicVin }) {
         style={{
           marginTop: primitive.space[4],
           padding: primitive.space[4],
-          borderRadius: primitive.radius.md,
+          borderRadius: '12px',
           border: `1px solid ${SOLAR.orange}`,
+          background: 'rgba(234,88,12,.08)',
           color: SOLAR.text,
-          fontSize: primitive.fontSize.sm,
+          fontSize: '14px',
         }}
       >
         {/* The API's own sentence, which names the ACTUAL rule — "a VIN never
@@ -179,13 +133,16 @@ function VinResult({ result }: { result: PublicVin }) {
   ];
 
   return (
-    <div style={{ marginTop: primitive.space[4] }}>
+    // The answer is a CARD, on Solar's card scale — a bare block of text under
+    // the form read as part of the form rather than as its result.
+    <div style={{ ...CARD, height: 'auto', marginTop: primitive.space[4] }}>
       <p
         style={{
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          fontSize: primitive.fontSize.sm,
-          color: SOLAR.sub,
-          margin: `0 0 ${primitive.space[3]}`,
+          fontFamily: primitive.fontFamily.mono,
+          fontSize: '13px',
+          letterSpacing: '.5px',
+          color: SOLAR.muted,
+          margin: 0,
         }}
       >
         {result.vin}
@@ -195,20 +152,28 @@ function VinResult({ result }: { result: PublicVin }) {
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))',
-          gap: primitive.space[3],
+          gap: primitive.space[4],
           margin: 0,
         }}
       >
         {facts.map(([label, value]) => (
           <div key={label}>
-            <dt style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
+            <dt
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '.5px',
+                textTransform: 'uppercase',
+                color: SOLAR.muted,
+              }}
+            >
               {label}
             </dt>
             <dd
               style={{
-                margin: 0,
-                fontSize: primitive.fontSize.base,
-                fontWeight: 600,
+                margin: '4px 0 0',
+                fontSize: '17px',
+                fontWeight: 800,
                 color: SOLAR.text,
               }}
             >
@@ -218,7 +183,7 @@ function VinResult({ result }: { result: PublicVin }) {
                   is worse than an absent one, especially for a workshop about to
                   order a part. */}
               {value ?? (
-                <span style={{ fontWeight: 400, color: SOLAR.sub }}>
+                <span style={{ fontWeight: 400, fontSize: '13px', color: SOLAR.muted }}>
                   Not known from the VIN alone
                 </span>
               )}
@@ -230,18 +195,21 @@ function VinResult({ result }: { result: PublicVin }) {
       {result.moreAvailable?.length ? (
         <div
           style={{
-            marginTop: primitive.space[4],
+            marginTop: primitive.space[2],
             padding: primitive.space[4],
-            borderRadius: primitive.radius.md,
-            background: SOLAR.cardAlt,
-            border: `1px solid ${SOLAR.border}`,
+            borderRadius: '12px',
+            // Solar's magnet tint — this IS the funnel step, and it should read
+            // as the offer it is rather than as another neutral panel.
+            background: 'linear-gradient(135deg, rgba(245,158,11,.10), rgba(34,197,94,.06))',
+            border: '1px solid rgba(245,158,11,.35)',
           }}
         >
           <h3
             style={{
               margin: 0,
-              fontSize: primitive.fontSize.base,
-              color: SOLAR.text,
+              fontSize: '15px',
+              fontWeight: 800,
+              color: SOLAR.goldLight,
             }}
           >
             There is more on this vehicle
@@ -274,16 +242,7 @@ function VinResult({ result }: { result: PublicVin }) {
             href={`/api/auth/signin?callbackUrl=${encodeURIComponent(
               `/vehicle-lookup?vin=${result.vin}`,
             )}`}
-            style={{
-              display: 'inline-block',
-              padding: `${primitive.space[3]} ${primitive.space[6]}`,
-              borderRadius: primitive.radius.md,
-              background: primitive.color.blue[600],
-              color: primitive.color.grey[0],
-              fontSize: primitive.fontSize.base,
-              fontWeight: 600,
-              textDecoration: 'none',
-            }}
+            style={{ ...BUTTON_PRIMARY, padding: '12px 28px', fontSize: '15px' }}
           >
             Sign up free to see it all
           </Link>

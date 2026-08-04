@@ -9,171 +9,77 @@ import {
   PublicVin,
 } from './public-api';
 import { VinSearch } from './vin-search';
+import {
+  BUTTON_GREEN,
+  BUTTON_PRIMARY,
+  BUTTON_SECONDARY,
+  CARD,
+  CARD_GRID,
+  CITY_CHIP,
+  CONTAINER,
+  FAQ_ITEM,
+  FIELD,
+  GradientDivider,
+  HERO_BADGE,
+  HERO_GLOW,
+  HERO_LEAD,
+  HERO_TITLE,
+  ICON_BOX,
+  LABEL,
+  MAGNET,
+  SOLAR,
+  SectionHeading,
+  SolarShellTheme,
+  Stat,
+  WORKFLOW_STEP,
+  clampLines,
+} from './solar-theme';
 
 /**
  * ABOSSEY OKAI AUTO PARTS MARKETPLACE — the public landing page.
  *
- * Layout pattern taken from Solar's `marketplace_public` template (ADR-011:
- * read Solar for patterns, never import from it): hero with a free-to-browse
- * badge and the sign-in / sign-up pair, a KPI strip, a filter bar, category
- * chips, then cards grouped under category headings.
+ * ── WHAT CHANGED, AND WHY ───────────────────────────────────────────────────
  *
- * ⚠️ WHAT A SIGNED-OUT VISITOR MAY DO HERE, AND WHERE THE LINE IS.
- * View, and search. That is all. Every control on this page either filters what
- * is already public or sends the visitor to sign in. There is no control that
- * writes, and no field rendered that the public API does not already return —
- * in particular a mechanic's phone number is NOT in the response, so the
- * sign-in prompt on a mechanic card is a real gate rather than a hidden field.
- * Hiding data the browser already holds is not authorization; this repo has
- * been bitten by that distinction before.
+ * Two earlier passes tried to make this look like Solar's landing. The first
+ * took Solar's SIZING and refused its colours. The second took the colours too.
+ * The owner's verdict on the result: *"the landing page done was so ugly, never
+ * same as that of solar."*
+ *
+ * The diagnosis both passes missed is that Solar's landing is not a catalogue
+ * page wearing a dark palette — it is a MARKETING page with a specific grammar,
+ * and this page had none of it:
+ *
+ *   | Solar has                    | this page had                          |
+ *   |------------------------------|----------------------------------------|
+ *   | radial amber glow behind hero| a flat bordered box                    |
+ *   | gradient-filled headline     | one line of body-weight text           |
+ *   | 6 gradient stat numbers      | four bordered KPI boxes                |
+ *   | gold kicker над every heading| bare `<h2>`s                           |
+ *   | gradient dividers between    | nothing between sections               |
+ *   | a "magnet" for the free tool | the VIN box inline, unannounced        |
+ *   | centred 1140px column        | full-bleed edge-to-edge                |
+ *   | gold CTAs everywhere         | BLUE buttons on an amber page          |
+ *
+ * All of it now comes from `./solar-theme`, which cites the Solar line numbers
+ * it was read from. Read for pattern, never imported — ADR-011, and Solar is
+ * never opened or run (owner instruction, 2026-07-26).
+ *
+ * ── CARDS ARE ONE SIZE, WHICH IS WHAT WAS ASKED FOR ────────────────────────
+ *
+ * Every card grid uses `CARD_GRID`, whose track is `CARD_TRACK`. Previously the
+ * KPI strip was on a 13.75rem track and the parts and mechanic grids on 17rem,
+ * so three sections of one page disagreed about how wide a card is. `height:
+ * 100%` alone never fixes that — it equalises a ROW, not a page.
+ *
+ * ── WHAT A SIGNED-OUT VISITOR MAY DO HERE, AND WHERE THE LINE IS ───────────
+ *
+ * View, and search. Every control either filters what is already public or
+ * sends the visitor to sign in. No control writes, and no field is rendered
+ * that the public API does not already return — in particular a mechanic's
+ * phone number is NOT in the response, so the sign-in prompt on a mechanic card
+ * is a real gate rather than a hidden field. Hiding data the browser already
+ * holds is not authorization; this repo has been bitten by that distinction.
  */
-
-/**
- * ── CARD SIZING FOLLOWS SOLAR'S LANDING PAGE ────────────────────────────────
- *
- * Solar PV Designer Lite is this account's reference implementation (ADR-011),
- * and its landing page is the one public surface here that has actually been
- * looked at by customers. Its card scale, read from `templates/landing.html`:
- *
- *   .use-case-card     radius 12px · padding 20px · height 100%
- *   .workflow-step     radius 16px · padding 24px · min 220px / max 280px
- *   .testimonial-card  radius 16px · padding 24px · height 100%
- *   .plan-card-land    radius 16px · padding 28px
- *   prose columns      max-width 620-780px
- *
- * This page was built on the CONTROL scale — 8px radius, 16px padding — which
- * is correct for an input or a badge inside an application shell and reads as
- * cramped on a shop front. Matching Solar's card scale is the whole change:
- * 12px radius, 24px padding, and grid tracks inside Solar's 220-280px band so
- * a row of cards has the same rhythm on both products.
- *
- * ⚠️ SIZE ONLY. Solar's landing is a dark, gold-accented Bootstrap page and
- * this one is theme-aware and token-driven; copying its COLOURS would break
- * light mode and duplicate a palette the design system already owns. Read for
- * proportion, never for paint — and never opened or run (owner instruction,
- * 2026-07-26).
- */
-
-/**
- * ── SOLAR'S LANDING PALETTE, USED AS THE PATTERN ────────────────────────────
- *
- * Read from `solar-pv-designer-lite/templates/base.html` `:root` (read-only,
- * never opened or run — ADR-011). Solar's public landing is the one surface in
- * this account customers have actually looked at, and the owner asked for the
- * same look, not merely the same proportions:
- *
- *     --sp-bg        #0a0a14   page
- *     --sp-card-bg   #0f0f22   cards
- *     --sp-border    #1e1e3a
- *     --sp-text      #e2e2f0
- *     --sp-sub       #9090c0   secondary text
- *     --sp-muted     #6868a0
- *     --sp-accent    #f59e0b   gold
- *     --sp-accent2   #ea580c   orange (gradient partner)
- *     --solar-blue   #0ea5e9
- *     --solar-green  #22c55e
- *     --sp-radius    14px
- *
- * ⚠️ THIS PAGE IS DELIBERATELY FIXED-DARK, unlike every other screen in the
- * product. An earlier pass took Solar's SIZING and refused its colours on the
- * grounds that they would break light mode — that was the wrong call for a shop
- * front. Solar's landing commits to one look and does not follow the OS
- * preference either; a marketing surface that changes colour under the visitor
- * is not the thing being copied.
- *
- * ⚠️ AND IT STOPS AT THE LANDING. The application shell stays theme-aware —
- * these constants are local to this component and no token here is exported.
- * Pushing them into `@autoworkshop/design-tokens` would repaint every workshop
- * screen, which is not what was asked for.
- */
-const SOLAR = {
-  bg: '#0a0a14',
-  card: '#0f0f22',
-  cardAlt: '#0a0a14',
-  border: '#1e1e3a',
-  text: '#e2e2f0',
-  sub: '#9090c0',
-  muted: '#6868a0',
-  gold: '#f59e0b',
-  orange: '#ea580c',
-  blue: '#0ea5e9',
-  green: '#22c55e',
-  radius: '14px',
-} as const;
-
-const CARD: React.CSSProperties = {
-  border: `1px solid ${SOLAR.border}`,
-  borderRadius: SOLAR.radius,
-  background: SOLAR.card,
-  color: SOLAR.text,
-  padding: primitive.space[6],
-  display: 'flex',
-  flexDirection: 'column',
-  gap: primitive.space[3],
-  height: '100%',
-  // LOAD-BEARING: a positioned ancestor keeps any absolutely-positioned
-  // descendant from escaping the card and stretching the document.
-  position: 'relative',
-};
-
-/**
- * Solar's `.workflow-step` band — `min-width:220px; max-width:280px`.
- *
- * Expressed as a grid track rather than a flex item because these grids already
- * use `auto-fit`/`auto-fill`, and `minmax(13.75rem, 1fr)` gives the same
- * behaviour: never narrower than 220px, wrapping rather than squashing.
- *
- * ⚠️ In `rem`, not `px`. A viewer who has raised their browser's base font size
- * needs the track to grow with the text inside it, or the card gets tighter for
- * exactly the person who asked for more room.
- */
-const CARD_TRACK_MIN = '13.75rem';
-
-const FIELD: React.CSSProperties = {
-  width: '100%',
-  padding: `${primitive.space[2]} ${primitive.space[3]}`,
-  border: `1px solid ${SOLAR.border}`,
-  borderRadius: '8px',
-  // Slightly darker than the card it sits on, as Solar's inputs are — a field
-  // the same colour as its container reads as a label rather than a control.
-  background: SOLAR.cardAlt,
-  color: SOLAR.text,
-  fontSize: primitive.fontSize.sm,
-  minWidth: 0,
-};
-
-const LABEL: React.CSSProperties = {
-  display: 'block',
-  fontSize: primitive.fontSize.xs,
-  fontWeight: 600,
-  color: SOLAR.sub,
-  marginBottom: primitive.space[1],
-};
-
-const BUTTON_PRIMARY: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: `${primitive.space[2]} ${primitive.space[4]}`,
-  borderRadius: '10px',
-  border: '1px solid transparent',
-  // `.btn-solar` — the gold/orange gradient with BLACK text. Solar uses dark
-  // text on the gold deliberately: white on #f59e0b fails contrast badly.
-  background: `linear-gradient(135deg, ${SOLAR.gold}, ${SOLAR.orange})`,
-  color: '#000000',
-  fontWeight: 700,
-  fontSize: primitive.fontSize.sm,
-  textDecoration: 'none',
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-};
-
-const BUTTON_SECONDARY: React.CSSProperties = {
-  ...BUTTON_PRIMARY,
-  background: 'transparent',
-  color: SOLAR.text,
-  border: `1px solid ${SOLAR.border}`,
-};
 
 export interface MarketplaceLandingProps {
   stats: CatalogueStats | null;
@@ -201,14 +107,14 @@ export interface MarketplaceLandingProps {
    * The "Add to basket" control for a part card, supplied by the app.
    *
    * ⚠️ A RENDER PROP, NOT AN IMPORT, AND THAT IS WHAT LETS THIS PAGE BE SHARED.
-   * The basket is `customer-web`'s: it is a client component writing that app's
-   * own local storage. Importing it here would tie this package to one app and
-   * reintroduce the copy-paste that §0.3 forbids — the alternative was a second
-   * landing page that could silently disagree with the first.
+   * The basket is `customer-web`'s: a client component writing that app's local
+   * storage. Importing it here would tie this package to one app and reintroduce
+   * the copy-paste that §0.3 forbids — the alternative was a second landing page
+   * that could silently disagree with the first.
    *
-   * Omit it and the cards render without a basket button, which is exactly
-   * right for `workshop-web`: workshop staff browse the catalogue, they do not
-   * have a consumer basket. The same rule as `accountControl` on `TopNav`.
+   * Omit it and the cards render without a basket button, which is exactly right
+   * for `workshop-web`: workshop staff browse the catalogue, they do not have a
+   * consumer basket. Same rule as `accountControl` on `TopNav`.
    */
   renderAddToBasket?: (part: PublicPart) => React.ReactNode;
 }
@@ -227,8 +133,7 @@ export function MarketplaceLanding({
 }: MarketplaceLandingProps) {
   // Cards are grouped under category headings, preserving the order the API
   // returned (category display_order, then name) rather than re-sorting here —
-  // two sort orders for one list is how a grid starts disagreeing with its own
-  // chips.
+  // two sort orders for one list is how a grid starts disagreeing with its chips.
   const groups: { name: string; slug: string; items: PublicPart[] }[] = [];
   for (const part of parts) {
     const last = groups[groups.length - 1];
@@ -253,418 +158,688 @@ export function MarketplaceLanding({
         background: SOLAR.bg,
         color: SOLAR.text,
         minHeight: '100vh',
-        maxWidth: 'none',
-        margin: '0 auto',
-        padding: primitive.space[4],
-        display: 'flex',
-        flexDirection: 'column',
-        gap: primitive.space[6],
+        fontFamily: primitive.fontFamily.sans,
       }}
     >
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <header
-        style={{
-          border: `1px solid ${SOLAR.border}`,
-          borderRadius: primitive.radius['2xl'],
-          padding: primitive.space[7],
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: primitive.space[4],
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'relative',
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: primitive.space[2], flexWrap: 'wrap' }}>
-            <h1
-              style={{
-                margin: 0,
-                fontSize: primitive.fontSize.xl,
-                fontWeight: 800,
-                color: SOLAR.text,
-                letterSpacing: '-0.3px',
-              }}
-            >
-              Abossey Okai Auto Parts Marketplace
-            </h1>
-            <span
-              style={{
-                borderRadius: '999px',
-                padding: `2px ${primitive.space[2]}`,
-                background: primitive.color.green[50],
-                color: primitive.color.green[700],
-                fontSize: primitive.fontSize.xs,
-                fontWeight: 700,
-                letterSpacing: '0.4px',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              FREE TO BROWSE
-            </span>
-          </div>
-          <p style={{ margin: `${primitive.space[2]} 0 0 0`, color: SOLAR.sub }}>
-            Car parts from verified suppliers, searchable by make, model, year and part manufacturer.
-            Find a mechanic near you — searching is free, and you do not need an account to look.
+      {/* Repaints the surrounding application shell to match, for this page
+          only — a white top bar on a black page was the other half of "not the
+          same as Solar". See `SolarShellTheme`. */}
+      <SolarShellTheme />
+
+      {/* ══ HERO ═══════════════════════════════════════════════════════════ */}
+      <div style={HERO_GLOW}>
+        <div style={{ maxWidth: CONTAINER, margin: '0 auto' }}>
+          <span style={HERO_BADGE}>
+            <span aria-hidden="true">★</span> Ghana&apos;s parts market · Free to browse · No account needed
+          </span>
+
+          <h1 style={HERO_TITLE}>
+            Find the Part.
+            <br />
+            Find the Mechanic.
+            <br />
+            Fix the Car.
+          </h1>
+
+          <p style={HERO_LEAD}>
+            Genuine car parts from{' '}
+            <strong style={{ color: SOLAR.gold }}>verified Abossey Okai suppliers</strong>, searchable
+            by make, model, year and part number — plus a directory of workshops near you and a free
+            VIN check. Searching costs nothing and needs no sign-up.
           </p>
-        </div>
 
-        {/* Sign in and sign up live ON the landing page, per the requirement.
-            Sign-up goes to Keycloak's registration form via /api/auth/register;
-            see that route for why it is not the sign-in URL. */}
-        {/*
-          ⚠️ PLAIN <a>, NOT <Link>, AND THE LINT RULE IS SUPPRESSED ON PURPOSE.
-          These are Route Handlers that answer with a 302 to Keycloak, not pages.
-          next/link performs a client-side transition and expects an RSC payload
-          back; pointing it at a handler that redirects to another ORIGIN gives
-          it a response it cannot use. A full document navigation is what an
-          identity handoff actually is.
-        */}
-        <div style={{ display: 'flex', gap: primitive.space[2], flexWrap: 'wrap' }}>
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-          <a href="/api/auth/register" style={BUTTON_PRIMARY}>
-            Create an account
-          </a>
-          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-          <a href="/api/auth/signin" style={BUTTON_SECONDARY}>
-            Sign in
-          </a>
-        </div>
-      </header>
+          <div
+            style={{
+              display: 'flex',
+              gap: primitive.space[3],
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              marginBottom: primitive.space[4],
+            }}
+          >
+            {/*
+              ⚠️ PLAIN <a>, NOT <Link>, AND THE LINT RULE IS SUPPRESSED ON PURPOSE.
+              These are Route Handlers answering with a 302 to Keycloak, not pages.
+              next/link performs a client-side transition and expects an RSC payload
+              back; pointing it at a handler that redirects to another ORIGIN gives it
+              a response it cannot use. A full document navigation is what an identity
+              handoff actually is.
+            */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+              Create a free account
+            </a>
+            <a href="#find-parts" style={BUTTON_GREEN}>
+              Browse parts now
+            </a>
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a href="/api/auth/signin" style={BUTTON_SECONDARY}>
+              Sign in
+            </a>
+          </div>
 
-      {problems.length > 0 ? (
-        <div
-          role="status"
-          style={{
-            border: `1px solid ${primitive.color.red[700]}`,
-            borderRadius: primitive.radius.md,
-            padding: primitive.space[3],
-            color: SOLAR.text,
-            fontSize: primitive.fontSize.sm,
-          }}
-        >
-          {/* Named, not swallowed. A page that silently renders zero parts when
-              the API is down looks like an empty catalogue. */}
-          <strong>Some of this page could not be loaded.</strong>
-          <ul style={{ margin: `${primitive.space[2]} 0 0 0`, paddingLeft: primitive.space[4] }}>
-            {problems.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+          <div style={{ color: SOLAR.muted, fontSize: '12px', marginBottom: primitive.space[6] }}>
+            🔧 No sign-up needed · Search by your car · Compare supplier prices in GHS
+          </div>
 
-      {/* ── KPI strip ────────────────────────────────────────────────────── */}
-      {stats ? (
-        <section
-          aria-label="Marketplace at a glance"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(auto-fit, minmax(${CARD_TRACK_MIN}, 1fr))`,
-            gap: primitive.space[4],
-          }}
-        >
-          {[
-            { label: 'Parts listed', value: stats.parts },
-            { label: 'Verified suppliers', value: stats.suppliers },
-            { label: 'Countries', value: stats.countries },
-            { label: 'Mechanics listed', value: stats.mechanics },
-          ].map((kpi) => (
-            <div key={kpi.label} style={{ ...CARD, gap: primitive.space[1] }}>
-              <span style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub, fontWeight: 600 }}>
-                {kpi.label}
-              </span>
-              <span style={{ fontSize: primitive.fontSize.xl, fontWeight: 800, color: SOLAR.text }}>
-                {kpi.value}
+          {/*
+            SOLAR'S "MAGNET" (landing.html:143). The one free tool, given its own
+            tinted banner between the CTA row and the stats. It is how Solar sends a
+            visitor into the funnel, and the VIN check is this product's equivalent
+            of "Check My Bill" — the question a stranded driver CAN answer.
+
+            An in-page anchor, not a route: the VIN panel is a section further down
+            this same page, so a link elsewhere would be a lie.
+          */}
+          <a href="#vin-search" style={{ textDecoration: 'none', display: 'block' }}>
+            <div style={MAGNET}>
+              <div
+                style={{
+                  ...ICON_BOX,
+                  width: '42px',
+                  height: '42px',
+                  borderRadius: '10px',
+                  background: `linear-gradient(135deg, ${SOLAR.gold}, ${SOLAR.orange})`,
+                  color: '#000',
+                  fontSize: '18px',
+                }}
+                aria-hidden="true"
+              >
+                🚗
+              </div>
+              <div style={{ flex: '1 1 12rem', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 900, color: SOLAR.goldLight, fontSize: '14px' }}>
+                    Check any vehicle by VIN
+                  </span>
+                  <span
+                    style={{
+                      background: 'rgba(34,197,94,.20)',
+                      color: SOLAR.green,
+                      fontSize: '9px',
+                      fontWeight: 700,
+                      letterSpacing: '.4px',
+                      padding: '2px 8px',
+                      borderRadius: '999px',
+                    }}
+                  >
+                    FREE · 60s
+                  </span>
+                </div>
+                <div style={{ color: SOLAR.sub, fontSize: '12px', marginTop: '2px' }}>
+                  The 17 characters on your dashboard tell you who built the car and when — before
+                  you order a single part.
+                </div>
+              </div>
+              <span style={{ ...BUTTON_SECONDARY, padding: '6px 14px', fontSize: '13px' }}>
+                Check now →
               </span>
             </div>
-          ))}
-        </section>
-      ) : null}
+          </a>
 
-      {/* ── Parts search ─────────────────────────────────────────────────── */}
-      {/* ⚠️ ABOVE the parts search, deliberately. A visitor who does not yet
-          know which part they need still knows their VIN — this is the question
-          they CAN answer, and answering it is what earns the account. Putting it
-          below the catalogue would bury the funnel under a grid. */}
-      <VinSearch vinQuery={vinQuery} result={vinResult} />
-
-      <section aria-labelledby="find-parts">
-        <h2
-          id="find-parts"
-          style={{ margin: `0 0 ${primitive.space[3]} 0`, fontSize: primitive.fontSize.lg, color: SOLAR.text }}
-        >
-          Find parts for your car
-        </h2>
-
-        {/*
-          A PLAIN GET FORM, and that is a decision rather than a shortcut. The
-          filters become query-string parameters, so a search is a URL: it can
-          be bookmarked, shared with a mechanic, and reopened by the back
-          button. It also works with no JavaScript at all — the same property
-          that made the sign-out control a form.
-        */}
-        <form
-          method="GET"
-          action="/"
-          style={{
-            ...CARD,
-            display: 'grid',
-            gridTemplateColumns: `repeat(auto-fit, minmax(${CARD_TRACK_MIN}, 1fr))`,
-            gap: primitive.space[4],
-            alignItems: 'end',
-          }}
-        >
-          <div>
-            <label htmlFor="make" style={LABEL}>
-              Car make
-            </label>
-            <select id="make" name="make" defaultValue={applied.make} style={FIELD}>
-              <option value="">Any make</option>
-              {facets?.makes.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="model" style={LABEL}>
-              Model
-            </label>
-            <select id="model" name="model" defaultValue={applied.model} style={FIELD}>
-              <option value="">Any model</option>
-              {models.map((m) => (
-                <option key={`${m.make}-${m.model}`} value={m.model}>
-                  {m.model}
-                  {/* The make is shown when no make is chosen, because "Rio"
-                      and "Focus" alone do not say whose they are. */}
-                  {applied.make ? '' : ` (${m.make})`}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="year" style={LABEL}>
-              Year
-            </label>
-            <select id="year" name="year" defaultValue={applied.year} style={FIELD}>
-              <option value="">Any year</option>
-              {facets?.years.map((y) => (
-                <option key={y} value={String(y)}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="manufacturer" style={LABEL}>
-              {/* "if known" is in the label because most drivers do not know
-                  it, and an unlabelled optional filter reads as required. */}
-              Part manufacturer (if known)
-            </label>
-            <select id="manufacturer" name="manufacturer" defaultValue={applied.manufacturer} style={FIELD}>
-              <option value="">Any manufacturer</option>
-              {facets?.manufacturers.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="q" style={LABEL}>
-              Search
-            </label>
-            <input
-              id="q"
-              name="q"
-              type="search"
-              defaultValue={applied.q}
-              placeholder="Part name, brand or part number"
-              style={FIELD}
-            />
-          </div>
-
-          {/* The chosen category rides along so the chips and the form do not
-              cancel each other out when either one is submitted. */}
-          {applied.category ? <input type="hidden" name="category" value={applied.category} /> : null}
-
-          <div style={{ display: 'flex', gap: primitive.space[2] }}>
-            <button type="submit" style={BUTTON_PRIMARY}>
-              Search parts
-            </button>
-            {anyFilter ? (
-              <Link href="/" style={BUTTON_SECONDARY}>
-                Reset
-              </Link>
-            ) : null}
-          </div>
-        </form>
-
-        {/* ── Category chips ─────────────────────────────────────────────── */}
-        {facets && facets.categories.length > 0 ? (
-          <nav
-            aria-label="Filter parts by category"
-            style={{ display: 'flex', flexWrap: 'wrap', gap: primitive.space[2], marginTop: primitive.space[3] }}
-          >
-            <ChipLink applied={applied} category="" label={`All (${total})`} active={!applied.category} />
-            {facets.categories.map((c) => (
-              <ChipLink
-                key={c.slug}
-                applied={applied}
-                category={c.slug}
-                label={`${c.name} (${c.partCount})`}
-                active={applied.category === c.slug}
-              />
-            ))}
-          </nav>
-        ) : null}
-
-        {/* ── Results ────────────────────────────────────────────────────── */}
-        <p style={{ marginTop: primitive.space[4], color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
-          {total === 0
-            ? 'No parts match that search.'
-            : `${total} part${total === 1 ? '' : 's'} found${
-                parts.length < total ? ` — showing the first ${parts.length}` : ''
-              }.`}
-        </p>
-
-        {total === 0 ? (
-          <div style={{ ...CARD, marginTop: primitive.space[3] }}>
-            <strong style={{ color: SOLAR.text }}>Nothing matched those filters.</strong>
-            <span style={{ color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
-              Try removing the year or the part manufacturer — those two narrow a search fastest. Every
-              option in the make and model lists has at least one part, so a make on its own always
-              returns something.
-            </span>
-            <Link href="/" style={{ ...BUTTON_SECONDARY, alignSelf: 'flex-start' }}>
-              Clear all filters
-            </Link>
-          </div>
-        ) : null}
-
-        {groups.map((group) => (
-          <section key={group.slug} style={{ marginTop: primitive.space[4] }}>
-            <h3
-              style={{
-                margin: `0 0 ${primitive.space[2]} 0`,
-                fontSize: primitive.fontSize.sm,
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px',
-                color: SOLAR.sub,
-                borderBottom: `1px solid ${SOLAR.border}`,
-                paddingBottom: primitive.space[1],
-              }}
-            >
-              {group.name} <span style={{ fontWeight: 400 }}>({group.items.length})</span>
-            </h3>
+          {/* City coverage strip — Solar's `.city-chip` row. */}
+          <div style={{ marginTop: primitive.space[8] }}>
             <div
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(17rem, 1fr))',
-                gap: primitive.space[4],
+                color: SOLAR.muted,
+                fontSize: '12px',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: '.5px',
+                marginBottom: primitive.space[2],
               }}
             >
-              {group.items.map((part) => (
-                <PartCard key={part.id} part={part} renderAddToBasket={renderAddToBasket} />
-              ))}
+              Serving drivers and workshops in
             </div>
-          </section>
-        ))}
-      </section>
-
-      {/* ── Mechanic search ──────────────────────────────────────────────── */}
-      <section aria-labelledby="find-mechanic">
-        <h2
-          id="find-mechanic"
-          style={{ margin: `0 0 ${primitive.space[2]} 0`, fontSize: primitive.fontSize.lg, color: SOLAR.text }}
-        >
-          Find a mechanic
-        </h2>
-        <p style={{ margin: `0 0 ${primitive.space[3]} 0`, color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
-          Searching is free and needs no account. Booking a workshop or seeing its contact details
-          needs you to sign in.
-        </p>
-
-        <form
-          method="GET"
-          action="/"
-          style={{ ...CARD, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'end', gap: primitive.space[3] }}
-        >
-          {/* The parts filters ride along as hidden fields: submitting the
-              mechanic search must not silently discard the visitor's parts
-              search, because both results share one page. */}
-          {(['q', 'make', 'model', 'year', 'manufacturer', 'category'] as const).map((key) =>
-            applied[key] ? <input key={key} type="hidden" name={key} value={applied[key]} /> : null,
-          )}
-          <div style={{ flex: '1 1 16rem', minWidth: 0 }}>
-            <label htmlFor="mechanic" style={LABEL}>
-              Town, service or specialism
-            </label>
-            <input
-              id="mechanic"
-              name="mechanic"
-              type="search"
-              defaultValue={applied.mechanicQuery}
-              placeholder="Accra, brakes, air conditioning, Toyota…"
-              style={FIELD}
-            />
-          </div>
-          <button type="submit" style={BUTTON_PRIMARY}>
-            Search mechanics
-          </button>
-        </form>
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(17rem, 1fr))',
-            gap: primitive.space[4],
-            marginTop: primitive.space[3],
-          }}
-        >
-          {mechanics.length === 0 ? (
-            <div style={CARD}>
-              <strong style={{ color: SOLAR.text }}>No workshops match that search.</strong>
-              <span style={{ color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
-                Try a town name, or a service such as diagnostics or brakes.
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: primitive.space[2],
+                justifyContent: 'center',
+              }}
+            >
+              {['Accra', 'Abossey Okai', 'Kumasi', 'Tema', 'Takoradi'].map((city) => (
+                <span key={city} style={CITY_CHIP}>
+                  📍 {city}
+                </span>
+              ))}
+              <span style={{ ...CITY_CHIP, color: SOLAR.sub, borderColor: SOLAR.border, background: SOLAR.card }}>
+                ⋯ and nationwide
               </span>
             </div>
-          ) : (
-            mechanics.map((m) => <MechanicCard key={m.id} mechanic={m} />)
-          )}
-        </div>
-      </section>
+          </div>
 
-      <footer
-        style={{
-          borderTop: `1px solid ${SOLAR.border}`,
-          paddingTop: primitive.space[4],
-          color: SOLAR.sub,
-          fontSize: primitive.fontSize.sm,
-        }}
-      >
-        {/* `05.txt` §2 forbids disconnected mock pages, so what is NOT built is
-            named on the page rather than implied by a button that does nothing.
-            ⚠️ THIS NOTICE MUST BE RE-READ WHENEVER THE MARKETPLACE GAINS A
-            CAPABILITY. It previously said ordering "is not built yet" while an
-            Add-to-basket button sat on every card above it — the page
-            contradicting itself, which is worse than either statement alone.
-            Ordering landed in migrations 022/023; in-app payment genuinely has
-            not, and saying so is the honest half that remains. */}
-        <p style={{ margin: 0 }}>
-          Order directly from a supplier — add parts to your basket and check out with an
-          account. You pay the supplier yourself, by cash, bank transfer or mobile money, and
-          record the payment against your order; there is no in-app card payment. Delivery is
-          arranged by each supplier with their own system, so a basket spanning several
-          suppliers becomes one order per supplier. Prices shown are supplier list prices.
-        </p>
-      </footer>
+          {/* ── Stat row ─────────────────────────────────────────────────── */}
+          {/*
+            ⚠️ THE NUMERIC STATS RENDER ONLY WHEN THE API ANSWERED. A stat row that
+            shows "0 parts" because a fetch failed tells a visitor the shop is empty,
+            which is a different and worse statement than saying nothing. The two
+            constant stats are always true and always shown.
+          */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              gap: primitive.space[6],
+              marginTop: primitive.space[8],
+            }}
+          >
+            {stats ? (
+              <>
+                <Stat value={String(stats.parts)} label="Parts listed" />
+                <Stat value={String(stats.suppliers)} label="Verified suppliers" />
+                <Stat value={String(stats.countries)} label="Countries" />
+                <Stat value={String(stats.mechanics)} label="Workshops listed" />
+              </>
+            ) : null}
+            <Stat value="Free" label="To browse" />
+            <Stat value="60s" label="VIN check" />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: CONTAINER, margin: '0 auto', padding: `0 ${primitive.space[4]} ${primitive.space[12]}` }}>
+        {problems.length > 0 ? (
+          <div
+            role="status"
+            style={{
+              border: `1px solid ${SOLAR.orange}`,
+              borderRadius: '12px',
+              padding: primitive.space[4],
+              color: SOLAR.text,
+              fontSize: '14px',
+              background: 'rgba(234,88,12,.08)',
+            }}
+          >
+            {/* Named, not swallowed. A page that silently renders zero parts when
+                the API is down looks like an empty catalogue. */}
+            <strong>Some of this page could not be loaded.</strong>
+            <ul style={{ margin: `${primitive.space[2]} 0 0 0`, paddingLeft: primitive.space[4] }}>
+              {problems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <GradientDivider />
+
+        {/* ══ HOW IT WORKS ═════════════════════════════════════════════════ */}
+        <section aria-labelledby="how-it-works">
+          <SectionHeading
+            id="how-it-works"
+            kicker="How it works"
+            title="Three steps from broken down to back on the road"
+            centred
+          />
+          <div
+            style={{
+              display: 'flex',
+              gap: primitive.space[4],
+              justifyContent: 'center',
+              flexWrap: 'wrap',
+              alignItems: 'stretch',
+            }}
+          >
+            {[
+              {
+                icon: '🔎',
+                tint: 'rgba(245,158,11,.12)',
+                title: 'Identify the car',
+                body: 'Enter your VIN, or pick make, model and year. You get the manufacturer, the build year and the fitments that actually match.',
+              },
+              {
+                icon: '🧰',
+                tint: 'rgba(14,165,233,.12)',
+                title: 'Compare real prices',
+                body: 'Live list prices in GHS from verified Abossey Okai suppliers, with stock status on every card. No account needed to look.',
+              },
+              {
+                icon: '✅',
+                tint: 'rgba(34,197,94,.12)',
+                title: 'Order, or book a mechanic',
+                body: 'Check out with a free account and pay the supplier directly — or find a workshop near you and let them do the job.',
+              },
+            ].map((step, i) => (
+              <div key={step.title} style={WORKFLOW_STEP}>
+                <div
+                  style={{
+                    ...ICON_BOX,
+                    background: step.tint,
+                    margin: '0 auto',
+                  }}
+                  aria-hidden="true"
+                >
+                  {step.icon}
+                </div>
+                <div
+                  style={{
+                    marginTop: primitive.space[3],
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    letterSpacing: '1px',
+                    color: SOLAR.gold,
+                  }}
+                >
+                  STEP {i + 1}
+                </div>
+                <h3 style={{ margin: `4px 0 ${primitive.space[2]}`, fontSize: '16px', fontWeight: 800, color: SOLAR.text }}>
+                  {step.title}
+                </h3>
+                <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.7, color: SOLAR.sub }}>{step.body}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <GradientDivider />
+
+        {/* ══ VIN ══════════════════════════════════════════════════════════ */}
+        {/* ⚠️ ABOVE the parts search, deliberately. A visitor who does not yet know
+            which part they need still knows their VIN — this is the question they
+            CAN answer, and answering it is what earns the account. Below the
+            catalogue it would be buried under a grid. */}
+        <VinSearch vinQuery={vinQuery} result={vinResult} />
+
+        <GradientDivider />
+
+        {/* ══ PARTS ════════════════════════════════════════════════════════ */}
+        <section aria-labelledby="find-parts">
+          <SectionHeading
+            id="find-parts"
+            kicker="The catalogue"
+            title="Find parts for your car"
+            blurb="Narrow by what you know. Every make and model in these lists has at least one part behind it, so a make on its own always returns something."
+          />
+
+          {/*
+            A PLAIN GET FORM, and that is a decision rather than a shortcut. The
+            filters become query-string parameters, so a search is a URL: it can be
+            bookmarked, shared with a mechanic, and reopened by the back button. It
+            also works with no JavaScript at all — the same property that made the
+            sign-out control a form.
+          */}
+          <form
+            method="GET"
+            action="/"
+            style={{
+              ...CARD,
+              height: 'auto',
+              display: 'grid',
+              gridTemplateColumns: `repeat(auto-fit, minmax(12rem, 1fr))`,
+              gap: primitive.space[4],
+              alignItems: 'end',
+            }}
+          >
+            <div>
+              <label htmlFor="make" style={LABEL}>
+                Car make
+              </label>
+              <select id="make" name="make" defaultValue={applied.make} style={FIELD}>
+                <option value="">Any make</option>
+                {facets?.makes.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="model" style={LABEL}>
+                Model
+              </label>
+              <select id="model" name="model" defaultValue={applied.model} style={FIELD}>
+                <option value="">Any model</option>
+                {models.map((m) => (
+                  <option key={`${m.make}-${m.model}`} value={m.model}>
+                    {m.model}
+                    {/* The make is shown when no make is chosen, because "Rio" and
+                        "Focus" alone do not say whose they are. */}
+                    {applied.make ? '' : ` (${m.make})`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="year" style={LABEL}>
+                Year
+              </label>
+              <select id="year" name="year" defaultValue={applied.year} style={FIELD}>
+                <option value="">Any year</option>
+                {facets?.years.map((y) => (
+                  <option key={y} value={String(y)}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="manufacturer" style={LABEL}>
+                {/* "if known" is in the label because most drivers do not know it,
+                    and an unlabelled optional filter reads as required. */}
+                Part maker (if known)
+              </label>
+              <select id="manufacturer" name="manufacturer" defaultValue={applied.manufacturer} style={FIELD}>
+                <option value="">Any manufacturer</option>
+                {facets?.manufacturers.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="q" style={LABEL}>
+                Search
+              </label>
+              <input
+                id="q"
+                name="q"
+                type="search"
+                defaultValue={applied.q}
+                placeholder="Part name, brand or part number"
+                style={FIELD}
+              />
+            </div>
+
+            {/* The chosen category rides along so the chips and the form do not
+                cancel each other out when either one is submitted. */}
+            {applied.category ? <input type="hidden" name="category" value={applied.category} /> : null}
+
+            <div style={{ display: 'flex', gap: primitive.space[2] }}>
+              <button type="submit" style={BUTTON_PRIMARY}>
+                Search parts
+              </button>
+              {anyFilter ? (
+                <Link href="/" style={BUTTON_SECONDARY}>
+                  Reset
+                </Link>
+              ) : null}
+            </div>
+          </form>
+
+          {/* ── Category chips ───────────────────────────────────────────── */}
+          {facets && facets.categories.length > 0 ? (
+            <nav
+              aria-label="Filter parts by category"
+              style={{ display: 'flex', flexWrap: 'wrap', gap: primitive.space[2], marginTop: primitive.space[4] }}
+            >
+              <ChipLink applied={applied} category="" label={`All (${total})`} active={!applied.category} />
+              {facets.categories.map((c) => (
+                <ChipLink
+                  key={c.slug}
+                  applied={applied}
+                  category={c.slug}
+                  label={`${c.name} (${c.partCount})`}
+                  active={applied.category === c.slug}
+                />
+              ))}
+            </nav>
+          ) : null}
+
+          {/* ── Results ──────────────────────────────────────────────────── */}
+          <p style={{ marginTop: primitive.space[4], color: SOLAR.sub, fontSize: '14px' }}>
+            {total === 0
+              ? 'No parts match that search.'
+              : `${total} part${total === 1 ? '' : 's'} found${
+                  parts.length < total ? ` — showing the first ${parts.length}` : ''
+                }.`}
+          </p>
+
+          {total === 0 ? (
+            <div style={{ ...CARD, marginTop: primitive.space[3], height: 'auto' }}>
+              <strong style={{ color: SOLAR.text }}>Nothing matched those filters.</strong>
+              <span style={{ color: SOLAR.sub, fontSize: '14px' }}>
+                Try removing the year or the part maker — those two narrow a search fastest. Every
+                option in the make and model lists has at least one part, so a make on its own always
+                returns something.
+              </span>
+              <Link href="/" style={{ ...BUTTON_SECONDARY, alignSelf: 'flex-start' }}>
+                Clear all filters
+              </Link>
+            </div>
+          ) : null}
+
+          {groups.map((group) => (
+            <section key={group.slug} style={{ marginTop: primitive.space[6] }}>
+              <h3
+                style={{
+                  margin: `0 0 ${primitive.space[3]} 0`,
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  textTransform: 'uppercase',
+                  letterSpacing: '1px',
+                  color: SOLAR.gold,
+                  borderBottom: `1px solid ${SOLAR.border}`,
+                  paddingBottom: primitive.space[2],
+                }}
+              >
+                {group.name}{' '}
+                <span style={{ fontWeight: 600, color: SOLAR.muted }}>({group.items.length})</span>
+              </h3>
+              <div style={CARD_GRID}>
+                {group.items.map((part) => (
+                  <PartCard key={part.id} part={part} renderAddToBasket={renderAddToBasket} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </section>
+
+        <GradientDivider />
+
+        {/* ══ MECHANICS ════════════════════════════════════════════════════ */}
+        <section aria-labelledby="find-mechanic">
+          <SectionHeading
+            id="find-mechanic"
+            kicker="The directory"
+            title="Find a mechanic"
+            blurb="Searching is free and needs no account. Booking a workshop, or seeing its phone number, needs you to sign in."
+          />
+
+          <form
+            method="GET"
+            action="/"
+            style={{
+              ...CARD,
+              height: 'auto',
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              alignItems: 'end',
+              gap: primitive.space[3],
+            }}
+          >
+            {/* The parts filters ride along as hidden fields: submitting the mechanic
+                search must not silently discard the visitor's parts search, because
+                both results share one page. */}
+            {(['q', 'make', 'model', 'year', 'manufacturer', 'category'] as const).map((key) =>
+              applied[key] ? <input key={key} type="hidden" name={key} value={applied[key]} /> : null,
+            )}
+            <div style={{ flex: '1 1 16rem', minWidth: 0 }}>
+              <label htmlFor="mechanic" style={LABEL}>
+                Town, service or specialism
+              </label>
+              <input
+                id="mechanic"
+                name="mechanic"
+                type="search"
+                defaultValue={applied.mechanicQuery}
+                placeholder="Accra, brakes, air conditioning, Toyota…"
+                style={FIELD}
+              />
+            </div>
+            <button type="submit" style={BUTTON_PRIMARY}>
+              Search mechanics
+            </button>
+          </form>
+
+          <div style={{ ...CARD_GRID, marginTop: primitive.space[4] }}>
+            {mechanics.length === 0 ? (
+              <div style={CARD}>
+                <strong style={{ color: SOLAR.text }}>No workshops match that search.</strong>
+                <span style={{ color: SOLAR.sub, fontSize: '14px' }}>
+                  Try a town name, or a service such as diagnostics or brakes.
+                </span>
+              </div>
+            ) : (
+              mechanics.map((m) => <MechanicCard key={m.id} mechanic={m} />)
+            )}
+          </div>
+        </section>
+
+        <GradientDivider />
+
+        {/* ══ WHO IT IS FOR ════════════════════════════════════════════════ */}
+        <section aria-labelledby="who-for">
+          <SectionHeading
+            id="who-for"
+            kicker="Who uses it"
+            title="Built for everyone around the car"
+            centred
+          />
+          <div style={CARD_GRID}>
+            {[
+              {
+                icon: '🚙',
+                title: 'Drivers',
+                body: 'Check what a part should cost before you are quoted, and find a workshop that has done the job before.',
+              },
+              {
+                icon: '🔧',
+                title: 'Workshops',
+                body: 'Source parts at list price, run job cards, assign technicians and keep an audit trail your customers can see.',
+              },
+              {
+                icon: '📦',
+                title: 'Suppliers',
+                body: 'List your catalogue where mechanics already look, and take orders without building a shop of your own.',
+              },
+              {
+                icon: '🚚',
+                title: 'Fleets',
+                body: 'Track every vehicle you run in one place, with the same parts prices and the same workshop directory.',
+              },
+            ].map((who) => (
+              <article key={who.title} style={CARD}>
+                <div style={{ ...ICON_BOX, background: 'rgba(245,158,11,.10)' }} aria-hidden="true">
+                  {who.icon}
+                </div>
+                <h3 style={{ margin: `${primitive.space[2]} 0 0`, fontSize: '15px', fontWeight: 800, color: SOLAR.text }}>
+                  {who.title}
+                </h3>
+                <p style={{ margin: 0, fontSize: '13px', lineHeight: 1.7, color: SOLAR.sub }}>{who.body}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <GradientDivider />
+
+        {/* ══ FAQ ══════════════════════════════════════════════════════════ */}
+        <section aria-labelledby="faq">
+          <SectionHeading id="faq" kicker="FAQ" title="Common questions" />
+          <div style={{ maxWidth: '780px' }}>
+            {[
+              {
+                q: 'Do I need an account to search?',
+                a: 'No. Parts, mechanics and the VIN check are all free and open. An account is needed only to order, to see a workshop’s contact details, or to open a job card.',
+              },
+              {
+                q: 'Can I pay through the site?',
+                a: 'Not yet, and we would rather say so than imply otherwise. You order through the site and pay the supplier directly by cash, bank transfer or mobile money, then record the payment against your order.',
+              },
+              {
+                q: 'Are the prices real?',
+                a: 'They are supplier list prices in Ghana cedis, entered by the suppliers themselves. Stock status is shown on every card, and unpublished listings are withheld rather than shown as unavailable.',
+              },
+              {
+                q: 'What does the free VIN check tell me?',
+                a: 'The manufacturer, the region and country of build, and the model year — decoded from the VIN itself. The full decode, including fitment history, is behind a free account.',
+              },
+              {
+                q: 'My basket has parts from two suppliers. What happens?',
+                a: 'It becomes one order per supplier, because each arranges its own delivery. You will see that split before you confirm, not after.',
+              },
+            ].map((item) => (
+              <div key={item.q} style={FAQ_ITEM}>
+                <div style={{ fontWeight: 700, fontSize: '14px', color: SOLAR.text }}>{item.q}</div>
+                <div style={{ fontSize: '13px', color: SOLAR.sub, marginTop: '8px', lineHeight: 1.7 }}>
+                  {item.a}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <GradientDivider />
+
+        {/* ══ CLOSING CTA ══════════════════════════════════════════════════ */}
+        <section
+          aria-labelledby="closing-cta"
+          style={{ textAlign: 'center', padding: `${primitive.space[8]} 0` }}
+        >
+          <h2
+            id="closing-cta"
+            style={{
+              margin: 0,
+              fontSize: 'clamp(1.25rem, 2.4vw, 1.75rem)',
+              fontWeight: 900,
+              color: SOLAR.text,
+              background: `linear-gradient(90deg, ${SOLAR.gold}, ${SOLAR.blue})`,
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
+            Start with the part you need
+          </h2>
+          <p style={{ ...HERO_LEAD, fontSize: '14px', marginTop: primitive.space[3] }}>
+            Browsing is free forever. An account adds ordering, your garage, and a workshop&apos;s
+            phone number — and takes about a minute.
+          </p>
+          <div style={{ display: 'flex', gap: primitive.space[3], justifyContent: 'center', flexWrap: 'wrap' }}>
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+              Create a free account
+            </a>
+            <a href="#find-parts" style={BUTTON_SECONDARY}>
+              Keep browsing
+            </a>
+          </div>
+        </section>
+
+        <footer
+          style={{
+            borderTop: `1px solid ${SOLAR.border}`,
+            paddingTop: primitive.space[4],
+            color: SOLAR.muted,
+            fontSize: '13px',
+            lineHeight: 1.7,
+          }}
+        >
+          {/* `05.txt` §2 forbids disconnected mock pages, so what is NOT built is
+              named on the page rather than implied by a button that does nothing.
+              ⚠️ THIS NOTICE MUST BE RE-READ WHENEVER THE MARKETPLACE GAINS A
+              CAPABILITY. It previously said ordering "is not built yet" while an
+              Add-to-basket button sat on every card above it — the page contradicting
+              itself, which is worse than either statement alone. Ordering landed in
+              migrations 022/023; in-app payment genuinely has not, and saying so is
+              the honest half that remains. */}
+          <p style={{ margin: 0 }}>
+            Order directly from a supplier — add parts to your basket and check out with an account.
+            You pay the supplier yourself, by cash, bank transfer or mobile money, and record the
+            payment against your order; there is no in-app card payment. Delivery is arranged by each
+            supplier with their own system, so a basket spanning several suppliers becomes one order
+            per supplier. Prices shown are supplier list prices.
+          </p>
+        </footer>
+      </div>
     </main>
   );
 }
@@ -698,12 +873,14 @@ function ChipLink({
       aria-current={active ? 'true' : undefined}
       style={{
         borderRadius: '999px',
-        padding: `${primitive.space[1]} ${primitive.space[3]}`,
-        border: `1px solid ${active ? primitive.color.blue[600] : SOLAR.border}`,
-        background: active ? primitive.color.blue[600] : 'transparent',
-        color: active ? '#ffffff' : SOLAR.text,
-        fontSize: primitive.fontSize.sm,
-        fontWeight: 600,
+        padding: '5px 14px',
+        // Gold, not blue. The active chip previously used `primitive.color.blue[600]`
+        // — a theme-system accent that has no place on a gold marketing page.
+        border: `1px solid ${active ? SOLAR.gold : SOLAR.border}`,
+        background: active ? 'rgba(245,158,11,.15)' : SOLAR.card,
+        color: active ? SOLAR.goldLight : SOLAR.sub,
+        fontSize: '12px',
+        fontWeight: 700,
         textDecoration: 'none',
         whiteSpace: 'nowrap',
       }}
@@ -718,21 +895,32 @@ function PartCard({
   renderAddToBasket,
 }: {
   part: PublicPart;
-  // Threaded rather than read from a context: one prop down one level is
-  // cheaper to follow than a provider, and it keeps this file free of any React
-  // context that a non-Next consumer would also have to mount.
+  // Threaded rather than read from a context: one prop down one level is cheaper
+  // to follow than a provider, and it keeps this file free of any React context
+  // that a non-Next consumer would also have to mount.
   renderAddToBasket?: (part: PublicPart) => React.ReactNode;
 }) {
   return (
-    <article style={CARD}>
+    /*
+      ⚠️ EVERY ROW OF THIS CARD IS ALWAYS PRESENT, WHICH IS THE POINT.
+      The owner asked for cards of the same size. A shared grid track gives them
+      the same WIDTH and `height: 100%` matches the cards within one row — but
+      the catalogue is drawn as one grid PER CATEGORY, so a row of tall cards
+      sits above a row of short ones. Measured before this change: uniform 273px
+      wide, and 228/238/246/266/285px tall. The variance came entirely from
+      optional rows appearing and disappearing, so the optional rows became
+      unconditional and the two free-text runs are clamped.
+    */
+    <article style={{ ...CARD, minHeight: '17rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: primitive.space[2] }}>
         <span
           style={{
-            fontSize: primitive.fontSize.xs,
-            fontWeight: 700,
-            letterSpacing: '0.4px',
+            ...clampLines(1),
+            fontSize: '10px',
+            fontWeight: 800,
+            letterSpacing: '.6px',
             textTransform: 'uppercase',
-            color: SOLAR.sub,
+            color: SOLAR.muted,
           }}
         >
           {part.categoryName}
@@ -740,9 +928,11 @@ function PartCard({
         {/* Stock is a word, never a colour alone. */}
         <span
           style={{
-            fontSize: primitive.fontSize.xs,
-            fontWeight: 700,
-            color: part.inStock ? primitive.color.green[700] : primitive.color.red[700],
+            fontSize: '10px',
+            fontWeight: 800,
+            letterSpacing: '.4px',
+            textTransform: 'uppercase',
+            color: part.inStock ? SOLAR.greenText : SOLAR.orange,
             whiteSpace: 'nowrap',
           }}
         >
@@ -750,57 +940,93 @@ function PartCard({
         </span>
       </div>
 
-      <h4 style={{ margin: 0, fontSize: primitive.fontSize.base, color: SOLAR.text, lineHeight: 1.25 }}>
+      {/* Two lines, always two lines' worth of space. `title` carries the full
+          name for the handful that are longer, so clamping hides nothing. */}
+      <h4
+        title={part.name}
+        style={{
+          ...clampLines(2),
+          margin: 0,
+          fontSize: '15px',
+          fontWeight: 700,
+          color: SOLAR.text,
+          lineHeight: 1.3,
+          minHeight: '2.6em',
+        }}
+      >
         {part.name}
       </h4>
 
-      <div style={{ fontSize: primitive.fontSize.sm, color: SOLAR.sub }}>
+      <div style={{ ...clampLines(1), fontSize: '12px', color: SOLAR.sub }}>
         {part.brand ? <span>{part.brand} · </span> : null}
         <span style={{ fontFamily: primitive.fontFamily.mono }}>{part.partNumber}</span>
       </div>
 
-      <div style={{ fontSize: primitive.fontSize.lg, fontWeight: 800, color: SOLAR.text }}>
-        {/* A NULL price is legal in the catalogue and must read as a state, not
-            as a blank cell or a zero. */}
+      <div>
+        {/* A NULL price is legal in the catalogue and must read as a state, not as
+            a blank cell or a zero. */}
         {part.price === null ? (
-          <span style={{ fontSize: primitive.fontSize.base, fontWeight: 700, color: SOLAR.sub }}>
+          <span style={{ fontSize: '14px', fontWeight: 700, color: SOLAR.muted }}>
             Price on request
           </span>
         ) : (
-          `${part.currency} ${part.price}`
+          <span
+            style={{
+              fontSize: '20px',
+              fontWeight: 900,
+              lineHeight: 1.1,
+              color: SOLAR.gold,
+              background: `linear-gradient(90deg, ${SOLAR.gold}, ${SOLAR.goldLight})`,
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+            }}
+          >
+            {part.currency} {part.price}
+          </span>
         )}
       </div>
 
-      {part.fitments.length > 0 ? (
-        <div style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
-          <span style={visuallyHidden}>Fits these vehicles: </span>
-          Fits: {part.fitments.slice(0, 3).join(' · ')}
-          {part.fitments.length > 3 ? ` · +${part.fitments.length - 3} more` : ''}
-        </div>
-      ) : null}
+      {/* ⚠️ RENDERED EVEN WHEN EMPTY, and it says so rather than going blank.
+          A card that silently drops this row is a card of a different height —
+          and "no fitments recorded" is genuinely useful to a buyer, who would
+          otherwise assume the part fits and find out at the counter. */}
+      <div style={{ ...clampLines(2), fontSize: '11px', color: SOLAR.muted, minHeight: '2.8em' }}>
+        {part.fitments.length > 0 ? (
+          <>
+            <span style={visuallyHidden}>Fits these vehicles: </span>
+            Fits: {part.fitments.slice(0, 3).join(' · ')}
+            {part.fitments.length > 3 ? ` · +${part.fitments.length - 3} more` : ''}
+          </>
+        ) : (
+          'No fitments recorded — check with the supplier before ordering.'
+        )}
+      </div>
 
       {/*
-        Adding to the basket needs NO ACCOUNT — the basket is browser state
-        until checkout, which is what keeps 021's promise that browsing this
-        marketplace requires no sign-up. A part with no price refuses here,
-        where the buyer can still act on it, rather than at the last step of
-        checkout after they have typed an address.
+        Adding to the basket needs NO ACCOUNT — the basket is browser state until
+        checkout, which is what keeps 021's promise that browsing this marketplace
+        requires no sign-up. A part with no price refuses here, where the buyer can
+        still act on it, rather than at the last step of checkout after they have
+        typed an address.
       */}
       {renderAddToBasket ? renderAddToBasket(part) : null}
 
       <div
         style={{
+          ...clampLines(2),
           marginTop: 'auto',
           paddingTop: primitive.space[2],
           borderTop: `1px solid ${SOLAR.border}`,
-          fontSize: primitive.fontSize.xs,
-          color: SOLAR.sub,
+          fontSize: '11px',
+          color: SOLAR.muted,
+          minHeight: '3.4em',
         }}
       >
-        Supplied by <strong style={{ color: SOLAR.text }}>{part.supplierName}</strong>
+        Supplied by <strong style={{ color: SOLAR.sub }}>{part.supplierName}</strong>
         {part.supplierCity ? `, ${part.supplierCity}` : ''} ({part.supplierCountry})
         {part.supplierVerified ? (
-          <span style={{ color: primitive.color.green[700], fontWeight: 700 }}> · Verified</span>
+          <span style={{ color: SOLAR.greenText, fontWeight: 700 }}> · Verified</span>
         ) : null}
       </div>
     </article>
@@ -809,28 +1035,30 @@ function PartCard({
 
 function MechanicCard({ mechanic }: { mechanic: PublicMechanic }) {
   return (
-    <article style={CARD}>
-      <h4 style={{ margin: 0, fontSize: primitive.fontSize.base, color: SOLAR.text }}>
+    // Same rule as `PartCard`: the optional rows are unconditional so every
+    // mechanic card is the same size as every other one, and as every part card.
+    <article style={{ ...CARD, minHeight: '17rem' }}>
+      <h4 style={{ ...clampLines(2), margin: 0, fontSize: '15px', fontWeight: 700, color: SOLAR.text }}>
         {mechanic.tradingName}
       </h4>
-      <div style={{ fontSize: primitive.fontSize.sm, color: SOLAR.sub }}>
-        {mechanic.city}, {mechanic.country}
+      <div style={{ ...clampLines(1), fontSize: '12px', color: SOLAR.sub }}>
+        📍 {mechanic.city}, {mechanic.country}
       </div>
-      {mechanic.services.length > 0 ? (
-        <div style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
-          Services: {mechanic.services.join(' · ')}
-        </div>
-      ) : null}
-      {mechanic.specialisms.length > 0 ? (
-        <div style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
-          Specialises in: {mechanic.specialisms.join(' · ')}
-        </div>
-      ) : null}
+      <div style={{ ...clampLines(3), fontSize: '11px', color: SOLAR.muted, minHeight: '4.2em' }}>
+        {mechanic.services.length > 0
+          ? `Services: ${mechanic.services.join(' · ')}`
+          : 'Services not listed.'}
+      </div>
+      <div style={{ ...clampLines(2), fontSize: '11px', color: SOLAR.muted, minHeight: '2.8em' }}>
+        {mechanic.specialisms.length > 0
+          ? `Specialises in: ${mechanic.specialisms.join(' · ')}`
+          : 'No specialisms listed.'}
+      </div>
 
       {/*
         THE GATE. Not a hidden field — the contact details are genuinely absent
-        from the response that built this card, so there is nothing here to
-        reveal with a devtools inspector. Signing in is what fetches them.
+        from the response that built this card, so there is nothing here to reveal
+        with a devtools inspector. Signing in is what fetches them.
       */}
       {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- route handler, see hero */}
       <a href="/api/auth/signin" style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}>

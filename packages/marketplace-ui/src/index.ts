@@ -22,6 +22,17 @@
  * landing page would drift, and the two would disagree about what the catalogue
  * contains.
  */
+/**
+ * Solar's landing grammar, exported so a second public surface (customer-web's
+ * own landing, a future supplier front page) renders in the SAME language rather
+ * than growing its own near-miss copy — §0.3, and the reason the palette drifted
+ * once already.
+ *
+ * ⚠️ Deliberately NOT in `@autoworkshop/design-tokens`: these are fixed-dark
+ * MARKETING values, and putting them in the token package would repaint every
+ * workshop screen and break light mode across the product.
+ */
+export { SOLAR, GradientDivider, SectionLabel, SectionHeading, Stat } from './solar-theme';
 export { MarketplaceLanding } from './marketplace-landing';
 export type { MarketplaceLandingProps } from './marketplace-landing';
 export { VinSearch } from './vin-search';
