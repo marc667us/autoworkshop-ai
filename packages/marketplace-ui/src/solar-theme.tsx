@@ -355,13 +355,35 @@ export function clampLines(lines: number): React.CSSProperties {
  * ⚠️ AND IT DOES NOT SET `color-scheme`. Leaving it alone keeps form controls —
  * the make/model/year selects — rendering their popup lists in the viewer's own
  * scheme, which is the one place a native widget must stay legible.
+ *
+ * ── 🔴 THE SELECTOR IS DOUBLED (`:root:root`) AND THAT IS LOAD-BEARING ──────
+ *
+ * A plain `:root{…}` LOST, and it lost silently on exactly half the viewers.
+ * `themes.ts` emits its palettes as:
+ *
+ *     @media (prefers-color-scheme: dark){ :root:not([data-theme]){…} }
+ *     :root[data-theme="light"]{…}
+ *     :root[data-theme="dark"]{…}
+ *
+ * all of which have specificity (0,2,0), against a bare `:root`'s (0,1,0). So on
+ * a viewer whose OS asks for dark, the shell stayed on the app's dark palette
+ * (#111827) while the landing rendered Solar's (#0a0a14) — the same mismatch
+ * this component exists to remove, one shade subtler and therefore easier to
+ * ship. Measured with Playwright at `colorScheme: 'light'` and `'dark'`; light
+ * was correct and dark was not.
+ *
+ * `:root:root` is (0,2,0) and the two attribute forms are (0,3,0), so this wins
+ * on specificity rather than on document order — which matters because a
+ * `<style>` rendered inside `<body>` is not guaranteed to come after the head's.
  */
 export function SolarShellTheme() {
   return (
     <style
       // Static, authored here, no interpolation of anything from a request.
       dangerouslySetInnerHTML={{
-        __html: `:root{
+        __html: `:root:root,
+:root:root[data-theme="light"],
+:root:root[data-theme="dark"]{
   --aw-background-primary:${SOLAR.bg};
   --aw-background-secondary:${SOLAR.card};
   --aw-surface-raised:${SOLAR.card};
