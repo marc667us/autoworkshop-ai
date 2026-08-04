@@ -58,46 +58,79 @@ function routesIn(src) {
   return out;
 }
 
-// Every real page route in workshop-web.
-const pages = new Set();
-function walk(dir, prefix = '') {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e);
-    if (statSync(p).isDirectory()) {
-      if (e.startsWith('[') || e.startsWith('_')) continue;
-      walk(p, `${prefix}/${e}`);
-    } else if (e === 'page.tsx' && prefix) {
-      pages.add(prefix);
+// Every real page route in an app.
+//
+// 🔴 `(app)` AND FRIENDS ARE ROUTE GROUPS, NOT PATH SEGMENTS. Next.js strips a
+// parenthesised directory from the URL — `app/(app)/home/dashboard/page.tsx`
+// serves `/home/dashboard`, not `/(app)/home/dashboard`. Counting them as
+// segments makes every route in an app that uses them look unbuilt, which is
+// how customer-web measured 0 of 35 while six of those screens were shipped and
+// working. `check-page-gates.sh` mis-reads the same directories (issue D4).
+function walkApp(appDir) {
+  const pages = new Set();
+  (function walk(dir, prefix = '') {
+    for (const e of readdirSync(dir)) {
+      const p = join(dir, e);
+      if (statSync(p).isDirectory()) {
+        if (e.startsWith('[') || e.startsWith('_')) continue;
+        if (e.startsWith('(') && e.endsWith(')')) {
+          walk(p, prefix); // route group: contributes no path segment
+          continue;
+        }
+        walk(p, `${prefix}/${e}`);
+      } else if (e === 'page.tsx' && prefix) {
+        pages.add(prefix);
+      }
     }
-  }
+  })(appDir);
+  return pages;
 }
-walk(join(ROOT, 'apps/workshop-web/app'));
 
+// ⚠️ THE APP MATTERS. A role's tree is served by ONE app, and looking a
+// customer route up in workshop-web's page list answers a question nobody
+// asked. Until this was split, only workshop-web was measured at all, so the
+// customer workspace — a whole seventh of the product — had never appeared in
+// a coverage number.
 const TREES = {
-  'DEFAULT §34 (supervisor, QC, storekeeper, cashier, platform admin)': 'workshopGroups',
-  'OWNER §46': 'workshopOwnerGroups',
-  'MANAGER §47': 'workshopManagerGroups',
-  'RECEPTION §48': 'workshopReceptionGroups',
-  'TECHNICIAN §49': 'workshopTechnicianGroups',
+  'DEFAULT §34 (supervisor, QC, storekeeper, cashier, platform admin)': ['workshopGroups', 'workshop-web'],
+  'OWNER §46': ['workshopOwnerGroups', 'workshop-web'],
+  'MANAGER §47': ['workshopManagerGroups', 'workshop-web'],
+  'RECEPTION §48': ['workshopReceptionGroups', 'workshop-web'],
+  'TECHNICIAN §49': ['workshopTechnicianGroups', 'workshop-web'],
+  'CUSTOMER §33': ['customerGroups', 'customer-web'],
 };
 
-console.log(`workshop-web has ${pages.size} real page routes\n`);
+const pagesByApp = new Map();
+function pagesFor(app) {
+  if (!pagesByApp.has(app)) pagesByApp.set(app, walkApp(join(ROOT, `apps/${app}/app`)));
+  return pagesByApp.get(app);
+}
+
 console.log('WHAT EACH ROLE SEES IN ITS MENU vs WHAT HAS A PAGE BEHIND IT\n');
 
 let totalAdvertised = 0;
 const deadEverywhere = new Map();
 
-for (const [label, blockName] of Object.entries(TREES)) {
+for (const [label, [blockName, app]] of Object.entries(TREES)) {
+  const pages = pagesFor(app);
   const routes = routesIn(block(blockName));
   const built = routes.filter((r) => pages.has(r));
   const dead = routes.filter((r) => !pages.has(r));
   totalAdvertised += routes.length;
-  for (const d of dead) deadEverywhere.set(d, (deadEverywhere.get(d) ?? 0) + 1);
+  // Keyed by app as well as route: `/home/dashboard` exists in both apps and is
+  // a different screen in each. Merging them would hide one behind the other.
+  for (const d of dead) {
+    const k = `${app}${d}`;
+    deadEverywhere.set(k, (deadEverywhere.get(k) ?? 0) + 1);
+  }
   const pct = Math.round((built.length / routes.length) * 100);
   console.log(
-    `  ${label}\n     ${routes.length} menu entries · ${built.length} built (${pct}%) · ${dead.length} land on "not built yet"\n`,
+    `  ${label}  (${app})\n     ${routes.length} menu entries · ${built.length} built (${pct}%) · ${dead.length} land on "not built yet"\n`,
   );
 }
+
+for (const [app, pages] of pagesByApp) console.log(`  ${app} has ${pages.size} real page routes`);
+console.log();
 
 console.log(`\nDistinct menu entries with NO page anywhere: ${deadEverywhere.size}`);
 // `--all` prints every one. A 12-line sample is fine for a progress read, but

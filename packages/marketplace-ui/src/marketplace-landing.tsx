@@ -28,19 +28,57 @@ import { VinSearch } from './vin-search';
  * been bitten by that distinction before.
  */
 
+/**
+ * ── CARD SIZING FOLLOWS SOLAR'S LANDING PAGE ────────────────────────────────
+ *
+ * Solar PV Designer Lite is this account's reference implementation (ADR-011),
+ * and its landing page is the one public surface here that has actually been
+ * looked at by customers. Its card scale, read from `templates/landing.html`:
+ *
+ *   .use-case-card     radius 12px · padding 20px · height 100%
+ *   .workflow-step     radius 16px · padding 24px · min 220px / max 280px
+ *   .testimonial-card  radius 16px · padding 24px · height 100%
+ *   .plan-card-land    radius 16px · padding 28px
+ *   prose columns      max-width 620-780px
+ *
+ * This page was built on the CONTROL scale — 8px radius, 16px padding — which
+ * is correct for an input or a badge inside an application shell and reads as
+ * cramped on a shop front. Matching Solar's card scale is the whole change:
+ * 12px radius, 24px padding, and grid tracks inside Solar's 220-280px band so
+ * a row of cards has the same rhythm on both products.
+ *
+ * ⚠️ SIZE ONLY. Solar's landing is a dark, gold-accented Bootstrap page and
+ * this one is theme-aware and token-driven; copying its COLOURS would break
+ * light mode and duplicate a palette the design system already owns. Read for
+ * proportion, never for paint — and never opened or run (owner instruction,
+ * 2026-07-26).
+ */
 const CARD: React.CSSProperties = {
   border: `1px solid ${themeVar.borderDefault}`,
-  borderRadius: primitive.radius.lg,
+  borderRadius: primitive.radius.xl,
   background: themeVar.backgroundPrimary,
-  padding: primitive.space[4],
+  padding: primitive.space[6],
   display: 'flex',
   flexDirection: 'column',
-  gap: primitive.space[2],
+  gap: primitive.space[3],
   height: '100%',
   // LOAD-BEARING: a positioned ancestor keeps any absolutely-positioned
   // descendant from escaping the card and stretching the document.
   position: 'relative',
 };
+
+/**
+ * Solar's `.workflow-step` band — `min-width:220px; max-width:280px`.
+ *
+ * Expressed as a grid track rather than a flex item because these grids already
+ * use `auto-fit`/`auto-fill`, and `minmax(13.75rem, 1fr)` gives the same
+ * behaviour: never narrower than 220px, wrapping rather than squashing.
+ *
+ * ⚠️ In `rem`, not `px`. A viewer who has raised their browser's base font size
+ * needs the track to grow with the text inside it, or the card gets tighter for
+ * exactly the person who asked for more room.
+ */
+const CARD_TRACK_MIN = '13.75rem';
 
 const FIELD: React.CSSProperties = {
   width: '100%',
@@ -169,8 +207,8 @@ export function MarketplaceLanding({
       <header
         style={{
           border: `1px solid ${themeVar.borderDefault}`,
-          borderRadius: primitive.radius.lg,
-          padding: primitive.space[6],
+          borderRadius: primitive.radius['2xl'],
+          padding: primitive.space[7],
           display: 'flex',
           flexWrap: 'wrap',
           gap: primitive.space[4],
@@ -264,8 +302,8 @@ export function MarketplaceLanding({
           aria-label="Marketplace at a glance"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(10rem, 1fr))',
-            gap: primitive.space[3],
+            gridTemplateColumns: `repeat(auto-fit, minmax(${CARD_TRACK_MIN}, 1fr))`,
+            gap: primitive.space[4],
           }}
         >
           {[
@@ -314,8 +352,8 @@ export function MarketplaceLanding({
           style={{
             ...CARD,
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(11rem, 1fr))',
-            gap: primitive.space[3],
+            gridTemplateColumns: `repeat(auto-fit, minmax(${CARD_TRACK_MIN}, 1fr))`,
+            gap: primitive.space[4],
             alignItems: 'end',
           }}
         >
@@ -471,7 +509,7 @@ export function MarketplaceLanding({
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(17rem, 1fr))',
-                gap: primitive.space[3],
+                gap: primitive.space[4],
               }}
             >
               {group.items.map((part) => (
@@ -528,7 +566,7 @@ export function MarketplaceLanding({
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(17rem, 1fr))',
-            gap: primitive.space[3],
+            gap: primitive.space[4],
             marginTop: primitive.space[3],
           }}
         >

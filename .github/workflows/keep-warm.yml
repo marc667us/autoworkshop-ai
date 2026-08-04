@@ -1,0 +1,140 @@
+# Keeps Keycloak awake during working hours so sign-in does not cold-start.
+#
+# ── THE PROBLEM ─────────────────────────────────────────────────────────────
+# Render's free tier powers a service down after 15 minutes of idle. Keycloak's
+# cold start was MEASURED at up to 136 seconds on 2026-08-03, and Auth.js
+# discovers its endpoints from `.well-known/openid-configuration` — so during
+# that wake, sign-in fails with `Configuration`, which reads to the visitor as
+# "this site is broken". The first visitor after any quiet period gets it.
+#
+# `packages/next-shell/src/AuthErrorScreen.tsx` fixes what they are TOLD. This
+# file reduces how often they are told it.
+#
+# ── 🔴 WHY THIS IS WINDOWED AND NOT 24/7 — READ BEFORE WIDENING IT ──────────
+#
+# FOUR free Render services share ONE 750-instance-hour monthly allowance:
+# autoworkshop-api, autoworkshop-keycloak, the workshop web service and
+# autoworkshop-customer. A calendar month is ~730 hours. So:
+#
+#     Keycloak warm 24/7   = ~730 h/month  = the ENTIRE allowance, alone
+#     Keycloak warm 10h×22 = ~220 h/month  = leaves ~530 h for the other three
+#
+# A round-the-clock warmer does not merely risk the budget, it consumes all of
+# it and starves the API and both web services — which is precisely how this
+# account was suspended with `suspenders: ['billing']` on 2026-07-28, and why
+# `autoworkshop-customer` 404'd for a stretch on 2026-08-03. Zero cost is a hard
+# rule (ADR-012) and NO PAID REMEDY IS TO BE PROPOSED, so the only lever is how
+# many hours to spend and when.
+#
+# The window below is therefore deliberately modest: weekdays, 08:00-18:00 UTC.
+# Ghana is UTC+0, so that is local working hours with no offset arithmetic.
+# WIDENING IT SPENDS HOURS THE OTHER THREE SERVICES NEED. Do the sum first.
+#
+# ── WHY ONE RUN LOOPS INSTEAD OF ASKING CRON FOR MORE FIRES ─────────────────
+#
+# Measured on the Solar repo across 8 workflows: GitHub delivers ~0.6 scheduled
+# runs/hour REGARDLESS of the requested rate — 12/h and 2/h both arrive at
+# ~0.6/h. Every gap exceeded Render's 15-minute idle timeout, so a 5-minute cron
+# kept nothing warm for weeks while reporting success on every run. You cannot
+# out-schedule a scheduler that is dropping you.
+#
+# So this does not depend on cron FREQUENCY, only on it eventually firing: each
+# delivered run becomes a loop that pings every 5 minutes until the window ends.
+# One landed fire covers the rest of the working day.
+#
+# `cancel-in-progress: false` is load-bearing. A landing fire is held PENDING
+# behind the live warmer rather than killing it; `true` was tried on Solar and is
+# worse, because it stops the running warmer before its replacement has a runner
+# and opens a coverage gap several times an hour.
+#
+# STAYING GREEN IS DELIBERATE. A warmer must never page anyone for a slow wake,
+# so ping failures are counted and summarised, never fatal.
+#
+# To stop entirely: disable in the Actions tab AND cancel the in-flight run, or
+# it keeps warming until the window closes.
+
+name: keep-warm
+
+on:
+  schedule:
+    # Asked often so that at least one lands inside the window; the delivered
+    # rate is ~0.6/h whatever this says. Offset minutes avoid the :00 high-load
+    # slot GitHub's own docs call the worst one. Do NOT tighten this to "fix"
+    # thin coverage — it has no measurable effect.
+    - cron: "3,18,33,48 8-17 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    # The loop stops itself at the window's end; this is a backstop only.
+    timeout-minutes: 335
+    steps:
+      - name: Warm Keycloak until the window closes
+        run: |
+          # A failed ping must never kill the loop. A warmer that dies on the
+          # first slow cold wake is the exact bug that made Solar's
+          # keycloak-keepalive workflow useless.
+          set +e
+
+          # 18:00 UTC — the end of the window declared in the header. Computed
+          # from the clock rather than a fixed duration so a fire that lands at
+          # 16:40 warms for 80 minutes and stops, instead of running past the
+          # window and spending hours nobody is awake for.
+          WINDOW_END_HOUR=18
+          INTERVAL=300        # 5 min, comfortably inside Render's 15-min idle
+          # 150s, not 90s. A free-tier wake was measured at 136s on 2026-08-03,
+          # and a cap that expires MID-WAKE aborts the very wake it triggered —
+          # which is how a warmer ends up proving nothing. Do not lower this
+          # without a new measurement.
+          MAXTIME=150
+
+          # Only Keycloak. The API and the web services wake on real traffic and
+          # each one added here costs another ~220 h/month from a 750 h budget
+          # shared by four services. See the header before adding a URL.
+          URL="https://autoworkshop-keycloak.onrender.com/realms/autoworkshop/.well-known/openid-configuration"
+
+          START=$(date +%s); ROUNDS=0; FAILURES=0
+
+          summary() {
+            MINS=$(( ($(date +%s) - START) / 60 ))
+            echo "----------------------------------------"
+            echo "warmed ${MINS} min | ${ROUNDS} pings | ${FAILURES} failed"
+            if [ "$ROUNDS" -gt 0 ] && [ "$FAILURES" -eq "$ROUNDS" ]; then
+              # Every ping failed for the whole run. Warn so it is visible in the
+              # run summary, but do NOT fail: a warmer that pages people teaches
+              # them to ignore it, and this is not the outage detector.
+              echo "::warning::keep-warm: every ping failed (${FAILURES}/${ROUNDS}). Keycloak may be down."
+            fi
+          }
+          # The NORMAL way this run ends is the window closing or a newer fire
+          # superseding it — print the tally either way, or the common case
+          # leaves no record of what happened.
+          trap 'summary; exit 0' TERM INT
+
+          while [ "$(date -u +%H)" -lt "$WINDOW_END_HOUR" ]; do
+            ROUNDS=$((ROUNDS + 1))
+            # No -f: curl exits 0 for ANY HTTP response, including 5xx. Correct
+            # for a warmer — a 500 still proves the container answered, which is
+            # the only thing being measured. Judging health is not this job.
+            OUT=$(curl -sS --max-time "$MAXTIME" -o /dev/null -w "%{http_code} in %{time_total}s" "$URL" 2>&1)
+            if [ $? -ne 0 ]; then
+              FAILURES=$((FAILURES + 1))
+              echo "  WARN $(echo "$OUT" | tr '\n' ' ')"
+            else
+              echo "  ok   ${OUT}"
+            fi
+            # Re-check the hour BEFORE sleeping, so the last cycle of the day
+            # does not sleep five minutes past the window just to exit.
+            [ "$(date -u +%H)" -lt "$WINDOW_END_HOUR" ] || break
+            sleep "$INTERVAL"
+          done
+
+          summary

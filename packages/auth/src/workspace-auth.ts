@@ -158,8 +158,31 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
      * remove the only thing making this setting safe.
      */
     trustHost: true,
-    // Auth.js's own pages are fine; there is no branded sign-in screen yet and
-    // a half-styled one would be worse than the default.
+    /**
+     * 🔴 THE ERROR PAGE IS OVERRIDDEN; THE SIGN-IN PAGE IS NOT.
+     *
+     * Auth.js's default sign-in screen is fine — there is no branded one yet and
+     * a half-styled one would be worse. Its default ERROR screen is not fine,
+     * for one specific and measured reason:
+     *
+     * Keycloak sleeps on Render's free tier and its cold start reached 136
+     * SECONDS on 2026-08-03. Auth.js discovers every endpoint from the realm's
+     * `.well-known/openid-configuration`, so during that wake the discovery
+     * fetch fails and Auth.js renders `Configuration` — "There is a problem with
+     * the server configuration."
+     *
+     * Nothing is misconfigured. The service is starting. And the person shown
+     * that message is always the FIRST visitor after a quiet period, which on a
+     * product with little traffic is very nearly every visitor. Telling them the
+     * server is broken loses them; telling them to wait ninety seconds does not.
+     *
+     * ⚠️ EVERY APP MUST MOUNT `/auth/error`. This is set once here for all seven
+     * workspaces, so an app missing that route turns a recoverable cold start
+     * into a 404 — worse than the screen this replaces. `auth-error-route.spec.ts`
+     * asserts all seven exist, and it is the only thing standing between a new
+     * app and that regression.
+     */
+    pages: { error: '/auth/error' },
     providers: [
       Keycloak({
         clientId,

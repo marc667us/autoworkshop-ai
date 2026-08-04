@@ -70,3 +70,11 @@ export { activeRoleHeader } from './viewer';
  */
 export { registrationStatus, needsWorkshop } from './registration';
 export type { RegistrationStatus } from './registration';
+
+/**
+ * The page Auth.js sends a failed sign-in to — wired up by `pages.error` in
+ * `workspace-auth.ts`. Every app must mount it at `/auth/error`, or that
+ * redirect 404s and the visitor is worse off than with Auth.js's default.
+ */
+export { AuthErrorScreen } from './AuthErrorScreen';
+export type { AuthErrorScreenProps } from './AuthErrorScreen';

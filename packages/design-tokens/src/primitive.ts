@@ -20,9 +20,21 @@ export const primitive = {
               400: '#9ca3af', 500: '#6b7280', 600: '#4b5563', 700: '#374151',
               800: '#1f2937', 900: '#111827' },
   },
-  space: { 0: '0', 1: '0.25rem', 2: '0.5rem', 3: '0.75rem', 4: '1rem',
-           6: '1.5rem', 8: '2rem', 12: '3rem', 16: '4rem' },
-  radius: { none: '0', sm: '0.25rem', md: '0.375rem', lg: '0.5rem', full: '9999px' },
+  space: { 0: '0', 1: '0.25rem', 2: '0.5rem', 3: '0.75rem', 4: '1rem', 5: '1.25rem',
+           6: '1.5rem', 7: '1.75rem', 8: '2rem', 12: '3rem', 16: '4rem' },
+  /**
+   * `xl` and `2xl` exist for CARDS specifically.
+   *
+   * The scale stopped at `lg` (8px), which is right for a control — an input, a
+   * button, a badge — and reads as cramped on a marketing surface. Solar's
+   * landing, the reference implementation for this product's public pages, uses
+   * 12px on its smaller cards and 16px on its larger ones, and the AutoWorkshop
+   * landing looked tighter than it beside them for exactly this reason.
+   * Added to the scale rather than hardcoded at the call site, so the two pages
+   * cannot drift apart again one literal at a time.
+   */
+  radius: { none: '0', sm: '0.25rem', md: '0.375rem', lg: '0.5rem',
+            xl: '0.75rem', '2xl': '1rem', full: '9999px' },
   fontSize: { xs: '0.75rem', sm: '0.875rem', base: '1rem', lg: '1.125rem',
               xl: '1.25rem', '2xl': '1.5rem', '3xl': '1.875rem' },
   /**
