@@ -124,6 +124,58 @@ export interface WorkspaceAuth {
  * `createAuthMiddleware()` exists so that is one import rather than a thing to
  * remember.
  */
+
+/**
+ * The session cookie name for ONE workspace.
+ *
+ * ── 🔴 WHY THE WORKSPACE IS IN THE NAME ─────────────────────────────────────
+ *
+ * Auth.js names the cookie `authjs.session-token` for every app. COOKIES IGNORE
+ * THE PORT, so on a dev box `localhost:3001` and `localhost:3000` share one
+ * cookie: signing into the workshop app silently signed you into the customer
+ * app, with the workshop's session. MEASURED 2026-08-04 — the cookie jar held
+ * `authjs.session-token.0/.1` on `domain=localhost`, and the customer app
+ * rendered a signed-in shell for a session it never issued.
+ *
+ * That is a session for one workspace being accepted by another. Same-origin
+ * policy does not help, because the origin is the same by port alone. It also
+ * made the SSO check pass for the wrong reason: the second app was not doing
+ * single sign-on, it was reading the first app's cookie.
+ *
+ * Production is on separate hosts today, so this is currently a development
+ * defect — but "currently" is doing a lot of work in that sentence. The moment
+ * two apps share a domain (subdomains under one parent, or two paths behind one
+ * proxy) it becomes a cross-workspace session, and nothing in the code would
+ * have changed to cause it.
+ *
+ * ⚠️ THE `__Secure-` PREFIX IS PART OF THE NAME, NOT DECORATION. It is what
+ * stops a plain-http origin writing a cookie an https origin will then send —
+ * see `readSessionToken` for the session-fixation this prevents. So the prefix
+ * is decided by the SCHEME, exactly as the reader decides it, and both go
+ * through this one function so they cannot drift. They have drifted before: a
+ * previous revision derived the name from `NODE_ENV`, which agrees with the
+ * scheme only by coincidence, and `getAccessToken()` returned null for a
+ * genuinely signed-in user with nothing logged.
+ *
+ * ⚠️ CHANGING THIS INVALIDATES EVERY EXISTING SESSION EXACTLY ONCE. Sessions
+ * live under the old name and nothing reads it any more, so everybody signs in
+ * again on the next visit. That is the intended, one-time cost.
+ */
+export function sessionCookieName(workspaceId: WorkspaceId | string, secure: boolean): string {
+  return `${secure ? '__Secure-' : ''}authjs.session-token.${workspaceId}`;
+}
+
+/**
+ * Whether cookies are issued with the `Secure` attribute and prefix.
+ *
+ * The CONFIG has no request to look at, so it reads `AUTH_URL` — which is what
+ * Auth.js's own `useSecureCookies` default does. `isSecureRequest` handles the
+ * per-request case for reading, and falls back to the same variable first.
+ */
+function secureCookiesConfigured(): boolean {
+  return (process.env['AUTH_URL'] ?? '').startsWith('https://');
+}
+
 export function createWorkspaceAuth(workspaceId: WorkspaceId | string): WorkspaceAuth {
   const clientId = clientIdForWorkspace(workspaceId);
 
@@ -158,6 +210,25 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
      * remove the only thing making this setting safe.
      */
     trustHost: true,
+    /**
+     * 🔴 ONE SESSION COOKIE PER WORKSPACE — see `sessionCookieName`.
+     *
+     * Without this every app on a shared origin reads the same cookie, and on a
+     * dev box "shared origin" includes two different PORTS. The name and the
+     * `__Secure-` prefix both come from that one function so the writer here
+     * and the reader in `readSessionToken` cannot disagree.
+     */
+    cookies: {
+      sessionToken: {
+        name: sessionCookieName(workspaceId, secureCookiesConfigured()),
+        options: {
+          httpOnly: true,
+          sameSite: 'lax' as const,
+          path: '/',
+          secure: secureCookiesConfigured(),
+        },
+      },
+    },
     /**
      * 🔴 THE ERROR PAGE IS OVERRIDDEN; THE SIGN-IN PAGE IS NOT.
      *
@@ -324,7 +395,7 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       //
       // Both cookie names are tried, because the name is decided by the URL
       // scheme and not by NODE_ENV — see `readSessionToken`.
-      const token = await readSessionToken(req);
+      const token = await readSessionToken(req, workspaceId);
 
       const keycloak = token?.keycloak;
       if (!keycloak) return null;
@@ -338,7 +409,7 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // Deliberately does NOT check expiry. An expired access token still has a
       // refresh token to revoke and a Keycloak SSO session to end, so sign-out
       // is still the right offer — and still does real work.
-      const token = await readSessionToken({ headers: await headers() });
+      const token = await readSessionToken({ headers: await headers() }, workspaceId);
       return token?.keycloak !== undefined;
     },
 
@@ -355,7 +426,7 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       // WORSE than getting it wrong there: a miss means the refresh token is
       // never found, so sign-out silently degrades to clearing a cookie —
       // exactly the defect this method exists to fix.
-      const token = await readSessionToken(req);
+      const token = await readSessionToken(req, workspaceId);
       const keycloak = token?.keycloak;
       // Declared AT its assignment rather than hoisted as `let` above. Same
       // scope, assigned once, read once — so there was never anything for the
@@ -451,21 +522,36 @@ function isSecureRequest(req: { headers: Headers }): boolean {
  * set reliably exceeds the 4096-byte cookie limit, so in practice the session is
  * ALWAYS chunked.
  */
-async function readSessionToken(req: { headers: Headers }) {
+async function readSessionToken(req: { headers: Headers }, workspaceId: WorkspaceId | string) {
   const secure = isSecureRequest(req);
   const names = secure ? [true] : [false, true];
+
+  // ⚠️ `cookieName` IS PASSED EXPLICITLY. `getToken` otherwise derives the
+  // DEFAULT Auth.js name, which is no longer what the config writes — so
+  // omitting it here would look for `authjs.session-token` while the session
+  // lives under `authjs.session-token.<workspace>`, and every signed-in user
+  // would read as signed out with nothing logged. That precise failure has
+  // happened in this function once already, from the NODE_ENV/scheme mismatch.
+  const cookieNameFor = (secureCookie: boolean) => sessionCookieName(workspaceId, secureCookie);
 
   // Ask without the secret first — see the note in `getAccessToken`. `getToken`
   // checks for the cookie before it checks for a secret, so a visitor with no
   // session never forces `AUTH_SECRET` to be present.
   const present = await Promise.all(
-    names.map((secureCookie) => getToken({ req, secret: '', secureCookie, raw: true })),
+    names.map((secureCookie) =>
+      // ⚠️ `cookieName` ONLY — NOT alongside `secureCookie`. Passing both had
+      // getToken apply its own `__Secure-` prefixing on top of the name we
+      // already prefixed, so it looked for `__Secure-__Secure-…` and found
+      // nothing: no session cookie in the jar at all, and both apps fell back
+      // to a sign-in click. Measured immediately after the first attempt.
+      getToken({ req, secret: '', cookieName: cookieNameFor(secureCookie), raw: true }),
+    ),
   );
   if (!present.some(Boolean)) return null;
 
   const secret = authSecret();
   for (const secureCookie of names) {
-    const token = await getToken({ req, secret, secureCookie });
+    const token = await getToken({ req, secret, cookieName: cookieNameFor(secureCookie) });
     if (token) return token;
   }
   return null;
