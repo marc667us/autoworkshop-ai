@@ -936,7 +936,31 @@ export class ProposalService {
               : null,
         editable: status === 'draft' && CAN_PREPARE_PROPOSAL.has(ctx.activeRole),
         issuable: status === 'draft' && CAN_PREPARE_PROPOSAL.has(ctx.activeRole),
-        decidable: status === 'issued' && CAN_RECORD_DECISION.has(ctx.activeRole),
+        /**
+         * 🔴 BOTH ROLE SETS, AND THE SECOND ONE WAS MISSED.
+         *
+         * `CAN_RECORD_DECISION` is the STAFF set. When `customer` was added to
+         * `CAN_READ_PROPOSAL` (2026-08-04) this line was not revisited, so
+         * `decidable` evaluated FALSE for every customer — and the customer
+         * screen shows its approval form only on `decidable`. The whole
+         * self-service approval therefore rendered nothing at all, while the
+         * service behind it worked and its ten tests passed.
+         *
+         * Nothing threw. No error appeared. The customer simply saw the old
+         * "contact the workshop" fallback, which is exactly what the feature was
+         * built to replace — a flag reading correct while the mechanism it gates
+         * is inert. Found by the security review reading this line, not by any
+         * test, because every test exercised the SERVICE and none asked what the
+         * viewer was told they could do.
+         *
+         * ⚠️ THIS IS A UI AFFORDANCE, NEVER A CONTROL. Both routes re-derive the
+         * whole judgement server-side — `assertMayRecordDecision` for staff,
+         * `CAN_DECIDE_AS_CUSTOMER` plus the `c.user_id` predicate for the
+         * customer. Widening this flag grants nobody anything (CLAUDE.md §8).
+         */
+        decidable:
+          status === 'issued' &&
+          (CAN_RECORD_DECISION.has(ctx.activeRole) || CAN_DECIDE_AS_CUSTOMER.has(ctx.activeRole)),
       };
     });
   }

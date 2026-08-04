@@ -567,6 +567,68 @@ describe('a customer reading proposals', () => {
   });
 });
 
+
+describe('the affordance flags — what the VIEWER is told they may do', () => {
+  /**
+   * WHY THIS BLOCK EXISTS. `decidable` was left computing from the STAFF role
+   * set when the customer role was added to CAN_READ_PROPOSAL, so it evaluated
+   * false for every customer — and the customer screen renders its approval
+   * form only on `decidable`. The self-service approval was completely inert
+   * while the service behind it worked and its ten tests passed.
+   *
+   * Nothing threw and nothing logged. Every existing test drove the SERVICE;
+   * none asked what the viewer had been TOLD they could do. That gap is the bug,
+   * so these assert the flags directly.
+   */
+  const issuedHeader = (over: Record<string, unknown> = {}) =>
+    readHandlers({ header: [headerRow({ status: 'issued', issued_at: new Date('2026-08-01T00:00:00Z'), ...over })] });
+
+  it('🔴 a customer may decide an ISSUED proposal', async () => {
+    const { db } = fakeDb(issuedHeader());
+    const p = only(await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'customer', userId: 'cust-1' })));
+    expect(p.decidable, 'the approval form renders on this flag and on nothing else').toBe(true);
+  });
+
+  it('staff may still decide one — the customer did not displace them', async () => {
+    const { db } = fakeDb(issuedHeader());
+    const p = only(await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'reception_staff' })));
+    expect(p.decidable).toBe(true);
+  });
+
+  it('a role that may read but not answer is NOT offered the choice', async () => {
+    // A technician reads the approval to confirm it before starting work; they
+    // do not make it. Offering them the control would be a button that 403s.
+    const { db } = fakeDb(issuedHeader());
+    const p = only(
+      await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'technician', userId: 't1' })),
+    );
+    expect(p.decidable).toBe(false);
+  });
+
+  it('nobody may decide a DRAFT — it has not been sent yet', async () => {
+    const { db } = fakeDb(readHandlers({ header: [headerRow({ status: 'draft' })] }));
+    const p = only(await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'customer', userId: 'c1' })));
+    expect(p.decidable).toBe(false);
+  });
+
+  it('nobody may decide one that was already answered', async () => {
+    // Otherwise the customer is offered a second answer to a settled document
+    // and the API refuses it — a control that fails, which reads as a bug.
+    const { db } = fakeDb(readHandlers({ header: [headerRow({ status: 'approved' })] }));
+    const p = only(await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'customer', userId: 'c1' })));
+    expect(p.decidable).toBe(false);
+  });
+
+  it('a customer is never offered the EDIT or ISSUE controls', async () => {
+    // Those belong to the workshop. `editable`/`issuable` must not widen with
+    // `decidable` — the same oversight in the other direction.
+    const { db } = fakeDb(readHandlers({ header: [headerRow({ status: 'draft' })] }));
+    const p = only(await new ProposalService(db, fakeAudit()).list(ctx({ activeRole: 'customer', userId: 'c1' })));
+    expect(p.editable).toBe(false);
+    expect(p.issuable).toBe(false);
+  });
+});
+
 describe('§424 — immutability', () => {
   it('refuses to edit an issued or decided proposal, naming the rule', async () => {
     const issuedRow = [Q.draft, [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1' }]] as [RegExp, unknown[]];
