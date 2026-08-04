@@ -4,6 +4,68 @@
 bash scripts/start-session.sh
 ```
 
+**Owner instruction, standing: open and run CODEX and the SUPERVISOR only.
+Do NOT open or run Google ADK or Stitch.**
+
+---
+
+## SESSION CLOSE 2026-08-04 pt2 - READ THIS FIRST
+
+Run `git log -1 --oneline` and `git status --short` for the exact tip and tree;
+this file deliberately does not restate them.
+
+### THE FIRST THING TO DO - only the owner can
+
+The assistant is CLASSIFIER-BLOCKED on this and tried repeatedly:
+
+```
+! C:\Users\USER\bin\gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
+```
+
+Applies migrations **037 + 038**. Until it runs there is **NO WORKSHOP ON LIVE
+AT ALL**, so the customer and technician workflows cannot be tested on
+production. Proven by submitting the real onboarding form as the owner: "The
+service did not respond. Nothing has been created." while `/api/v1/health` is
+200 and the route answers 401 unauthenticated.
+
+### "KC IS NOT WORKING" - it is a 126.9 SECOND COLD START
+
+Measured at close. Both Keycloak instances answer 200. During the wake a
+sign-in produces `error=Configuration`; `AuthErrorScreen` now says "the sign-in
+service is starting up" instead of a hard error. Sessions were ALSO invalidated
+once by the cookie rename below, so everyone signs in again. Together that feels
+like an outage and is not one.
+
+### What changed
+
+- **A staff member could read customers' vehicles on the customer app.** Fixed.
+  A layout gate was NOT enough - the data still shipped in the RSC payload; the
+  refusal moved into `apiGet`/`apiWrite`. 7/7.
+- **It was never SSO.** One `authjs.session-token` was shared by every app
+  because COOKIES IGNORE THE PORT. Now scoped per workspace. Password typed
+  once; one click per app remains (auto-initiate is the open item).
+- **The landing uses Solar's real palette** - and is UNREVIEWED. Eyeball it.
+
+### Verifications
+
+```bash
+bash scripts/seed-customer-proposal-fixture.sh   # the customer run CONSUMES it
+cd apps/e2e
+node verify/verify-workspace-isolation.mjs   # 7/7
+node verify/verify-single-sign-on.mjs        # 6/6
+node verify/verify-technician-workflow.mjs   # 24/24
+node verify/verify-customer-workflow.mjs     # 19/19
+node verify/verify-no-dead-ends.mjs          # 6/6
+```
+
+### Local accounts - password `Change_me_locally1!`, sign in with the FULL email
+
+`technician@autoworkshop.local` (:3001) - `customer@autoworkshop.local` (:3000)
+`owner@` (:3001, switch role to `workshop_owner` first) - `manager@`
+`reception@` `supervisor@` `admin@`.
+
+Live: `marc667us@yahoo.com` / `Forest-prism-bramble-nomad7`.
+
 ---
 
 ## SESSION CLOSE 2026-08-04 — BOTH WORKFLOWS FINISHED
