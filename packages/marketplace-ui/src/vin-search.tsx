@@ -1,5 +1,31 @@
 import Link from 'next/link';
-import { themeVar, primitive } from '@autoworkshop/design-tokens';
+import { primitive } from '@autoworkshop/design-tokens';
+
+/**
+ * Solar's landing palette — the same constants the landing uses, because this
+ * panel sits ON that page. Left on the theme tokens it rendered a light card in
+ * the middle of a dark shop front, which is precisely how the page came to look
+ * wrong. Read from `solar-pv-designer-lite/templates/base.html` `:root`.
+ *
+ * ⚠️ Duplicated rather than exported from the landing: this file is imported on
+ * its own, and a circular import between the two would be a worse trade than
+ * eleven literals. If a third file ever needs them, they move to a module of
+ * their own — not into `@autoworkshop/design-tokens`, which would repaint the
+ * whole application shell.
+ */
+const SOLAR = {
+  bg: '#0a0a14',
+  card: '#0f0f22',
+  cardAlt: '#0a0a14',
+  border: '#1e1e3a',
+  text: '#e2e2f0',
+  sub: '#9090c0',
+  muted: '#6868a0',
+  gold: '#f59e0b',
+  orange: '#ea580c',
+  green: '#22c55e',
+  radius: '14px',
+} as const;
 import type { PublicVin } from './public-api';
 
 /**
@@ -31,7 +57,7 @@ import type { PublicVin } from './public-api';
  */
 
 const CARD: React.CSSProperties = {
-  border: `1px solid ${themeVar.borderDefault}`,
+  border: `1px solid ${SOLAR.border}`,
   borderRadius: primitive.radius.lg,
   padding: primitive.space[4],
 };
@@ -52,14 +78,14 @@ export function VinSearch({
         style={{
           margin: 0,
           fontSize: primitive.fontSize.lg,
-          color: themeVar.textPrimary,
+          color: SOLAR.text,
         }}
       >
         Check any vehicle by VIN — free
       </h2>
       <p
         style={{
-          color: themeVar.textSecondary,
+          color: SOLAR.sub,
           fontSize: primitive.fontSize.sm,
           margin: `${primitive.space[2]} 0 ${primitive.space[4]}`,
           maxWidth: '48rem',
@@ -90,10 +116,10 @@ export function VinSearch({
             flex: '1 1 20rem',
             minWidth: '14rem',
             padding: `${primitive.space[3]} ${primitive.space[3]}`,
-            border: `1px solid ${themeVar.borderDefault}`,
+            border: `1px solid ${SOLAR.border}`,
             borderRadius: primitive.radius.md,
-            background: themeVar.backgroundPrimary,
-            color: themeVar.textPrimary,
+            background: SOLAR.card,
+            color: SOLAR.text,
             fontSize: primitive.fontSize.base,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
             // A VIN is upper-case; typing it lower and seeing it stay lower
@@ -133,8 +159,8 @@ function VinResult({ result }: { result: PublicVin }) {
           marginTop: primitive.space[4],
           padding: primitive.space[4],
           borderRadius: primitive.radius.md,
-          border: `1px solid ${themeVar.statusDanger}`,
-          color: themeVar.textPrimary,
+          border: `1px solid ${SOLAR.orange}`,
+          color: SOLAR.text,
           fontSize: primitive.fontSize.sm,
         }}
       >
@@ -158,7 +184,7 @@ function VinResult({ result }: { result: PublicVin }) {
         style={{
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
           fontSize: primitive.fontSize.sm,
-          color: themeVar.textSecondary,
+          color: SOLAR.sub,
           margin: `0 0 ${primitive.space[3]}`,
         }}
       >
@@ -175,7 +201,7 @@ function VinResult({ result }: { result: PublicVin }) {
       >
         {facts.map(([label, value]) => (
           <div key={label}>
-            <dt style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary }}>
+            <dt style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
               {label}
             </dt>
             <dd
@@ -183,7 +209,7 @@ function VinResult({ result }: { result: PublicVin }) {
                 margin: 0,
                 fontSize: primitive.fontSize.base,
                 fontWeight: 600,
-                color: themeVar.textPrimary,
+                color: SOLAR.text,
               }}
             >
               {/* ⚠️ SAYS "Not known from the VIN" RATHER THAN GUESSING. The
@@ -192,7 +218,7 @@ function VinResult({ result }: { result: PublicVin }) {
                   is worse than an absent one, especially for a workshop about to
                   order a part. */}
               {value ?? (
-                <span style={{ fontWeight: 400, color: themeVar.textSecondary }}>
+                <span style={{ fontWeight: 400, color: SOLAR.sub }}>
                   Not known from the VIN alone
                 </span>
               )}
@@ -207,15 +233,15 @@ function VinResult({ result }: { result: PublicVin }) {
             marginTop: primitive.space[4],
             padding: primitive.space[4],
             borderRadius: primitive.radius.md,
-            background: themeVar.backgroundSecondary,
-            border: `1px solid ${themeVar.borderDefault}`,
+            background: SOLAR.cardAlt,
+            border: `1px solid ${SOLAR.border}`,
           }}
         >
           <h3
             style={{
               margin: 0,
               fontSize: primitive.fontSize.base,
-              color: themeVar.textPrimary,
+              color: SOLAR.text,
             }}
           >
             There is more on this vehicle
@@ -229,7 +255,7 @@ function VinResult({ result }: { result: PublicVin }) {
             style={{
               margin: `${primitive.space[2]} 0 ${primitive.space[4]}`,
               paddingLeft: primitive.space[4],
-              color: themeVar.textSecondary,
+              color: SOLAR.sub,
               fontSize: primitive.fontSize.sm,
               lineHeight: 1.7,
             }}
@@ -265,7 +291,7 @@ function VinResult({ result }: { result: PublicVin }) {
             style={{
               margin: `${primitive.space[3]} 0 0`,
               fontSize: primitive.fontSize.xs,
-              color: themeVar.textSecondary,
+              color: SOLAR.sub,
             }}
           >
             Already have an account? The same button signs you in, and brings you

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { primitive, themeVar } from '@autoworkshop/design-tokens';
+import { primitive } from '@autoworkshop/design-tokens';
 import { visuallyHidden } from '@autoworkshop/ui';
 import {
   CatalogueFacets,
@@ -53,10 +53,59 @@ import { VinSearch } from './vin-search';
  * proportion, never for paint — and never opened or run (owner instruction,
  * 2026-07-26).
  */
+
+/**
+ * ── SOLAR'S LANDING PALETTE, USED AS THE PATTERN ────────────────────────────
+ *
+ * Read from `solar-pv-designer-lite/templates/base.html` `:root` (read-only,
+ * never opened or run — ADR-011). Solar's public landing is the one surface in
+ * this account customers have actually looked at, and the owner asked for the
+ * same look, not merely the same proportions:
+ *
+ *     --sp-bg        #0a0a14   page
+ *     --sp-card-bg   #0f0f22   cards
+ *     --sp-border    #1e1e3a
+ *     --sp-text      #e2e2f0
+ *     --sp-sub       #9090c0   secondary text
+ *     --sp-muted     #6868a0
+ *     --sp-accent    #f59e0b   gold
+ *     --sp-accent2   #ea580c   orange (gradient partner)
+ *     --solar-blue   #0ea5e9
+ *     --solar-green  #22c55e
+ *     --sp-radius    14px
+ *
+ * ⚠️ THIS PAGE IS DELIBERATELY FIXED-DARK, unlike every other screen in the
+ * product. An earlier pass took Solar's SIZING and refused its colours on the
+ * grounds that they would break light mode — that was the wrong call for a shop
+ * front. Solar's landing commits to one look and does not follow the OS
+ * preference either; a marketing surface that changes colour under the visitor
+ * is not the thing being copied.
+ *
+ * ⚠️ AND IT STOPS AT THE LANDING. The application shell stays theme-aware —
+ * these constants are local to this component and no token here is exported.
+ * Pushing them into `@autoworkshop/design-tokens` would repaint every workshop
+ * screen, which is not what was asked for.
+ */
+const SOLAR = {
+  bg: '#0a0a14',
+  card: '#0f0f22',
+  cardAlt: '#0a0a14',
+  border: '#1e1e3a',
+  text: '#e2e2f0',
+  sub: '#9090c0',
+  muted: '#6868a0',
+  gold: '#f59e0b',
+  orange: '#ea580c',
+  blue: '#0ea5e9',
+  green: '#22c55e',
+  radius: '14px',
+} as const;
+
 const CARD: React.CSSProperties = {
-  border: `1px solid ${themeVar.borderDefault}`,
-  borderRadius: primitive.radius.xl,
-  background: themeVar.backgroundPrimary,
+  border: `1px solid ${SOLAR.border}`,
+  borderRadius: SOLAR.radius,
+  background: SOLAR.card,
+  color: SOLAR.text,
   padding: primitive.space[6],
   display: 'flex',
   flexDirection: 'column',
@@ -83,10 +132,12 @@ const CARD_TRACK_MIN = '13.75rem';
 const FIELD: React.CSSProperties = {
   width: '100%',
   padding: `${primitive.space[2]} ${primitive.space[3]}`,
-  border: `1px solid ${themeVar.borderDefault}`,
-  borderRadius: primitive.radius.md,
-  background: themeVar.backgroundPrimary,
-  color: themeVar.textPrimary,
+  border: `1px solid ${SOLAR.border}`,
+  borderRadius: '8px',
+  // Slightly darker than the card it sits on, as Solar's inputs are — a field
+  // the same colour as its container reads as a label rather than a control.
+  background: SOLAR.cardAlt,
+  color: SOLAR.text,
   fontSize: primitive.fontSize.sm,
   minWidth: 0,
 };
@@ -95,7 +146,7 @@ const LABEL: React.CSSProperties = {
   display: 'block',
   fontSize: primitive.fontSize.xs,
   fontWeight: 600,
-  color: themeVar.textSecondary,
+  color: SOLAR.sub,
   marginBottom: primitive.space[1],
 };
 
@@ -104,10 +155,12 @@ const BUTTON_PRIMARY: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   padding: `${primitive.space[2]} ${primitive.space[4]}`,
-  borderRadius: primitive.radius.md,
+  borderRadius: '10px',
   border: '1px solid transparent',
-  background: primitive.color.blue[600],
-  color: '#ffffff',
+  // `.btn-solar` — the gold/orange gradient with BLACK text. Solar uses dark
+  // text on the gold deliberately: white on #f59e0b fails contrast badly.
+  background: `linear-gradient(135deg, ${SOLAR.gold}, ${SOLAR.orange})`,
+  color: '#000000',
   fontWeight: 700,
   fontSize: primitive.fontSize.sm,
   textDecoration: 'none',
@@ -118,8 +171,8 @@ const BUTTON_PRIMARY: React.CSSProperties = {
 const BUTTON_SECONDARY: React.CSSProperties = {
   ...BUTTON_PRIMARY,
   background: 'transparent',
-  color: themeVar.textPrimary,
-  border: `1px solid ${themeVar.borderDefault}`,
+  color: SOLAR.text,
+  border: `1px solid ${SOLAR.border}`,
 };
 
 export interface MarketplaceLandingProps {
@@ -195,7 +248,12 @@ export function MarketplaceLanding({
   return (
     <main
       style={{
-        maxWidth: '80rem',
+        // The landing owns the whole viewport background, not just its column —
+        // a dark card column on a light page is the thing that looked wrong.
+        background: SOLAR.bg,
+        color: SOLAR.text,
+        minHeight: '100vh',
+        maxWidth: 'none',
         margin: '0 auto',
         padding: primitive.space[4],
         display: 'flex',
@@ -206,7 +264,7 @@ export function MarketplaceLanding({
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <header
         style={{
-          border: `1px solid ${themeVar.borderDefault}`,
+          border: `1px solid ${SOLAR.border}`,
           borderRadius: primitive.radius['2xl'],
           padding: primitive.space[7],
           display: 'flex',
@@ -224,7 +282,7 @@ export function MarketplaceLanding({
                 margin: 0,
                 fontSize: primitive.fontSize.xl,
                 fontWeight: 800,
-                color: themeVar.textPrimary,
+                color: SOLAR.text,
                 letterSpacing: '-0.3px',
               }}
             >
@@ -245,7 +303,7 @@ export function MarketplaceLanding({
               FREE TO BROWSE
             </span>
           </div>
-          <p style={{ margin: `${primitive.space[2]} 0 0 0`, color: themeVar.textSecondary }}>
+          <p style={{ margin: `${primitive.space[2]} 0 0 0`, color: SOLAR.sub }}>
             Car parts from verified suppliers, searchable by make, model, year and part manufacturer.
             Find a mechanic near you — searching is free, and you do not need an account to look.
           </p>
@@ -281,7 +339,7 @@ export function MarketplaceLanding({
             border: `1px solid ${primitive.color.red[700]}`,
             borderRadius: primitive.radius.md,
             padding: primitive.space[3],
-            color: themeVar.textPrimary,
+            color: SOLAR.text,
             fontSize: primitive.fontSize.sm,
           }}
         >
@@ -313,10 +371,10 @@ export function MarketplaceLanding({
             { label: 'Mechanics listed', value: stats.mechanics },
           ].map((kpi) => (
             <div key={kpi.label} style={{ ...CARD, gap: primitive.space[1] }}>
-              <span style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary, fontWeight: 600 }}>
+              <span style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub, fontWeight: 600 }}>
                 {kpi.label}
               </span>
-              <span style={{ fontSize: primitive.fontSize.xl, fontWeight: 800, color: themeVar.textPrimary }}>
+              <span style={{ fontSize: primitive.fontSize.xl, fontWeight: 800, color: SOLAR.text }}>
                 {kpi.value}
               </span>
             </div>
@@ -334,7 +392,7 @@ export function MarketplaceLanding({
       <section aria-labelledby="find-parts">
         <h2
           id="find-parts"
-          style={{ margin: `0 0 ${primitive.space[3]} 0`, fontSize: primitive.fontSize.lg, color: themeVar.textPrimary }}
+          style={{ margin: `0 0 ${primitive.space[3]} 0`, fontSize: primitive.fontSize.lg, color: SOLAR.text }}
         >
           Find parts for your car
         </h2>
@@ -468,7 +526,7 @@ export function MarketplaceLanding({
         ) : null}
 
         {/* ── Results ────────────────────────────────────────────────────── */}
-        <p style={{ marginTop: primitive.space[4], color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
+        <p style={{ marginTop: primitive.space[4], color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
           {total === 0
             ? 'No parts match that search.'
             : `${total} part${total === 1 ? '' : 's'} found${
@@ -478,8 +536,8 @@ export function MarketplaceLanding({
 
         {total === 0 ? (
           <div style={{ ...CARD, marginTop: primitive.space[3] }}>
-            <strong style={{ color: themeVar.textPrimary }}>Nothing matched those filters.</strong>
-            <span style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
+            <strong style={{ color: SOLAR.text }}>Nothing matched those filters.</strong>
+            <span style={{ color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
               Try removing the year or the part manufacturer — those two narrow a search fastest. Every
               option in the make and model lists has at least one part, so a make on its own always
               returns something.
@@ -498,8 +556,8 @@ export function MarketplaceLanding({
                 fontSize: primitive.fontSize.sm,
                 textTransform: 'uppercase',
                 letterSpacing: '0.5px',
-                color: themeVar.textSecondary,
-                borderBottom: `1px solid ${themeVar.borderDefault}`,
+                color: SOLAR.sub,
+                borderBottom: `1px solid ${SOLAR.border}`,
                 paddingBottom: primitive.space[1],
               }}
             >
@@ -524,11 +582,11 @@ export function MarketplaceLanding({
       <section aria-labelledby="find-mechanic">
         <h2
           id="find-mechanic"
-          style={{ margin: `0 0 ${primitive.space[2]} 0`, fontSize: primitive.fontSize.lg, color: themeVar.textPrimary }}
+          style={{ margin: `0 0 ${primitive.space[2]} 0`, fontSize: primitive.fontSize.lg, color: SOLAR.text }}
         >
           Find a mechanic
         </h2>
-        <p style={{ margin: `0 0 ${primitive.space[3]} 0`, color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
+        <p style={{ margin: `0 0 ${primitive.space[3]} 0`, color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
           Searching is free and needs no account. Booking a workshop or seeing its contact details
           needs you to sign in.
         </p>
@@ -572,8 +630,8 @@ export function MarketplaceLanding({
         >
           {mechanics.length === 0 ? (
             <div style={CARD}>
-              <strong style={{ color: themeVar.textPrimary }}>No workshops match that search.</strong>
-              <span style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
+              <strong style={{ color: SOLAR.text }}>No workshops match that search.</strong>
+              <span style={{ color: SOLAR.sub, fontSize: primitive.fontSize.sm }}>
                 Try a town name, or a service such as diagnostics or brakes.
               </span>
             </div>
@@ -585,9 +643,9 @@ export function MarketplaceLanding({
 
       <footer
         style={{
-          borderTop: `1px solid ${themeVar.borderDefault}`,
+          borderTop: `1px solid ${SOLAR.border}`,
           paddingTop: primitive.space[4],
-          color: themeVar.textSecondary,
+          color: SOLAR.sub,
           fontSize: primitive.fontSize.sm,
         }}
       >
@@ -641,9 +699,9 @@ function ChipLink({
       style={{
         borderRadius: '999px',
         padding: `${primitive.space[1]} ${primitive.space[3]}`,
-        border: `1px solid ${active ? primitive.color.blue[600] : themeVar.borderDefault}`,
+        border: `1px solid ${active ? primitive.color.blue[600] : SOLAR.border}`,
         background: active ? primitive.color.blue[600] : 'transparent',
-        color: active ? '#ffffff' : themeVar.textPrimary,
+        color: active ? '#ffffff' : SOLAR.text,
         fontSize: primitive.fontSize.sm,
         fontWeight: 600,
         textDecoration: 'none',
@@ -674,7 +732,7 @@ function PartCard({
             fontWeight: 700,
             letterSpacing: '0.4px',
             textTransform: 'uppercase',
-            color: themeVar.textSecondary,
+            color: SOLAR.sub,
           }}
         >
           {part.categoryName}
@@ -692,20 +750,20 @@ function PartCard({
         </span>
       </div>
 
-      <h4 style={{ margin: 0, fontSize: primitive.fontSize.base, color: themeVar.textPrimary, lineHeight: 1.25 }}>
+      <h4 style={{ margin: 0, fontSize: primitive.fontSize.base, color: SOLAR.text, lineHeight: 1.25 }}>
         {part.name}
       </h4>
 
-      <div style={{ fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
+      <div style={{ fontSize: primitive.fontSize.sm, color: SOLAR.sub }}>
         {part.brand ? <span>{part.brand} · </span> : null}
         <span style={{ fontFamily: primitive.fontFamily.mono }}>{part.partNumber}</span>
       </div>
 
-      <div style={{ fontSize: primitive.fontSize.lg, fontWeight: 800, color: themeVar.textPrimary }}>
+      <div style={{ fontSize: primitive.fontSize.lg, fontWeight: 800, color: SOLAR.text }}>
         {/* A NULL price is legal in the catalogue and must read as a state, not
             as a blank cell or a zero. */}
         {part.price === null ? (
-          <span style={{ fontSize: primitive.fontSize.base, fontWeight: 700, color: themeVar.textSecondary }}>
+          <span style={{ fontSize: primitive.fontSize.base, fontWeight: 700, color: SOLAR.sub }}>
             Price on request
           </span>
         ) : (
@@ -714,7 +772,7 @@ function PartCard({
       </div>
 
       {part.fitments.length > 0 ? (
-        <div style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary }}>
+        <div style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
           <span style={visuallyHidden}>Fits these vehicles: </span>
           Fits: {part.fitments.slice(0, 3).join(' · ')}
           {part.fitments.length > 3 ? ` · +${part.fitments.length - 3} more` : ''}
@@ -734,12 +792,12 @@ function PartCard({
         style={{
           marginTop: 'auto',
           paddingTop: primitive.space[2],
-          borderTop: `1px solid ${themeVar.borderDefault}`,
+          borderTop: `1px solid ${SOLAR.border}`,
           fontSize: primitive.fontSize.xs,
-          color: themeVar.textSecondary,
+          color: SOLAR.sub,
         }}
       >
-        Supplied by <strong style={{ color: themeVar.textPrimary }}>{part.supplierName}</strong>
+        Supplied by <strong style={{ color: SOLAR.text }}>{part.supplierName}</strong>
         {part.supplierCity ? `, ${part.supplierCity}` : ''} ({part.supplierCountry})
         {part.supplierVerified ? (
           <span style={{ color: primitive.color.green[700], fontWeight: 700 }}> · Verified</span>
@@ -752,19 +810,19 @@ function PartCard({
 function MechanicCard({ mechanic }: { mechanic: PublicMechanic }) {
   return (
     <article style={CARD}>
-      <h4 style={{ margin: 0, fontSize: primitive.fontSize.base, color: themeVar.textPrimary }}>
+      <h4 style={{ margin: 0, fontSize: primitive.fontSize.base, color: SOLAR.text }}>
         {mechanic.tradingName}
       </h4>
-      <div style={{ fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
+      <div style={{ fontSize: primitive.fontSize.sm, color: SOLAR.sub }}>
         {mechanic.city}, {mechanic.country}
       </div>
       {mechanic.services.length > 0 ? (
-        <div style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary }}>
+        <div style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
           Services: {mechanic.services.join(' · ')}
         </div>
       ) : null}
       {mechanic.specialisms.length > 0 ? (
-        <div style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary }}>
+        <div style={{ fontSize: primitive.fontSize.xs, color: SOLAR.sub }}>
           Specialises in: {mechanic.specialisms.join(' · ')}
         </div>
       ) : null}
