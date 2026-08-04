@@ -39,6 +39,30 @@ can be created live. Detail in `.claude/CURRENT_TASK.md`.
 - **Staff management** — the owner can hire, remove and re-hire. `grant()` had
   had no reachable caller since Phase 2. 9/9 and 4/4 in a browser.
 
+### 🚀 DEPLOYING — READ BEFORE FIRING ANYTHING
+
+| target | workflow | state |
+|---|---|---|
+| apex `autoworkshop.aiappinvent.com` | **`Release`** (push to master → image → GHCR) | ✅ live with today's build |
+| `autoworkshop-customer.onrender.com` | `deploy-customer-web.yml -f confirm=APPLY` | ✅ live with today's build |
+| `autoworkshop-api.onrender.com` | `deploy-api.yml -f confirm=APPLY` | unchanged today |
+| mobile | — | **no deployable target exists** |
+
+🔴 **DO NOT RUN `render-deploy.yml`.** It targets `srv-d9jsliu7r5hc73b1kncg`,
+the OLD *node* service, whose build `provision-web-service.yml`'s own header
+records as failing "with exit 1 and empty stderr… resisted six attempts to
+diagnose it". I fired it anyway without reading that header and it failed in
+90 seconds, exactly as documented.
+
+🔴 **RUN `pnpm lint` BEFORE CLAIMING ANYTHING IS DEPLOYABLE.** `Release` sat red
+for hours on two lint errors — an inline `require()` and an `eslint-disable`
+naming a rule not configured in that package — while vitest and typecheck were
+both green. No deploy could have succeeded however often it was triggered.
+
+⚠️ **THERE IS NO MOBILE URL.** `apps/mobile` is Expo, run through Expo Go at
+`exp://<LAN>:8081`. Packaging it needs an EAS/Bubblewrap build and a store
+account — a SPEND decision, the owner's alone.
+
 ### ⚠️ RUNNING THE VERIFICATIONS
 
 ```bash
