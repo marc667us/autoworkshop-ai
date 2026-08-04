@@ -71,7 +71,16 @@ bypassed by starting each process with `KEYCLOAK_URL=http://localhost:8080`,
 which keeps the issuer matching `.env` and works because the realm's dev clients
 already allow `http://localhost:<port>/*`. Worth fixing before relying on it.
 
-⚠️ Servers were left RUNNING.
+✅ **NO APP SERVERS ARE RUNNING.** Ports 3000, 3001 and 4000 are FREE at close
+— verified, not assumed. The Docker infrastructure IS up (postgres, keycloak,
+redis, minio, nats).
+
+⚠️ They were briefly left in the WORST possible state before this was cleaned:
+the API process died while both web apps kept listening. Every screen renders
+and every data call fails, which reads exactly like a product defect — the
+inverse of the stale-server trap this repo already has a lesson for. If a
+session ever finds pages loading but all data empty, **check port 4000 before
+diagnosing anything else.**
 
 ---
 
