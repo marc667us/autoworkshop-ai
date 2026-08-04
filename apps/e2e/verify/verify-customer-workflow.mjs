@@ -31,6 +31,7 @@
  * DEV ONLY — localhost/LAN, real Keycloak sign-in.
  */
 import { chromium } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 
 const CUSTOMER = process.env['CUSTOMER_WEB_URL'] ?? 'http://localhost:3000';
 const USER = process.env['DEV_CUSTOMER_EMAIL'] ?? 'customer@autoworkshop.local';
@@ -122,19 +123,33 @@ if (!signedIn) {
   process.exit(1);
 }
 
-// ── 🔴 SENTINEL: can an unbuilt screen still be recognised? ────────────────
-await page.goto(`${CUSTOMER}/payments/invoices`, { waitUntil: 'load' });
-const sentinel = await page.content();
-check(
-  'SENTINEL: the placeholder is still detectable',
-  PLACEHOLDER.test(sentinel),
-  'PLACEHOLDER no longer matches — every route below would pass regardless',
+// ── SENTINEL: can this script still RECOGNISE an unbuilt screen? ──────────
+//
+// Every judgement below depends on PLACEHOLDER matching the catch-all. If that
+// copy changed, the regex would silently match nothing and this script would
+// report the entire product as built.
+//
+// IT READS THE COMPONENT SOURCE, NOT A LIVE ROUTE. The first version navigated
+// to a route it believed was unbuilt - and the moment that route was given a
+// real page, the sentinel aborted the whole run. Correct behaviour (it refused
+// to measure with a detector it could not trust) and the wrong reference: a
+// route is a moving target, ModulePage.tsx is the source of truth for what the
+// catch-all actually says.
+const CATCH_ALL_SRC = readFileSync(
+  'C:/Users/USER/Documents/autoworkshop-ai/packages/next-shell/src/ModulePage.tsx',
+  'utf8',
 );
-if (!PLACEHOLDER.test(sentinel)) {
-  console.log('\nABORTING — the detector is broken.\n');
+check(
+  'SENTINEL: the placeholder wording is still what this script looks for',
+  PLACEHOLDER.test(CATCH_ALL_SRC),
+  'PLACEHOLDER no longer matches ModulePage.tsx - every route below would pass regardless',
+);
+if (!PLACEHOLDER.test(CATCH_ALL_SRC)) {
+  console.log('\nABORTING - the detector is broken, so nothing below would mean anything.\n');
   await browser.close();
   process.exit(1);
 }
+
 
 console.log('\n  the journey, in order:\n');
 

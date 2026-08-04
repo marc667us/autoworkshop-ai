@@ -68,6 +68,7 @@ function routesIn(src) {
 // working. `check-page-gates.sh` mis-reads the same directories (issue D4).
 function walkApp(appDir) {
   const pages = new Set();
+  const planned = new Set();
   (function walk(dir, prefix = '') {
     for (const e of readdirSync(dir)) {
       const p = join(dir, e);
@@ -80,10 +81,22 @@ function walkApp(appDir) {
         walk(p, `${prefix}/${e}`);
       } else if (e === 'page.tsx' && prefix) {
         pages.add(prefix);
+        // 🔴 A PLANNED SCREEN IS NOT A BUILT FEATURE.
+        //
+        // Routes that render `PlannedScreen` have their own `page.tsx` — they
+        // say what the screen is for and what to do today instead — so a
+        // file-counting audit calls them BUILT and the coverage number jumps to
+        // 100%. That is the same lie as the "99 screens" claim this whole
+        // script was written to correct, arriving through a different door.
+        //
+        // They ARE better than the catch-all: nothing now dead-ends. But they
+        // are counted apart, because a person reading "100% built" and finding
+        // twenty screens that explain themselves has been misled by this file.
+        if (/PlannedScreen/.test(readFileSync(p, 'utf8'))) planned.add(prefix);
       }
     }
   })(appDir);
-  return pages;
+  return { pages, planned };
 }
 
 // ⚠️ THE APP MATTERS. A role's tree is served by ONE app, and looking a
@@ -112,9 +125,13 @@ let totalAdvertised = 0;
 const deadEverywhere = new Map();
 
 for (const [label, [blockName, app]] of Object.entries(TREES)) {
-  const pages = pagesFor(app);
+  const { pages, planned } = pagesFor(app);
   const routes = routesIn(block(blockName));
-  const built = routes.filter((r) => pages.has(r));
+  // WORKING = a real screen. PLANNED = a page that explains itself and points
+  // somewhere useful. DEAD = the catch-all. Three numbers, because collapsing
+  // the first two is how a coverage figure starts lying.
+  const built = routes.filter((r) => pages.has(r) && !planned.has(r));
+  const explained = routes.filter((r) => planned.has(r));
   const dead = routes.filter((r) => !pages.has(r));
   totalAdvertised += routes.length;
   // Keyed by app as well as route: `/home/dashboard` exists in both apps and is
@@ -125,11 +142,16 @@ for (const [label, [blockName, app]] of Object.entries(TREES)) {
   }
   const pct = Math.round((built.length / routes.length) * 100);
   console.log(
-    `  ${label}  (${app})\n     ${routes.length} menu entries · ${built.length} built (${pct}%) · ${dead.length} land on "not built yet"\n`,
+    `  ${label}  (${app})\n     ${routes.length} menu entries · ${built.length} WORKING (${pct}%)` +
+      ` · ${explained.length} explained + signposted · ${dead.length} dead ends\n`,
   );
 }
 
-for (const [app, pages] of pagesByApp) console.log(`  ${app} has ${pages.size} real page routes`);
+for (const [app, { pages, planned }] of pagesByApp) {
+  console.log(
+    `  ${app}: ${pages.size - planned.size} working screens + ${planned.size} explained = ${pages.size} routes`,
+  );
+}
 console.log();
 
 console.log(`\nDistinct menu entries with NO page anywhere: ${deadEverywhere.size}`);
