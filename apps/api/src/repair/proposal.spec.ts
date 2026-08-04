@@ -341,7 +341,7 @@ describe('the assembled document — §410-§422', () => {
 describe('recordDecision — §7 and the attribution', () => {
   const issued = [
     Q.decisionLookup,
-    [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1' }],
+    [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1', superseded_by: null }],
   ] as [RegExp, unknown[]];
 
   it('requires the customer name and the channel', async () => {
@@ -356,6 +356,23 @@ describe('recordDecision — §7 and the attribution', () => {
         decision: 'approved', approvedOption: 'recommended', decidedByName: 'Kwame',
       }),
     ).rejects.toThrow(/decisionChannel/);
+  });
+
+  it('🔴 refuses a SUPERSEDED version on the STAFF route too', async () => {
+    // §424: the answer belongs to the CURRENT version. A superseded row can
+    // still read `issued`, so status alone does not catch it — and recording
+    // an approval against a replaced document authorises work at a price the
+    // workshop has withdrawn.
+    const superseded = [
+      Q.decisionLookup,
+      [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1', superseded_by: 'newer' }],
+    ] as [RegExp, unknown[]];
+    await expect(
+      new ProposalService(fakeDb([superseded]).db, fakeAudit()).recordDecision(ctx(), PROPOSAL_ID, {
+        decision: 'approved', approvedOption: 'recommended',
+        decidedByName: 'Kwame', decisionChannel: 'telephone',
+      }),
+    ).rejects.toThrow(/superseded by a newer proposal/);
   });
 
   it('requires a reason for anything that is not an approval', async () => {
@@ -403,14 +420,14 @@ describe('recordDecision — §7 and the attribution', () => {
   });
 
   it('refuses a decision on a draft, and a second decision on a settled one', async () => {
-    const draft = [Q.decisionLookup, [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1' }]] as [RegExp, unknown[]];
+    const draft = [Q.decisionLookup, [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1', superseded_by: null }]] as [RegExp, unknown[]];
     await expect(
       new ProposalService(fakeDb([draft]).db, fakeAudit()).recordDecision(ctx(), PROPOSAL_ID, {
         decision: 'approved', approvedOption: 'recommended', decidedByName: 'K', decisionChannel: 'sms',
       }),
     ).rejects.toThrow(/has not been issued/);
 
-    const done = [Q.decisionLookup, [{ id: PROPOSAL_ID, status: 'approved', version_no: 1, job_number: 'JC-1' }]] as [RegExp, unknown[]];
+    const done = [Q.decisionLookup, [{ id: PROPOSAL_ID, status: 'approved', version_no: 1, job_number: 'JC-1', superseded_by: null }]] as [RegExp, unknown[]];
     await expect(
       new ProposalService(fakeDb([done]).db, fakeAudit()).recordDecision(ctx(), PROPOSAL_ID, {
         decision: 'declined', decidedByName: 'K', decisionChannel: 'sms', note: 'no',
@@ -427,7 +444,7 @@ describe('recordCustomerDecision — the customer answers for themselves', () =>
   // name, and it is constrained to a card that customer owns.
   const mine = [
     Q.decisionLookup,
-    [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1', display_name: 'Kwame Mensah' }],
+    [{ id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1', display_name: 'Kwame Mensah', superseded_by: null }],
   ] as [RegExp, unknown[]];
 
   const customerCtx = () => ctx({ activeRole: 'customer', userId: 'cust-1' });
@@ -515,6 +532,24 @@ describe('recordCustomerDecision — the customer answers for themselves', () =>
     ).rejects.toThrow(/approvedOption/);
   });
 
+  it('🔴 refuses a SUPERSEDED version even while its status still reads issued', async () => {
+    // The CONTROL behind the `decidable` flag. Hiding the version from the
+    // screen is not enough — a caller can POST any id, and answering a document
+    // the workshop has replaced would bind them to a superseded price.
+    const superseded = [
+      Q.decisionLookup,
+      [{
+        id: PROPOSAL_ID, status: 'issued', version_no: 1, job_number: 'JC-1',
+        display_name: 'Kwame Mensah', superseded_by: 'a-newer-proposal',
+      }],
+    ] as [RegExp, unknown[]];
+    await expect(
+      new ProposalService(fakeDb([superseded]).db, fakeAudit()).recordCustomerDecision(
+        customerCtx(), PROPOSAL_ID, { decision: 'approved', approvedOption: 'recommended' },
+      ),
+    ).rejects.toThrow(/replaced by a newer proposal/);
+  });
+
   it('404s rather than 403s when the proposal is not theirs', async () => {
     // The non-oracle rule: a customer must not be able to learn that somebody
     // else's proposal exists by the shape of the refusal.
@@ -528,7 +563,7 @@ describe('recordCustomerDecision — the customer answers for themselves', () =>
   it('refuses to answer a proposal that was never sent, or was already answered', async () => {
     const draft = [
       Q.decisionLookup,
-      [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1', display_name: 'K' }],
+      [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1', display_name: 'K', superseded_by: null }],
     ] as [RegExp, unknown[]];
     await expect(
       new ProposalService(fakeDb([draft]).db, fakeAudit()).recordCustomerDecision(
@@ -538,7 +573,7 @@ describe('recordCustomerDecision — the customer answers for themselves', () =>
 
     const answered = [
       Q.decisionLookup,
-      [{ id: PROPOSAL_ID, status: 'approved', version_no: 2, job_number: 'JC-1', display_name: 'K' }],
+      [{ id: PROPOSAL_ID, status: 'approved', version_no: 2, job_number: 'JC-1', display_name: 'K', superseded_by: null }],
     ] as [RegExp, unknown[]];
     await expect(
       new ProposalService(fakeDb([answered]).db, fakeAudit()).recordCustomerDecision(
@@ -638,7 +673,7 @@ describe('§424 — immutability', () => {
       }),
     ).rejects.toThrow(/with the customer and its content is frozen/);
 
-    const approvedRow = [Q.draft, [{ id: PROPOSAL_ID, status: 'approved', version_no: 1, job_number: 'JC-1' }]] as [RegExp, unknown[]];
+    const approvedRow = [Q.draft, [{ id: PROPOSAL_ID, status: 'approved', version_no: 1, job_number: 'JC-1', superseded_by: null }]] as [RegExp, unknown[]];
     await expect(
       new ProposalService(fakeDb([approvedRow]).db, fakeAudit()).recordNarrative(ctx(), PROPOSAL_ID, {
         expectedResult: 'changed',
@@ -648,7 +683,7 @@ describe('§424 — immutability', () => {
 
   it('refuses to issue without §418s expected result', async () => {
     const { db } = fakeDb([
-      [Q.draft, [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1' }]],
+      [Q.draft, [{ id: PROPOSAL_ID, status: 'draft', version_no: 1, job_number: 'JC-1', superseded_by: null }]],
       ...readHandlers(),
     ]);
     // The one section of §410-§422 no other record can supply: a price with no promise

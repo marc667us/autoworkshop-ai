@@ -46,8 +46,14 @@ async function describeNavigation() {
      *
      * Exactly the family of defect that produced "Not signed in" beside a
      * working "Sign out" twice already: a truth about A used as evidence for B.
+     *
+     * ⚠️ `viewerHasSession`, NOT `currentViewer() !== null`. The first fix used
+     * the viewer, and `currentViewer()` returns null when `/me` FAILS — so an
+     * API outage would have restored the exact same lie through a different
+     * door. The session cookie is the thing being asserted, so read it.
+     * (Codex, 2026-08-04.)
      */
-    signedIn: viewer !== null && viewer !== undefined,
+    signedIn: await viewerHasSession('workshop'),
     groupCount: visible.length,
     itemCount: visible.reduce((n, g) => n + g.items.length, 0),
     roleLabel: role ? `${role} role` : 'workspace default',

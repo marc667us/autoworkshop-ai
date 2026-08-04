@@ -474,7 +474,7 @@ export class ProposalService {
 
     return this.db.withTenant(ctx, async (client) => {
       const found = await client.query(
-        `SELECT p.id, p.status, p.version_no, j.job_number
+        `SELECT p.id, p.status, p.version_no, j.job_number, p.superseded_by
            FROM repair.repair_proposals p
            JOIN repair.job_cards j ON j.id = p.job_card_id AND j.tenant_id = p.tenant_id
           WHERE p.id = $1 AND p.tenant_id = $2 AND p.organization_id = $3
@@ -484,7 +484,13 @@ export class ProposalService {
         [id, ctx.tenantId, ctx.organizationId],
       );
       const row = found.rows[0] as
-        | { id: string; status: ProposalStatus; version_no: number; job_number: string }
+        | {
+            id: string;
+            status: ProposalStatus;
+            version_no: number;
+            job_number: string;
+            superseded_by: string | null;
+          }
         | undefined;
       // 404, not 403 — the non-oracle rule this codebase holds everywhere.
       if (!row) throw new NotFoundException('proposal not found');
@@ -494,6 +500,25 @@ export class ProposalService {
           'this proposal has not been issued to the customer yet, so there is no decision to record',
         );
       }
+      // 🔴 THE SAME CHECK AS THE CUSTOMER ROUTE, and it belongs on BOTH.
+      //
+      // `!== null`, deliberately: an `undefined` — which is what a query that
+      // stopped selecting this column would yield — REFUSES the decision rather
+      // than waving it through. A loose `!= null` would read a broken query as
+      // "not superseded" and silently restore the hole this closes.
+      //
+      // §424 makes an approved proposal immutable and a material change a NEW
+      // version; recording an answer against a version that has already been
+      // replaced authorises work against the wrong document and against the
+      // wrong price. Status alone does not catch it — a superseded row can still
+      // read `issued`. (Codex, 2026-08-04.)
+      if (row.superseded_by !== null) {
+        throw new ConflictException(
+          `version ${row.version_no} has been superseded by a newer proposal; §424 requires ` +
+            'the answer to be recorded against the current version',
+        );
+      }
+
       if (row.status !== 'issued') {
         throw new ConflictException(
           `version ${row.version_no} was already ${row.status}; §424 requires a new version ` +
@@ -603,7 +628,8 @@ export class ProposalService {
       // scope; `c.display_name` is the attribution, taken from the customer
       // record rather than from the request.
       const found = await client.query(
-        `SELECT p.id, p.status, p.version_no, j.job_number, c.display_name
+        `SELECT p.id, p.status, p.version_no, j.job_number, c.display_name,
+                p.superseded_by
            FROM repair.repair_proposals p
            JOIN repair.job_cards j ON j.id = p.job_card_id AND j.tenant_id = p.tenant_id
            JOIN core.customers c ON c.id = j.customer_id AND c.tenant_id = j.tenant_id
@@ -613,7 +639,14 @@ export class ProposalService {
         [id, ctx.tenantId, ctx.organizationId, ctx.userId],
       );
       const row = found.rows[0] as
-        | { id: string; status: ProposalStatus; version_no: number; job_number: string; display_name: string }
+        | {
+            id: string;
+            status: ProposalStatus;
+            version_no: number;
+            job_number: string;
+            display_name: string;
+            superseded_by: string | null;
+          }
         | undefined;
       // 404, not 403 — the non-oracle rule this codebase holds everywhere. A
       // customer must not be able to learn that somebody else's proposal exists.
@@ -628,6 +661,23 @@ export class ProposalService {
         throw new ConflictException(
           `you already answered version ${row.version_no} (${row.status}). If something has ` +
             'changed, ask the workshop to send a revised proposal',
+        );
+      }
+
+      // 🔴 THE CONTROL, not the affordance. `decidable` hides a superseded
+      // version from the screen; this is what makes hiding it irrelevant.
+      // `decidable` is documented as a UI convenience and CLAUDE.md §8 is
+      // explicit that hidden is not secure — a caller can POST whatever id they
+      // like, and without this line they could answer a document the workshop
+      // has already replaced, binding the workshop to a superseded price.
+      //
+      // `prepare()` will not supersede a proposal that is still with the
+      // customer, so the real flow cannot produce this pair. That is an argument
+      // for the check being cheap, not for omitting it. (Codex, 2026-08-04.)
+      if (row.superseded_by !== null) {
+        throw new ConflictException(
+          `version ${row.version_no} has been replaced by a newer proposal. ` +
+            'Please answer the current one instead',
         );
       }
 

@@ -70,7 +70,13 @@ BEGIN
     JOIN core.customers c ON c.id = j.customer_id AND c.tenant_id = j.tenant_id
     JOIN identity.users  u ON u.id = c.user_id
    WHERE u.email = current_setting('aw.customer_email', true)
-     AND EXISTS (SELECT 1 FROM repair.quotations q WHERE q.job_card_id = j.id)
+     -- APPROVED quotations only. `repair.assert_proposal_quotation_approved`
+     -- (migration 017) refuses a proposal built on a draft or rejected price,
+     -- and `prepare()` filters the same way. A fixture that picks any quotation
+     -- either dies on the trigger or seeds a document the product would never
+     -- have produced.
+     AND EXISTS (SELECT 1 FROM repair.quotations q
+                  WHERE q.job_card_id = j.id AND q.status = 'approved')
    ORDER BY j.opened_at DESC
    LIMIT 1;
 
@@ -88,8 +94,13 @@ BEGIN
   SELECT id INTO quote
     FROM repair.quotations
    WHERE job_card_id = card AND tenant_id = ten
+     AND status = 'approved'
    ORDER BY attempt_no DESC
    LIMIT 1;
+
+  IF quote IS NULL THEN
+    RAISE EXCEPTION 'card % has no APPROVED quotation to build a proposal from', card;
+  END IF;
 
   -- 🔴 IF ONE IS ALREADY WAITING, REUSE IT. DO NOT ADD ANOTHER.
   --
@@ -151,9 +162,15 @@ BEGIN
   -- §424: the previous version points at its replacement rather than being
   -- edited or deleted. Only `superseded_by` is writable on a decided proposal,
   -- and that is deliberate — see migration 017.
+  -- 🔴 STATUS TOO, NOT JUST THE POINTER. Setting `superseded_by` alone leaves
+  -- the old row reading `issued`, which is precisely the impossible pair the
+  -- service now refuses — `status = 'issued'` AND `superseded_by IS NOT NULL`.
+  -- The first version of this script did exactly that and manufactured a state
+  -- the product cannot produce, which then failed the verify run as if it were
+  -- a product defect. `ProposalService.prepare()` sets both; so does this.
   IF latest > 0 THEN
     UPDATE repair.repair_proposals
-       SET superseded_by = new_id
+       SET superseded_by = new_id, status = 'superseded'
      WHERE job_card_id = card AND tenant_id = ten AND version_no = latest;
   END IF;
 

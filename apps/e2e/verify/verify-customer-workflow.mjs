@@ -179,6 +179,25 @@ check(
   offersAnswer || nothingWaiting,
   'neither an answerable proposal nor an honest empty state — check `decidable`',
 );
+
+// 🔴 AN EMPTY PROPOSAL TABLE IS NOT A PASS.
+//
+// "Nothing is waiting on you" is a CORRECT screen and a USELESS test: the whole
+// approve-the-work path below sits inside `if (offersAnswer)`, so with no seeded
+// proposal this suite goes green having never touched the feature README
+// promises. That is the 24-of-24-against-an-empty-shop failure, and leaving the
+// branch permissive would have rebuilt it here deliberately. (Codex, 2026-08-04.)
+//
+// The opt-out exists for the one legitimate case — running against an
+// environment where seeding is not possible — and it has to be asked for.
+const ALLOW_EMPTY = process.env['ALLOW_EMPTY_CUSTOMER_PROPOSALS'] === '1';
+check(
+  'an ANSWERABLE proposal exists, so the approval path is actually exercised',
+  offersAnswer || ALLOW_EMPTY,
+  'run `bash scripts/seed-customer-proposal-fixture.sh` first — the run CONSUMES it, ' +
+    'so it must be re-seeded before each verification. Set ALLOW_EMPTY_CUSTOMER_PROPOSALS=1 ' +
+    'only if you genuinely mean to skip the approval test.',
+);
 if (offersAnswer) {
   check(
     'an answerable proposal offers a SUBMIT control, not just prose',
