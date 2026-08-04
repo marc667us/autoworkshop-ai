@@ -112,6 +112,9 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       vinQuery={vinQuery}
       vinResult={vinResult && vinResult.ok ? vinResult.data : null}
       problems={problems}
+      // This app serves the public landing at ITS root. Signed-in visitors are
+      // redirected away before reaching here, so `/` is correct for this mount.
+      basePath="/"
       // ⚠️ SUPPLIED BY THIS APP, not imported by the package. The basket is
       // customer-web's own client-side store; the shared landing must not know
       // it exists, or it could not be mounted anywhere else.

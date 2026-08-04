@@ -104,6 +104,23 @@ export interface MarketplaceLandingProps {
   /** Non-fatal problems, named rather than rendered as an empty page. */
   problems: string[];
   /**
+   * The URL THIS PAGE IS MOUNTED AT. Every search form, reset link and category
+   * chip submits back to it.
+   *
+   * 🔴 IT USED TO BE THE LITERAL `'/'`, AND THAT BROKE THE SECOND MOUNT.
+   * Codex, 2026-08-05: `customer-web` mounts this same component at
+   * `/marketplace` precisely so a SIGNED-IN customer can browse the catalogue —
+   * and `customer-web`'s `/` redirects a signed-in visitor to their dashboard.
+   * So on that mount, submitting any search threw the customer out of the
+   * marketplace and onto their dashboard, with their filters discarded.
+   *
+   * One component, two mounts, and the controls only worked on one of them —
+   * exactly the failure §0.3 warns a shared surface can hide. Required, not
+   * optional with a `'/'` default: a default would let a third mount reintroduce
+   * the bug silently, and there are only two call sites to keep honest.
+   */
+  basePath: string;
+  /**
    * The "Add to basket" control for a part card, supplied by the app.
    *
    * ⚠️ A RENDER PROP, NOT AN IMPORT, AND THAT IS WHAT LETS THIS PAGE BE SHARED.
@@ -129,6 +146,7 @@ export function MarketplaceLanding({
   vinQuery,
   vinResult,
   problems,
+  basePath,
   renderAddToBasket,
 }: MarketplaceLandingProps) {
   // Cards are grouped under category headings, preserving the order the API
@@ -463,7 +481,7 @@ export function MarketplaceLanding({
           */}
           <form
             method="GET"
-            action="/"
+            action={basePath}
             style={{
               ...CARD,
               height: 'auto',
@@ -557,7 +575,7 @@ export function MarketplaceLanding({
                 Search parts
               </button>
               {anyFilter ? (
-                <Link href="/" style={BUTTON_SECONDARY}>
+                <Link href={basePath} style={BUTTON_SECONDARY}>
                   Reset
                 </Link>
               ) : null}
@@ -570,10 +588,17 @@ export function MarketplaceLanding({
               aria-label="Filter parts by category"
               style={{ display: 'flex', flexWrap: 'wrap', gap: primitive.space[2], marginTop: primitive.space[4] }}
             >
-              <ChipLink applied={applied} category="" label={`All (${total})`} active={!applied.category} />
+              <ChipLink
+                applied={applied}
+                basePath={basePath}
+                category=""
+                label={`All (${total})`}
+                active={!applied.category}
+              />
               {facets.categories.map((c) => (
                 <ChipLink
                   key={c.slug}
+                  basePath={basePath}
                   applied={applied}
                   category={c.slug}
                   label={`${c.name} (${c.partCount})`}
@@ -600,7 +625,7 @@ export function MarketplaceLanding({
                 option in the make and model lists has at least one part, so a make on its own always
                 returns something.
               </span>
-              <Link href="/" style={{ ...BUTTON_SECONDARY, alignSelf: 'flex-start' }}>
+              <Link href={basePath} style={{ ...BUTTON_SECONDARY, alignSelf: 'flex-start' }}>
                 Clear all filters
               </Link>
             </div>
@@ -645,7 +670,7 @@ export function MarketplaceLanding({
 
           <form
             method="GET"
-            action="/"
+            action={basePath}
             style={{
               ...CARD,
               height: 'auto',
@@ -847,11 +872,14 @@ export function MarketplaceLanding({
 /** A category chip that preserves the rest of the current search. */
 function ChipLink({
   applied,
+  basePath,
   category,
   label,
   active,
 }: {
   applied: MarketplaceLandingProps['applied'];
+  /** Where this page is mounted — a chip must return to it, not to `/`. */
+  basePath: string;
   category: string;
   label: string;
   active: boolean;
@@ -862,7 +890,7 @@ function ChipLink({
   }
   if (applied.mechanicQuery) params.set('mechanic', applied.mechanicQuery);
   if (category) params.set('category', category);
-  const href = params.toString() ? `/?${params.toString()}` : '/';
+  const href = params.toString() ? `${basePath}?${params.toString()}` : basePath;
 
   return (
     <Link

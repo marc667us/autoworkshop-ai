@@ -124,6 +124,8 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       vinQuery={vinQuery}
       vinResult={vinResult && vinResult.ok ? vinResult.data : null}
       problems={problems}
+      // This app serves the landing at the APEX.
+      basePath="/"
     />
   );
 }

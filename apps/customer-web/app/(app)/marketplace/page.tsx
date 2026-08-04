@@ -115,6 +115,10 @@ export default async function Marketplace({ searchParams }: { searchParams?: Pro
       vinQuery={vinQuery}
       vinResult={vinResult && vinResult.ok ? vinResult.data : null}
       problems={problems}
+      // 🔴 NOT `/`. This app's `/` redirects a signed-in visitor to their
+      // dashboard, so a search submitted to `/` threw the customer out of the
+      // marketplace with their filters discarded (Codex, 2026-08-05).
+      basePath="/marketplace"
       // ⚠️ SUPPLIED BY THIS APP, not imported by the package. The basket is
       // customer-web's own client-side store; the shared landing must not know
       // it exists, or it could not be mounted anywhere else.

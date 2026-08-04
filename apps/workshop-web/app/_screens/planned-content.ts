@@ -27,7 +27,16 @@ export interface PlannedScreen {
   hrefLabel?: string;
 }
 
-export const WORKSHOP_PLANNED: Record<string, PlannedScreen> = {
+import { WORKSHOP_TREES_PLANNED } from './planned-workshop';
+
+/**
+ * The technician tree's entries (§49). The four WORKSHOP trees live in
+ * `planned-workshop.ts` and are merged in below — 104 of them, added on
+ * 2026-08-05, and keeping them in a separate file stops this one becoming
+ * unreadable while leaving `WORKSHOP_PLANNED` as the single lookup the screen
+ * component reads.
+ */
+const TECHNICIAN_PLANNED: Record<string, PlannedScreen> = {
   // ── §49 Home ──────────────────────────────────────────────────────────────
   '/home/notifications': {
     does: 'Every alert aimed at you — a job assigned, a QC return, a part that has arrived.',
@@ -36,10 +45,17 @@ export const WORKSHOP_PLANNED: Record<string, PlannedScreen> = {
     hrefLabel: 'My assigned work',
   },
   '/home/calendar': {
-    does: 'Your day and week: the jobs booked to you, and when each is expected out.',
-    now: 'Each job card carries its own expected completion date; your assigned work lists them all.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
+    does: 'Your day and week: the jobs booked in, and when each is expected out.',
+    // 🔴 POINTED AT `/home/my-assigned-work` UNTIL 2026-08-05, AND THAT WAS A WALL.
+    // `/home/calendar` is in FOUR trees (default, owner, reception, technician);
+    // `/home/my-assigned-work` is in the TECHNICIAN tree only. So an owner, a
+    // manager or a receptionist was told to go somewhere that 404s for them —
+    // the exact defect class this repo calls its most expensive, shipped on a
+    // screen written to avoid it. Found by `planned-workshop.spec.ts` on its
+    // first run, which is the argument for having written that test.
+    now: 'Scheduling is a later phase. Each job card carries its own expected completion date, and the dashboard shows what is live right now.',
+    href: '/home/dashboard',
+    hrefLabel: 'Dashboard',
   },
 
   // ── §49 Technical Tools — the Phase 9 knowledge libraries ────────────────
@@ -161,4 +177,24 @@ export const WORKSHOP_PLANNED: Record<string, PlannedScreen> = {
     href: '/home/my-assigned-work',
     hrefLabel: 'My assigned work',
   },
+};
+
+/**
+ * ⚠️ ONE MAP, TWO SOURCES, AND A COLLISION WOULD BE SILENT.
+ *
+ * Object spread lets the later key win, so a route defined in both files would
+ * quietly take the workshop wording on a technician's screen. The assertion
+ * below refuses to let the module load in that state rather than shipping a
+ * screen that signposts the wrong role somewhere it cannot go.
+ */
+const collisions = Object.keys(TECHNICIAN_PLANNED).filter((k) => k in WORKSHOP_TREES_PLANNED);
+if (collisions.length > 0) {
+  throw new Error(
+    `planned-content: route defined in both planned-content.ts and planned-workshop.ts: ${collisions.join(', ')}`,
+  );
+}
+
+export const WORKSHOP_PLANNED: Record<string, PlannedScreen> = {
+  ...TECHNICIAN_PLANNED,
+  ...WORKSHOP_TREES_PLANNED,
 };
