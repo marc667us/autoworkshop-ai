@@ -14,6 +14,21 @@ import { clientIdForWorkspace, keycloakIssuer } from '@autoworkshop/auth';
  * sibling route rather than a re-export: each app registers its own Keycloak
  * client and a shared handler would send visitors through the wrong one.
  *
+ * ⚠️ VERIFIED AGAINST THE LIVE REALM, 2026-08-05, AND THE COMMITTED REALM FILE
+ * DISAGREES WITH IT. `infrastructure/keycloak/realm-autoworkshop.json` lists
+ * `autoworkshop-workshop-web` with redirect URIs `http://localhost:3001/*` and
+ * `https://workshop.autoworkshop.aiappinvent.com/*` — the APEX is on the
+ * *customer* client there. Read literally, this route would send the apex a
+ * `redirect_uri` Keycloak rejects, and the security review flagged exactly that.
+ *
+ * The live realm has drifted: driving it directly, both
+ * `.../protocol/openid-connect/auth` and `.../registrations` answer **302** for
+ * `client_id=autoworkshop-workshop-web` with
+ * `redirect_uri=https://autoworkshop.aiappinvent.com/api/auth/callback/keycloak`.
+ * So this works today — but a re-import of the committed file would silently
+ * break both sign-in and sign-up on the apex, and that file should be brought
+ * back in step with production.
+ *
  * "Create an account" — sends the visitor to Keycloak's REGISTRATION page.
  *
  * ⚠️ WHY THIS ROUTE EXISTS RATHER THAN A LINK ON THE LANDING PAGE. Keycloak's

@@ -81,7 +81,18 @@ export default async function Page({
     );
   }
 
-  const result = await apiGet<FullVin>('customer', `/vin/${encodeURIComponent(vin)}`);
+  // 🔴 `'workshop'`, NOT `'customer'`. This file was copied from customer-web and
+  // the workspace id came with it. Session cookies are scoped PER WORKSPACE
+  // (`authjs.session-token.<workspace>`) and cookies are host-only here — no
+  // `Domain` attribute is set — so on the workshop host the customer cookie
+  // cannot exist and every lookup rendered "your session has ended".
+  //
+  // ⚠️ AND LOCAL TESTING WOULD NEVER HAVE CAUGHT IT: `localhost:3000` and
+  // `localhost:3001` share one cookie jar, because COOKIES IGNORE THE PORT —
+  // the same fact that caused the accidental cross-app session on 2026-08-04.
+  // So the wrong workspace id works locally and fails only in production.
+  // Found by the security review, 2026-08-05.
+  const result = await apiGet<FullVin>('workshop', `/vin/${encodeURIComponent(vin)}`);
 
   if (!result.ok) {
     return (
