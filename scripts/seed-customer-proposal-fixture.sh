@@ -102,6 +102,47 @@ BEGIN
     RAISE EXCEPTION 'card % has no APPROVED quotation to build a proposal from', card;
   END IF;
 
+  -- ── 🔴 RESET THE FIXTURE'S OWN PREVIOUS ROW, IF THE LAST RUN ANSWERED IT ──
+  --
+  -- The verify run CONSUMES this fixture by approving it, and the product then
+  -- refuses to move on: `prepare()` will not supersede an APPROVED proposal
+  -- ("a material change needs a new quotation first"), and the CHECK constraint
+  -- `proposal_option_only_when_approved` makes `status='superseded'` impossible
+  -- while `approved_option` is set. Both are CORRECT — replacing an agreement a
+  -- customer has given is a commercial act, not a button press.
+  --
+  -- So there is no legitimate forward path on that card, and the fixture has to
+  -- go backwards: it un-answers the row IT created. That means suspending
+  -- `trg_proposals_immutable`, the trigger enforcing §424 immutability.
+  --
+  -- ⚠️ THIS IS THE ONLY PLACE IN THE REPOSITORY THAT DISABLES THAT TRIGGER, and
+  -- it is confined to a DEV container, to rows this fixture wrote (matched on
+  -- its own marker text), and re-enabled in the same transaction so a failure
+  -- rolls the whole thing back rather than leaving the guard off. It exists so
+  -- the approval path can be re-verified on demand; nothing else may do it.
+  ALTER TABLE repair.repair_proposals DISABLE TRIGGER trg_proposals_immutable;
+
+  UPDATE repair.repair_proposals
+     SET status = 'issued', decision = NULL, approved_option = NULL,
+         decided_at = NULL, decided_by_name = NULL, decision_channel = NULL,
+         decision_note = NULL, recorded_by = NULL, superseded_by = NULL,
+         updated_at = now()
+   WHERE job_card_id = card AND tenant_id = ten
+     AND decision IS NOT NULL
+     -- ONLY this fixture's own rows. A real proposal answered by a real
+     -- customer must never be silently un-answered, not even in dev.
+     AND expected_result = 'The rough idle is corrected and the vehicle idles within specification.'
+     -- 🔴 AND ONLY THE LATEST ONE. Resetting every fixture row un-answered the
+     -- whole history at once, so several versions read `issued` together — the
+     -- customer screen then offered two proposals, answering one left the other
+     -- waiting, and the verify run failed on a state the fixture had created.
+     -- The product allows exactly one answerable version per card; a fixture
+     -- that produces more is not seeding, it is corrupting.
+     AND version_no = (SELECT max(version_no) FROM repair.repair_proposals
+                        WHERE job_card_id = card AND tenant_id = ten);
+
+  ALTER TABLE repair.repair_proposals ENABLE TRIGGER trg_proposals_immutable;
+
   -- 🔴 IF ONE IS ALREADY WAITING, REUSE IT. DO NOT ADD ANOTHER.
   --
   -- The first version of this script always inserted the next version and only
@@ -168,10 +209,15 @@ BEGIN
   -- The first version of this script did exactly that and manufactured a state
   -- the product cannot produce, which then failed the verify run as if it were
   -- a product defect. `ProposalService.prepare()` sets both; so does this.
+  -- ⚠️ NEVER an APPROVED row. `prepare()` refuses to supersede one, and the
+  -- CHECK constraint forbids `status='superseded'` while `approved_option` is
+  -- set — so writing that pair would both corrupt the model and fail. Mirrors
+  -- the product exactly: supersede only what the product would supersede.
   IF latest > 0 THEN
     UPDATE repair.repair_proposals
        SET superseded_by = new_id, status = 'superseded'
-     WHERE job_card_id = card AND tenant_id = ten AND version_no = latest;
+     WHERE job_card_id = card AND tenant_id = ten AND version_no = latest
+       AND status NOT IN ('approved', 'superseded');
   END IF;
 
   -- The card has to be at the stage that MEANS "with the customer", or the

@@ -173,11 +173,17 @@ for (const [route, needs, what] of WORKFLOW) {
 await page.goto(`${CUSTOMER}/service-and-repairs/repair-proposals`, { waitUntil: 'load' });
 const proposals = await page.content();
 const offersAnswer = /Approve this repair|Send my answer/i.test(proposals);
+// Three coherent states, not two. The third is the one a real customer hits
+// most: they have ANSWERED, and the workshop has not moved the job on yet —
+// recording a decision does not advance the card, that is staff's action. The
+// first version of this check knew only "offers an answer" or "nothing is
+// waiting", so it failed on the perfectly correct in-between state.
+const alreadyAnswered = /You (approved|answered) proposal/i.test(proposals);
 const nothingWaiting = /Nothing is waiting on you/i.test(proposals);
 check(
   'the approval screen is in a coherent state',
-  offersAnswer || nothingWaiting,
-  'neither an answerable proposal nor an honest empty state — check `decidable`',
+  offersAnswer || nothingWaiting || alreadyAnswered,
+  'none of: an answerable proposal, an honest empty state, or an acknowledged answer',
 );
 
 // 🔴 AN EMPTY PROPOSAL TABLE IS NOT A PASS.

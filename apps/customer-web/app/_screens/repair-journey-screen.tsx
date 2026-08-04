@@ -75,6 +75,8 @@ interface ProposalRow {
   riskAndLimitations: string | null;
   uncertainties: string | null;
   decidable: boolean;
+  decision: string | null;
+  decidedAt: string | null;
   presentation: {
     currency: string;
     recommendedTotal: number;
@@ -227,6 +229,23 @@ async function JourneyList({ view }: { view: JourneyView }) {
                 ? proposals.data.find((p) => p.jobCardId === card.id && p.decidable)
                 : undefined
             }
+            /*
+              The most recent proposal on this card that has ALREADY been
+              answered. Needed because recording a decision does NOT move the
+              job card - advancing the stage is the workshop's action, gated by
+              role. So between the customer approving and staff picking the job
+              up, the card still reads `awaiting_customer_approval` with no
+              answerable proposal on it, and the screen told the customer to
+              "contact the workshop to approve or decline" the very thing they
+              had just approved.
+            */
+            answered={
+              proposals?.ok
+                ? proposals.data
+                    .filter((p) => p.jobCardId === card.id && p.decision !== null)
+                    .sort((a, b) => b.versionNo - a.versionNo)[0]
+                : undefined
+            }
           />
         ))}
       </ul>
@@ -234,7 +253,15 @@ async function JourneyList({ view }: { view: JourneyView }) {
   );
 }
 
-function JourneyCard({ card, proposal }: { card: JobCardRow; proposal?: ProposalRow }) {
+function JourneyCard({
+  card,
+  proposal,
+  answered,
+}: {
+  card: JobCardRow;
+  proposal?: ProposalRow;
+  answered?: ProposalRow;
+}) {
   const stage = customerStage(card.stage);
   const yours = stage.phase === 'needs_you';
 
@@ -376,12 +403,24 @@ function JourneyCard({ card, proposal }: { card: JobCardRow; proposal?: Proposal
                 currency={proposal.presentation.currency}
               />
             </>
+          ) : answered ? (
+            /*
+              They have ALREADY answered and the workshop has not moved the job
+              on yet. Telling them to go and approve it would be the screen
+              contradicting the decision it recorded a moment earlier.
+            */
+            <p style={{ margin: 0, fontSize: primitive.fontSize.sm, fontWeight: 600 }}>
+              You {answered.decision === 'approved' ? 'approved' : 'answered'} proposal{' '}
+              {answered.presentation.documentReference}
+              {answered.decidedAt ? ` on ${when(answered.decidedAt)}` : ''}. The workshop has been
+              told and will move the job on.
+            </p>
           ) : (
             /*
-              No open proposal on this card. The customer is still the hold-up -
-              a deposit, a question, or a vehicle to collect - and none of those
-              is answerable in this build, so it says what to do rather than
-              offering a control that would silently fail.
+              No proposal on this card at all. The customer is still the hold-up
+              - a deposit, a question, or a vehicle to collect - and none of
+              those is answerable in this build, so it says what to do rather
+              than offering a control that would silently fail.
             */
             <p style={{ margin: 0, fontSize: primitive.fontSize.sm, fontWeight: 600 }}>
               Contact the workshop to {actionFor(card.stage)}.
