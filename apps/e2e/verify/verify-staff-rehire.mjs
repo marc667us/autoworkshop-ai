@@ -33,9 +33,14 @@ import { chromium } from '@playwright/test';
 const WORKSHOP = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const OWNER = process.env['DEV_OWNER_EMAIL'] ?? 'owner@autoworkshop.local';
 const PASSWORD = process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!';
-const COLLEAGUE = process.env['DEV_COLLEAGUE_EMAIL'] ?? 'supervisor@autoworkshop.local';
+/**
+ * ⚠️ ITS OWN ENV VAR. This script needs somebody who IS currently a member;
+ * `verify-staff-screen.mjs` wants one who is NOT. Sharing `DEV_COLLEAGUE_EMAIL`
+ * meant one of the two was always measuring the wrong precondition.
+ */
+const COLLEAGUE = process.env['DEV_REHIRE_COLLEAGUE'] ?? 'supervisor@autoworkshop.local';
 /** Must match the role they hold, or the unique key is not the one under test. */
-const ROLE = process.env['DEV_COLLEAGUE_ROLE'] ?? 'workshop_supervisor';
+const ROLE = process.env['DEV_REHIRE_ROLE'] ?? 'workshop_supervisor';
 
 const ROUTE = '/workshop-management/staff';
 let failures = 0;

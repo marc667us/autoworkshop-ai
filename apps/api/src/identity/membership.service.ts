@@ -133,6 +133,18 @@ export class MembershipService {
         `role '${ctx.activeRole}' may not grant a membership`,
       );
     }
+    // 🔴 THE "EXACTLY ONE" RULE BELONGS HERE, NOT ONLY IN THE ZOD SCHEMA.
+    //
+    // `GrantMembershipBody` refines it at the HTTP boundary, and this service is
+    // NOT only reached over HTTP: ADR-010/013 route agents through MCP into
+    // these same domain services, and CLAUDE.md is explicit that business rules
+    // live in the service. A direct caller sending BOTH would have had `userId`
+    // silently win, and one sending NEITHER would have run an email lookup for
+    // `undefined` — on the platform's privilege-granting operation, either is a
+    // silent disagreement about WHO is being given access. (Codex, 2026-08-04.)
+    if (Boolean(input.userId) === Boolean(input.userEmail)) {
+      throw new BadRequestException('send exactly one of userId or userEmail');
+    }
     if (!GRANTABLE_ROLES.has(input.roleName)) {
       // Names the constraint, not the valid set: enumerating grantable roles in
       // an error message hands a caller the platform's authorization taxonomy,
@@ -238,7 +250,20 @@ export class MembershipService {
         // A rule whose escape hatch is unreachable is a wall, not a rule.
         const existing = await client.query(
           `UPDATE identity.memberships
-              SET status = 'active', updated_at = now(), updated_by = $1
+              -- 🔴 THE BRANCH IS RE-SET, NOT INHERITED. The unique key is
+              -- (organization_id, user_id, role_name) and does NOT include the
+              -- branch, so re-hiring the same person into the same role at a
+              -- DIFFERENT site matched the old row and would have reactivated
+              -- it with the OLD branch_id — quietly granting access to a site
+              -- nobody approved, which is exactly what §50's "approved role AND
+              -- branch" forbids. The branchId parameter has already been
+              -- validated against this organization above.
+              --
+              -- NO BACKTICKS IN THIS COMMENT: it sits inside a TS template
+              -- literal, so one terminates the string. FIFTH instance.
+              -- (Codex, 2026-08-04.)
+              SET status = 'active', branch_id = $6,
+                  updated_at = now(), updated_by = $1
             WHERE organization_id = $2 AND user_id = $3 AND role_name = $4
               AND tenant_id = $5
               -- Only a WITHDRAWN one is reinstated. An ACTIVE row matches
@@ -247,7 +272,8 @@ export class MembershipService {
               -- nothing and must not read as though it did.
               AND status <> 'active'
             RETURNING id, organization_id, branch_id, user_id, role_name, status, created_at`,
-          [ctx.userId, input.organizationId, userId, input.roleName, ctx.tenantId],
+          [ctx.userId, input.organizationId, userId, input.roleName, ctx.tenantId,
+           input.branchId ?? null],
         );
         row = existing.rows[0];
       }

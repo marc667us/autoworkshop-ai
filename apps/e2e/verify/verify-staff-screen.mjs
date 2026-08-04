@@ -27,8 +27,18 @@ import { chromium } from '@playwright/test';
 const WORKSHOP = process.env['WORKSHOP_WEB_URL'] ?? 'http://localhost:3001';
 const OWNER = process.env['DEV_OWNER_EMAIL'] ?? 'owner@autoworkshop.local';
 const PASSWORD = process.env['DEV_USER_PASSWORD'] ?? 'Change_me_locally1!';
-/** A real seeded account that is NOT expected to be a member already. */
-const COLLEAGUE = process.env['DEV_COLLEAGUE_EMAIL'] ?? 'supervisor@autoworkshop.local';
+/**
+ * ⚠️ THIS SCRIPT DOES NOT OWN THE ADD PATH. Every seeded account is already a
+ * member of the dev workshop, so the add branch below is skipped on a normal
+ * database — and both scripts defaulting to the SAME account, with opposite
+ * expectations, meant the happy path could be silently untested by both.
+ *
+ * `verify-staff-rehire.mjs` is the one that PROVES adding works: it removes
+ * somebody first, so the grant it then performs is real. This file covers the
+ * screen, the form and the refusal. Separate env var so the two cannot collide.
+ * (Codex, 2026-08-04.)
+ */
+const COLLEAGUE = process.env['DEV_STAFF_SCREEN_COLLEAGUE'] ?? 'supervisor@autoworkshop.local';
 
 let failures = 0;
 let checks = 0;
@@ -149,7 +159,13 @@ const before = await page.content();
 const alreadyThere = before.includes(COLLEAGUE);
 
 if (alreadyThere) {
-  console.log(`  note  ${COLLEAGUE} is already a member — the add path is skipped this run`);
+  console.log(
+    `  note  ${COLLEAGUE} is already a member, so the add path is skipped HERE.
+` +
+      '        That is expected: verify-staff-rehire.mjs is what proves adding works,
+' +
+      '        because it removes somebody first and the grant is therefore real.',
+  );
   check('the existing colleague is listed with a role', /aw-status|Technician|Supervisor|Manager/i.test(before));
 } else {
   await page.fill('#userEmail', COLLEAGUE);

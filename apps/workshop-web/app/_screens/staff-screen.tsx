@@ -50,7 +50,7 @@ export function StaffScreen() {
     <>
       <PageHeader
         title="Staff"
-        description="Everyone who can sign in to this workshop, and what they may do. Adding someone gives them access immediately."
+        description="Everyone with access to this workshop, and what they may do. Adding someone gives them access immediately; a suspended account is marked and cannot sign in."
       />
       <Suspense fallback={<LoadingState label="Loading your staff…" />}>
         <StaffList />
@@ -157,6 +157,23 @@ async function StaffList() {
                   <div style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
                     {person?.email ?? '—'}
                   </div>
+                  {/*
+                    🔴 THE PAGE SAYS "everyone who can sign in", AND A SUSPENDED
+                    ACCOUNT CANNOT. `/users` returns members regardless of
+                    `u.status`, while `memberships_for_subject()` filters
+                    `u.status = 'active'` at login — so a suspended person held
+                    an active MEMBERSHIP and no access, and this list claimed
+                    otherwise.
+
+                    Marked rather than hidden, deliberately: dropping them would
+                    make somebody who still holds a membership invisible to the
+                    only screen that can remove it. (Codex, 2026-08-04.)
+                  */}
+                  {person && person.status !== 'active' ? (
+                    <div style={{ color: themeVar.statusAttention, fontSize: primitive.fontSize.xs }}>
+                      account {person.status} — they cannot sign in
+                    </div>
+                  ) : null}
                 </div>
 
                 <div style={{ display: 'flex', gap: primitive.space[3], alignItems: 'center' }}>
