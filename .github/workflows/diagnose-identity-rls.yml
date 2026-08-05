@@ -1,0 +1,356 @@
+# Why does the app not SEE a membership that demonstrably EXISTS?
+#
+# ── THE FACTS THIS EXISTS TO EXPLAIN ────────────────────────────────────────
+#
+# Measured on production 2026-08-05, immediately after migrations 037 + 038 were
+# applied, driving the real registration form as `marc667us@yahoo.com`:
+#
+#   POST /registration/workshop (1st)  -> succeeded; a workshop was created
+#   POST /registration/workshop (2nd)  -> refused, "This account already has a
+#                                         workshop"
+#   GET  /home/dashboard (fresh session, same account)
+#        -> the onboarding form, org chip "No workshop yet", 0 KPI tiles
+#
+# The refusal on the second submit is a `SELECT` on `identity.memberships`
+# inside `identity.register_workshop`. It fires, so the membership row EXISTS.
+# `register_workshop` is atomic — one function, four INSERTs — so there is no
+# state in which the tenant exists and the membership does not.
+#
+# Therefore: the WRITE path works and the READ path returns nothing.
+#
+# ── THE HYPOTHESIS, WHICH THIS WORKFLOW EXISTS TO KILL OR CONFIRM ───────────
+#
+# The same defect class 037 fixed for writes, still present on reads:
+# `identity.memberships` is ENABLE + FORCE ROW LEVEL SECURITY. Locally the
+# owning role is a SUPERUSER and bypasses RLS; on Render it is merely the table
+# owner, and FORCE applies to owners. So a read that works on a developer's
+# machine returns zero rows in production — which is exactly how `verify/036`
+# came to pass 9/9 against a defect that existed only in production.
+#
+# ⚠️ IT IS A HYPOTHESIS. Everything above the line is measured; this part is
+# not, and the repo's standing rule is to measure rather than infer. Nothing in
+# this file assumes the hypothesis is right — the probes are written so that a
+# WRONG hypothesis produces an obviously different table of numbers rather than
+# a quiet pass.
+#
+# ── WHY NOT JUST EXTEND `diagnose-registration-500.yml` ────────────────────
+#
+# Its rehearsal step dies at `ERROR: permission denied to set role
+# "autoworkshop_app"` before reaching anything useful, so it cannot answer a
+# question about what the app role can read. That failure is itself reported
+# here as a finding rather than worked around, because "we could not become the
+# app role" is a fact worth knowing about this database.
+#
+# ── THE KEY INSIGHT THAT MAKES THIS ANSWERABLE WITHOUT `SET ROLE` ──────────
+#
+# If `relforcerowsecurity` is true, the TABLE OWNER IS SUBJECT TO ITS OWN
+# POLICIES. So connecting as the owner and running a plain `SELECT count(*)` is
+# already a valid test of the read path: under FORCE with no matching policy it
+# returns 0 even for the owner. No role switch is required.
+#
+# ── NON-DESTRUCTIVE BY CONSTRUCTION ────────────────────────────────────────
+#
+# Every statement is a SELECT or a `SET LOCAL` inside a transaction that ends in
+# ROLLBACK. Nothing is created, altered or dropped. It therefore has NO confirm
+# gate — a dry-run gate on a read-only job is the pattern that produced three
+# never-executed steps in this repository.
+
+name: Diagnose identity RLS
+
+on:
+  workflow_dispatch:
+    inputs:
+      database:
+        description: 'Render Postgres service name'
+        required: false
+        default: 'autoworkshop-postgres'
+      email:
+        description: 'Account to probe (blank = the most recently created user)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: ${{ inputs.database }}
+      PROBE_EMAIL: ${{ inputs.email }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+
+      - name: Install a matching psql
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          "$PSQL" --version | grep -q ' 17\.' || { echo "::error::wrong psql on PATH"; exit 1; }
+          echo "PSQL_BIN=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          curl -sS -o /tmp/pg.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres?limit=50"
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == want:
+                  open('/tmp/db_id','w').write(d['id']); break
+          else:
+              sys.exit(f"::error::no database named {want}")
+          PY
+          ID="$(cat /tmp/db_id)"
+          echo "$ID" > /tmp/db_id
+          curl -sS -o /tmp/conn.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}/connection-info"
+          python3 -c "
+          import json
+          i=json.load(open('/tmp/conn.json'))
+          u=i.get('externalConnectionString') or i.get('internalConnectionString')
+          if not u: raise SystemExit('::error::no connection string')
+          open('/tmp/dburl','w').write(u)
+          "
+          chmod 600 /tmp/dburl
+
+          # Render DROPS an unlisted IP rather than refusing it, and psql reports
+          # that as "SSL connection has been closed unexpectedly" — which reads
+          # like a TLS fault and is not. Restored in the always() step below.
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          curl -sS -o /tmp/pg_one.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' "https://api.render.com/v1/postgres/${ID}"
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json')); d = d.get('postgres', d)
+          json.dump(d.get('ipAllowList') or [], open('/tmp/ip_allow_original.json','w'))
+          json.dump({'ipAllowList': (d.get('ipAllowList') or []) +
+                     [{'cidrBlock': f'{ip}/32', 'description': 'ephemeral: diagnose-identity-rls'}]},
+                    open('/tmp/ip_allow_patch.json','w'))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          sleep 20
+
+      # ── 1. WHO ARE WE, AND IS THAT THE SAME AS LOCALLY? ───────────────────
+      - name: Who this connection is, and whether it can bypass RLS
+        run: |
+          set -euo pipefail
+          echo "::group::connected role"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tAc "
+            SELECT 'current_user=' || current_user
+                || ' | session_user=' || session_user
+                || ' | superuser=' || (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)
+                || ' | bypassrls=' || (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user)"
+          echo "::endgroup::"
+
+          # 🔴 THE WHOLE DEFECT CLASS IN ONE LINE. If this says superuser=f then
+          # FORCE ROW LEVEL SECURITY applies to the table owner here, and any
+          # read that a developer's superuser connection performs happily will
+          # return zero rows in production.
+          echo "::group::every role that matters, and whether it escapes RLS"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT rolname, rolsuper, rolbypassrls, rolcanlogin
+              FROM pg_roles
+             WHERE rolname IN ('autoworkshop','autoworkshop_app', current_user)
+                OR rolname LIKE 'autoworkshop%'
+             ORDER BY rolname"
+          echo "::endgroup::"
+
+      # ── 2. RLS STATE OF EVERY identity TABLE ──────────────────────────────
+      - name: RLS and FORCE on every identity table
+        run: |
+          set -euo pipefail
+          echo "::group::relrowsecurity / relforcerowsecurity"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT c.relname AS table_name,
+                   c.relrowsecurity   AS rls_enabled,
+                   c.relforcerowsecurity AS rls_forced,
+                   pg_get_userbyid(c.relowner) AS owner
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'identity' AND c.relkind = 'r'
+             ORDER BY c.relname"
+          echo "::endgroup::"
+
+          echo "::group::every policy on identity.* — READ THE cmd COLUMN"
+          # ⚠️ `cmd` is the column that matters. A table with only an INSERT
+          # policy and FORCE enabled reads as "policies exist, so reads are
+          # fine" — and returns zero rows to every SELECT. That is precisely the
+          # shape this workflow is looking for.
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT tablename, policyname, cmd, roles::text,
+                   COALESCE(qual,'(none)')       AS using_expr,
+                   COALESCE(with_check,'(none)') AS check_expr
+              FROM pg_policies
+             WHERE schemaname = 'identity'
+             ORDER BY tablename, cmd, policyname"
+          echo "::endgroup::"
+
+          echo "::group::tables that are FORCED but have NO SELECT policy"
+          # The smoking gun, isolated so it cannot be missed in the noise above.
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT c.relname AS forced_table_with_no_select_policy
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname='identity' AND c.relkind='r' AND c.relforcerowsecurity
+               AND NOT EXISTS (
+                     SELECT 1 FROM pg_policies p
+                      WHERE p.schemaname='identity' AND p.tablename=c.relname
+                        AND p.cmd IN ('SELECT','ALL'))
+             ORDER BY 1"
+          echo "::endgroup::"
+
+      # ── 3. THE FUNCTIONS THE READ PATH GOES THROUGH ───────────────────────
+      - name: Every identity function, its owner, and whether that owner escapes RLS
+        run: |
+          set -euo pipefail
+          # ⚠️ A SECURITY DEFINER FUNCTION IS ONLY AS EXEMPT AS ITS OWNER.
+          # `memberships_for_subject` being SECURITY DEFINER means nothing if the
+          # owner is not a superuser and the table is FORCEd — the definer is
+          # subject to the same policies as anyone else.
+          echo "::group::identity functions"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT p.proname,
+                   pg_get_userbyid(p.proowner) AS owner,
+                   p.prosecdef                 AS security_definer,
+                   (SELECT rolsuper FROM pg_roles r WHERE r.oid = p.proowner) AS owner_is_superuser,
+                   (SELECT rolbypassrls FROM pg_roles r WHERE r.oid = p.proowner) AS owner_bypasses_rls,
+                   has_function_privilege('autoworkshop_app', p.oid, 'EXECUTE') AS app_can_execute
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'identity'
+             ORDER BY p.proname"
+          echo "::endgroup::"
+
+          echo "::group::does memberships_for_subject exist at all?"
+          # It did NOT appear in diagnose-registration-500's dump, which listed
+          # only two functions. Either that query was narrower than it looked, or
+          # this function is not on production — and those are very different
+          # problems, so the question is asked directly.
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tAc "
+            SELECT COALESCE(string_agg(n.nspname || '.' || p.proname || '(' ||
+                     pg_get_function_identity_arguments(p.oid) || ')', E'\n'),
+                     'NOT PRESENT ON THIS DATABASE')
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE p.proname LIKE '%memberships_for%'"
+          echo "::endgroup::"
+
+      # ── 4. THE DECISIVE PROBE ─────────────────────────────────────────────
+      - name: Read the membership four ways, and compare
+        run: |
+          set -euo pipefail
+          EMAIL_SQL="${PROBE_EMAIL:-}"
+          echo "::group::the account under test"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 -v probe_email="${EMAIL_SQL}" "$(cat /tmp/dburl)" -tAc "
+            SELECT COALESCE(
+                     (SELECT u.keycloak_subject || ' | ' || u.email
+                        FROM identity.users u
+                       WHERE (:'probe_email' = '' OR u.email = :'probe_email')
+                       ORDER BY u.created_at DESC LIMIT 1),
+                     'NO USER ROW MATCHED')" | tee /tmp/who.txt
+          echo "::endgroup::"
+
+          SUBJECT="$(cut -d'|' -f1 /tmp/who.txt | tr -d ' ')"
+          echo "probing subject: ${SUBJECT}"
+
+          # 🔴 FOUR READS OF THE SAME FACT. If they disagree, the disagreement IS
+          # the answer:
+          #
+          #   A  raw SELECT, no GUCs           — what a naive read sees
+          #   B  raw SELECT, app GUCs set      — what the API's own session sees
+          #   C  through memberships_for_subject — what /me actually calls
+          #   D  with row_security OFF          — the ground truth, owner-only
+          #
+          # A=0, D>0 means RLS is hiding an existing row. C=0 with D>0 names the
+          # read path that is broken. All four equal and >0 REFUTES the
+          # hypothesis, and that outcome is just as useful.
+          echo "::group::A / B / C / D"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 -v subj="${SUBJECT}" "$(cat /tmp/dburl)" <<'SQL'
+          BEGIN;
+
+          \echo '--- A: raw SELECT, no tenant context ---'
+          SELECT count(*) AS a_raw_no_context FROM identity.memberships;
+
+          \echo '--- B: raw SELECT, with the GUCs the API sets ---'
+          SELECT set_config('app.user_id',
+                   COALESCE((SELECT u.id::text FROM identity.users u
+                              WHERE u.keycloak_subject = :'subj'), ''), true) AS _;
+          SELECT set_config('app.current_role', 'workshop_owner', true) AS _;
+          SELECT count(*) AS b_with_app_gucs FROM identity.memberships;
+
+          \echo '--- C: through the function /me actually calls ---'
+          SELECT count(*) AS c_via_function
+            FROM identity.memberships_for_subject(:'subj');
+
+          \echo '--- D: ground truth, RLS off (owner only) ---'
+          SET LOCAL row_security = off;
+          SELECT count(*) AS d_rls_off FROM identity.memberships;
+
+          \echo '--- D2: and what those rows ARE ---'
+          SELECT m.id, m.role_name, m.status, t.name AS tenant, o.name AS org
+            FROM identity.memberships m
+            JOIN identity.tenants t       ON t.id = m.tenant_id
+            JOIN identity.organizations o ON o.id = m.organization_id
+            JOIN identity.users u         ON u.id = m.user_id
+           WHERE u.keycloak_subject = :'subj';
+
+          ROLLBACK;
+          SQL
+          echo "::endgroup::"
+
+      # ── 5. WHY THE OTHER DIAGNOSTIC CANNOT SWITCH ROLE ────────────────────
+      - name: Can this connection become the app role at all?
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Reported as a FINDING, not worked around. `diagnose-registration-500`
+          # dies here, and "we cannot become the app role" is itself worth
+          # knowing — it means no workflow in this repo can currently rehearse
+          # anything as the role the API actually connects as.
+          echo "::group::SET ROLE autoworkshop_app"
+          "${PSQL_BIN}" "$(cat /tmp/dburl)" -c "SET ROLE autoworkshop_app; SELECT current_user;" \
+            || echo "SET ROLE FAILED — see the error above. This is a finding, not a workflow bug."
+          echo "::endgroup::"
+
+          echo "::group::role memberships of the connected role"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -c "
+            SELECT r.rolname AS member_of
+              FROM pg_auth_members m
+              JOIN pg_roles r ON r.oid = m.roleid
+              JOIN pg_roles u ON u.oid = m.member
+             WHERE u.rolname = current_user
+             ORDER BY 1"
+          echo "::endgroup::"
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] || exit 0
+          [ -f /tmp/ip_allow_original.json ] || exit 0
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/ip_allow_restore.json','w'))
+          "
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/ip_allow_restore.json \
+            "https://api.render.com/v1/postgres/$(cat /tmp/db_id)" >/dev/null
+          echo "firewall restored"
