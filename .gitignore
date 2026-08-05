@@ -45,9 +45,28 @@ venv/
 backups/
 
 # ── Media / uploads (never committed; object storage only) ──────────────────
-uploads/
-media/
-quarantine/
+#
+# 🔴 ANCHORED WITH A LEADING SLASH, AND THAT IS LOAD-BEARING.
+#
+# These were written unanchored (`media/`), which in gitignore matches a
+# directory of that name AT ANY DEPTH. On 2026-08-06 that silently swallowed
+# `apps/api/src/media/` — the entire NestJS attachments module: service,
+# controller, schemas and module file. `git add -A` reported success, the commit
+# listed the migration and both screens, and the four source files it depended
+# on were simply absent.
+#
+# `app.module.ts` imports `./media/media.module`, so the pushed tree could not
+# have built. Nothing local noticed: typecheck, lint and the dev server all read
+# the working directory, where the files exist. Only `git show HEAD:<path>`
+# saying "exists on disk, but not in HEAD" gave it away.
+#
+# Same family as the ignore rule that once nearly committed two live
+# credentials: a pattern written for one thing quietly deciding something else.
+# The uploads these lines exist for would live at the repository root, so
+# anchoring costs nothing and stops the rule reaching into source trees.
+/uploads/
+/media/
+/quarantine/
 
 # ── Test artefacts ──────────────────────────────────────────────────────────
 playwright-report/
