@@ -43,7 +43,7 @@ Working screens today: **93** of **242** routes.
 |---:|---|---:|---:|---:|---|
 | 0 | **Re-mounts** — the backend already exists; the screen is only missing at that route | 16 | 1 | **109** | — |
 | 1 | **Evidence upload** — MinIO, `media.assets`, signed URLs | 2 | 1 | **111** | — |
-| 2 | **Reception: intake, appointments, requests, calendar** | 17 | 2 | **128** | 1 |
+| 2 | **Reception: intake, appointments, requests, calendar** | 9 | 2 | **125** | 1 |
 | 3 | **Invoicing & payments** | 16 | 3 | **144** | — |
 | 4 | **Parts, stock & procurement** | 20 | 3 | **164** | — |
 | 5 | **Warranty** | 5 | 1 | **169** | 3 |
@@ -92,7 +92,17 @@ Small in screens, but slices 2 and 7 both need it — that is why it is second.
 > **Check:** upload a photo on `/vehicle-intake/condition-inspection`, reload,
 > see it. `select count(*) from media.assets;` > 0.
 
-### Slice 2 — Reception · 17 screens · 2 sessions
+### Slice 2 — Reception · 9 screens · 2 sessions
+
+> ⚠️ **CORRECTED 2026-08-06, twice.** This row said 17. Five of those
+> (`create-job-card`, `receive-vehicle` and the three `vehicle-intake` routes)
+> shipped on 2026-08-05 because the workshop had no way to open a job card at
+> all, and the 2026-08-05 close note corrected the figure to 12. Counting the
+> routes that are ACTUALLY still signposted gives **9**, not 12: two more
+> (`condition-inspection`, `issue-intake-receipt`) went with slice 1 on
+> 2026-08-06 because they are the evidence screens, and `reports/service-bay-utilization`
+> belongs to slice 8. Measured with `audit-menu-coverage.mjs`, not estimated —
+> which is the only reason the drift was visible at all.
 
 New: `reception.appointments`, `vehicle_intakes`, `intake_checks`, `walk_ins`.
 Completes the **front** of the workflow — today a job card cannot be opened by

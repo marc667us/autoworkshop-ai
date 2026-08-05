@@ -280,14 +280,30 @@ jobs:
           #
           # So track dollar-quoted blocks ($$ ... $$ and $tag$ ... $tag$) and
           # leave everything inside them completely alone.
+          # 🔴 THE FULL GRAMMAR, NOT THE COMMON SPELLING. The first version
+          # matched only the exact strings BEGIN / COMMIT / END / START
+          # TRANSACTION. Postgres also accepts:
+          #
+          #     COMMIT WORK;   COMMIT TRANSACTION;   COMMIT AND CHAIN;
+          #     END WORK;      END TRANSACTION;      commit  ;
+          #
+          # Every one of those escaped BOTH the stripper and the backstop below,
+          # which means a migration written in any of them would have COMMITTED
+          # TO PRODUCTION from a workflow whose entire promise is that nothing
+          # persists. Found by injecting the variants rather than by reading the
+          # code — the same method that caught planned-workshop.spec.ts passing
+          # 4/4 with its real defect re-injected.
+          OPEN_RE  = re.compile(r'(?i)^\s*(begin|start\s+transaction)\b[^;]*;\s*$')
+          CLOSE_RE = re.compile(r'(?i)^\s*(commit|end)\b(\s+(work|transaction))?'
+                                r'(\s+and(\s+no)?\s+chain)?\s*;\s*$')
+
           lines = open('/tmp/rehearse_raw.sql', encoding='utf-8').read().split('\n')
           out, seen_open, dollar_tag = [], False, None
 
           for ln in lines:
               if dollar_tag is None:
-                  bare = ln.strip().rstrip(';').upper()
-                  if bare in ('BEGIN', 'START TRANSACTION', 'COMMIT', 'END'):
-                      if bare in ('BEGIN', 'START TRANSACTION') and not seen_open:
+                  if OPEN_RE.match(ln) or CLOSE_RE.match(ln):
+                      if OPEN_RE.match(ln) and not seen_open:
                           seen_open = True
                           out.append(ln)
                       else:
@@ -313,14 +329,31 @@ jobs:
           # Belt and braces. If a top-level COMMIT survived in a form the loop
           # did not match, refuse rather than run something that could persist.
           # Checked OUTSIDE dollar quotes only, for the same reason as above.
-          depth_check, tag = [], None
+          survivors, tag = [], None
           for ln in text.split('\n'):
-              if tag is None and re.match(r'(?i)^\s*commit\s*;', ln):
-                  depth_check.append(ln.strip())
+              if tag is None and CLOSE_RE.match(ln):
+                  survivors.append(ln.strip())
               for t in re.findall(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$', ln):
                   tag = t if tag is None else (None if tag == t else tag)
-          if depth_check:
-              raise SystemExit('::error::a top-level COMMIT survived stripping (%s) — refusing' % depth_check[:2])
+          if survivors:
+              raise SystemExit('::error::a top-level COMMIT/END survived stripping (%s) — refusing to run a rehearsal that could persist' % survivors[:3])
+
+          # Prove the matcher itself, here, every run. A guard is only worth
+          # having if its FAILURE is demonstrated, not asserted — and this one
+          # shipped once already matching four fewer forms than Postgres accepts.
+          for spelling in ('COMMIT;', 'commit ;', 'COMMIT WORK;', 'COMMIT TRANSACTION;',
+                           'END;', 'END TRANSACTION;', 'END WORK;', '  COMMIT  ;',
+                           'COMMIT AND CHAIN;'):
+              if not CLOSE_RE.match(spelling):
+                  raise SystemExit('::error::self-check failed: %r is a transaction '
+                                   'terminator this stripper would not catch' % spelling)
+          # NB an indented `END;` IS a terminator at the top level — what keeps a
+          # plpgsql body's END safe is the dollar-quote tracker above, not its
+          # indentation. Getting that backwards is how the first fix was written.
+          for not_a_terminator in ('END IF;', 'END LOOP;', 'commit_note := 1;', 'END CASE;'):
+              if CLOSE_RE.match(not_a_terminator):
+                  raise SystemExit('::error::self-check failed: %r is NOT transaction '
+                                   'control and would be wrongly stripped' % not_a_terminator)
 
           open('/tmp/rehearse.sql', 'w', encoding='utf-8').write(text)
           print('transaction control normalised (dollar-quoted bodies left untouched)')
