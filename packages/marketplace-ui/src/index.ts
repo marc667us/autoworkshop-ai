@@ -51,3 +51,20 @@ export type {
   CatalogueStats,
   PublicResult,
 } from './public-api';
+
+// The basket. Browser state, shared by both public mounts — see
+// `add-to-basket.tsx` for why this is a move and not a copy.
+export {
+  BASKET_KEY,
+  readBasket,
+  addToBasket,
+  setQuantity,
+  removeFromBasket,
+  clearBasket,
+  basketCount,
+} from './basket';
+export type { BasketItem } from './basket';
+export { AddToBasket } from './add-to-basket';
+export { BasketPanel } from './basket-panel';
+export type { BasketPanelProps, BasketPart, PlaceResult } from './basket-panel';
+export { BasketLink } from './basket-link';

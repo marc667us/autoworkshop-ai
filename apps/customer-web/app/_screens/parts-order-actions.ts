@@ -3,12 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { apiGet, apiPatch, apiPost } from '@autoworkshop/next-shell';
 
-export interface PlaceResult {
-  ok: boolean;
-  message: string;
-  /** One order per SUPPLIER — a mixed basket produces several. */
-  orders?: Array<{ id: string; orderNumber: string; total: string }>;
-}
+import type { PlaceResult } from '@autoworkshop/marketplace-ui';
+export type { PlaceResult };
 
 interface Placed {
   orders: Array<{ id: string; orderNumber: string; total: string }>;
@@ -123,16 +119,9 @@ export async function recordPaymentAction(
   return { ok: true, message: 'Payment recorded.' };
 }
 
-export interface BasketPart {
-  id: string;
-  partNumber: string;
-  name: string;
-  brand: string | null;
-  price: string | null;
-  currency: string;
-  supplierId: string;
-  supplierName: string;
-}
+// The shape lives in the shared package now, beside the panel that consumes it.
+import type { BasketPart } from '@autoworkshop/marketplace-ui';
+export type { BasketPart };
 
 /**
  * Resolve the basket's part ids into names and LIVE prices.

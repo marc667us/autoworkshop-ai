@@ -9,7 +9,51 @@ import {
   setQuantity,
   type BasketItem,
 } from './basket';
-import { loadBasketAction, placeOrderAction, type BasketPart } from './parts-order-actions';
+
+/** A part as the checkout needs it. Mirrors `/public/parts/by-ids`. */
+export interface BasketPart {
+  id: string;
+  partNumber: string;
+  name: string;
+  brand: string | null;
+  price: string | null;
+  currency: string;
+  supplierId: string;
+  supplierName: string;
+}
+
+export interface PlaceResult {
+  ok: boolean;
+  message: string;
+  /** One order per SUPPLIER — a mixed basket produces several. */
+  orders?: Array<{ id: string; orderNumber: string; total: string }>;
+}
+
+export interface BasketPanelProps {
+  /**
+   * The two server actions, INJECTED rather than imported.
+   *
+   * 🔴 THIS IS THE WHOLE REASON THE PANEL CAN BE SHARED, and it is the same
+   * shape as `renderAddToBasket` on the landing. Both actions call `apiGet` /
+   * `apiPost` with a WORKSPACE ID, and the workspace differs per app:
+   * `customer-web` reads `authjs.session-token.customer`, the apex reads
+   * `.workshop`. A shared component that imported one app's actions would carry
+   * that app's workspace into the other — the exact bug this repository has
+   * recorded THREE times, which passes every local test because
+   * `localhost:3000` and `:3001` share one cookie jar, and fails only in
+   * production.
+   *
+   * Injecting them means neither app can be wrong by accident: each passes its
+   * own, and the panel never names a workspace at all.
+   */
+  loadParts: (ids: string[]) => Promise<BasketPart[]>;
+  placeOrder: (
+    items: Array<{ partId: string; quantity: number }>,
+    delivery: { recipient: string; phone: string; address: string },
+  ) => Promise<PlaceResult>;
+  /** Where "see your orders" points. Per-app, because the route differs. */
+  ordersHref?: string;
+}
 
 /**
  * The basket and checkout.
@@ -35,7 +79,7 @@ function toMinor(value: string | null): number | null {
   return Number(whole) * 100 + Number(frac.padEnd(2, '0'));
 }
 
-export function BasketPanel() {
+export function BasketPanel({ loadParts, placeOrder, ordersHref }: BasketPanelProps) {
   const [items, setItems] = useState<BasketItem[]>([]);
   const [parts, setParts] = useState<BasketPart[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -53,11 +97,19 @@ export function BasketPanel() {
       setLoaded(true);
       return;
     }
-    void loadBasketAction(next.map((i) => i.partId)).then((p) => {
+    void loadParts(next.map((i) => i.partId)).then((p) => {
       setParts(p);
       setLoaded(true);
     });
-  }, []);
+    // `loadParts` IS a dependency now that it is a prop rather than a module
+    // import — the empty array was correct only while it was imported.
+    //
+    // ⚠️ SAFE ONLY BECAUSE BOTH CALLERS PASS A STABLE REFERENCE: a `'use server'`
+    // action imported at module scope, never an inline arrow. An inline function
+    // would be a new value every render and this would refetch the basket in a
+    // loop. If a third mount ever passes one, wrap it in `useCallback` there —
+    // that is the fix, not deleting this dependency again.
+  }, [loadParts]);
 
   useEffect(() => {
     refresh();
@@ -108,7 +160,7 @@ export function BasketPanel() {
 
   function place() {
     startTransition(async () => {
-      const res = await placeOrderAction(
+      const res = await placeOrder(
         available.map((i) => ({ partId: i.partId, quantity: i.quantity })),
         { recipient: recipient.trim(), phone: phone.trim(), address: address.trim() },
       );

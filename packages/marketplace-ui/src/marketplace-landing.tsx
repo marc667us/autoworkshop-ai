@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { BasketLink } from './basket-link';
 import { primitive } from '@autoworkshop/design-tokens';
 import { visuallyHidden } from '@autoworkshop/ui';
 import {
@@ -134,6 +135,34 @@ export interface MarketplaceLandingProps {
    * consumer basket. Same rule as `accountControl` on `TopNav`.
    */
   renderAddToBasket?: (part: PublicPart) => React.ReactNode;
+  /**
+   * Who is looking, when somebody is signed in. `null` for a stranger.
+   *
+   * 🔴 WHY THE LANDING NEEDS TO KNOW (owner, 2026-08-06: "the landing page must
+   * show when [a] user has [an] account and has logged in").
+   *
+   * Until now this page rendered IDENTICALLY for a stranger and for a signed-in
+   * owner: it offered "Create a free account" to somebody who already had one,
+   * and "Sign in" to somebody already signed in. Both are dead ends dressed as
+   * calls to action — clicking register while authenticated is the shortest path
+   * to a confusing Keycloak error, and it makes the product look like it does
+   * not know who you are.
+   *
+   * ⚠️ IT IS NOT AUTHENTICATION AND MUST NEVER BE TREATED AS ANY. This changes
+   * which BUTTONS are drawn. Every guarded route re-resolves the session
+   * server-side, and this page reads only PUBLIC endpoints, so a wrong value
+   * here shows the wrong link and exposes nothing (CLAUDE.md §8).
+   */
+  viewer?: { displayName: string | null; dashboardHref: string } | null;
+  /**
+   * Where the basket lives, when this mount has one.
+   *
+   * 🔴 REQUIRED WHENEVER `renderAddToBasket` IS SUPPLIED, and the pairing is the
+   * point: a basket button with no way back to the basket is a dead end, and on
+   * the public landing an anonymous visitor has no navigation to find it with.
+   * The two props are passed together or neither is.
+   */
+  basketHref?: string;
 }
 
 export function MarketplaceLanding({
@@ -148,6 +177,8 @@ export function MarketplaceLanding({
   problems,
   basePath,
   renderAddToBasket,
+  viewer = null,
+  basketHref,
 }: MarketplaceLandingProps) {
   // Cards are grouped under category headings, preserving the order the API
   // returned (category display_order, then name) rather than re-sorting here —
@@ -223,21 +254,45 @@ export function MarketplaceLanding({
               a response it cannot use. A full document navigation is what an identity
               handoff actually is.
             */}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/api/auth/register" style={BUTTON_PRIMARY}>
-              Create a free account
-            </a>
-            <a href="#find-parts" style={BUTTON_GREEN}>
-              Browse parts now
-            </a>
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/api/auth/signin" style={BUTTON_SECONDARY}>
-              Sign in
-            </a>
+            {viewer ? (
+              // Signed in: the account already exists, so offering to create one
+              // is a dead end. Send them where their own work is instead.
+              <>
+                <a href={viewer.dashboardHref} style={BUTTON_PRIMARY}>
+                  Go to your dashboard
+                </a>
+                <a href="#find-parts" style={BUTTON_GREEN}>
+                  Browse parts now
+                </a>
+                {basketHref ? <BasketLink href={basketHref} /> : null}
+              </>
+            ) : (
+              <>
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+                <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+                  Create a free account
+                </a>
+                <a href="#find-parts" style={BUTTON_GREEN}>
+                  Browse parts now
+                </a>
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+                <a href="/api/auth/signin" style={BUTTON_SECONDARY}>
+                  Sign in
+                </a>
+                {basketHref ? <BasketLink href={basketHref} /> : null}
+              </>
+            )}
           </div>
 
           <div style={{ color: SOLAR.muted, fontSize: '12px', marginBottom: primitive.space[6] }}>
-            🔧 No sign-up needed · Search by your car · Compare supplier prices in GHS
+            {viewer ? (
+              <>
+                ✅ Signed in{viewer.displayName ? ` as ${viewer.displayName}` : ''} · Your basket and
+                orders are kept · Compare supplier prices in GHS
+              </>
+            ) : (
+              <>🔧 No sign-up needed · Search by your car · Compare supplier prices in GHS</>
+            )}
           </div>
 
           {/*
@@ -825,14 +880,21 @@ export function MarketplaceLanding({
             Start with the part you need
           </h2>
           <p style={{ ...HERO_LEAD, fontSize: '14px', marginTop: primitive.space[3] }}>
-            Browsing is free forever. An account adds ordering, your garage, and a workshop&apos;s
-            phone number — and takes about a minute.
+            {viewer
+              ? 'Your account is ready. Add parts to the basket and check out, or pick up where you left off.'
+              : 'Browsing is free forever. An account adds ordering, your garage, and a workshop’s phone number — and takes about a minute.'}
           </p>
           <div style={{ display: 'flex', gap: primitive.space[3], justifyContent: 'center', flexWrap: 'wrap' }}>
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/api/auth/register" style={BUTTON_PRIMARY}>
-              Create a free account
-            </a>
+            {viewer ? (
+              <a href={viewer.dashboardHref} style={BUTTON_PRIMARY}>
+                Go to your dashboard
+              </a>
+            ) : (
+              /* eslint-disable-next-line @next/next/no-html-link-for-pages */
+              <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+                Create a free account
+              </a>
+            )}
             <a href="#find-parts" style={BUTTON_SECONDARY}>
               Keep browsing
             </a>

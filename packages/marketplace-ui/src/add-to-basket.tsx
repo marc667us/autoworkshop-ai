@@ -7,10 +7,19 @@ import { primitive, themeVar } from '@autoworkshop/design-tokens';
 // has already paid for. `visuallyHidden` is the real implementation, and its
 // `position: absolute` needs a positioned ancestor; the part card supplies one.
 import { visuallyHidden } from '@autoworkshop/ui';
-import { addToBasket, readBasket } from '../_screens/basket';
+import { addToBasket, readBasket } from './basket';
 
 /**
  * "Add to basket" on a public marketplace card.
+ *
+ * ⚠️ MOVED HERE FROM `customer-web` ON 2026-08-06, and moved rather than copied.
+ * The apex landing (owned by `workshop-web`) now needs the same control, and
+ * this repository has three recorded instances of a COPIED FILE CARRYING ITS
+ * ORIGIN'S WORKSPACE ID — a bug that works locally, because cookies ignore the
+ * PORT, and fails only in production. Neither this component nor `basket.ts`
+ * touches a workspace at all (the basket is browser state), so one shared
+ * implementation is both correct and the only version that cannot drift.
+ * §0.3: no copy-paste; the public surface is the package.
  *
  * ⚠️ THE ONLY CLIENT COMPONENT ON THE PUBLIC LANDING PAGE, and it is one on
  * purpose: a basket has to work for a visitor who has not signed in, because

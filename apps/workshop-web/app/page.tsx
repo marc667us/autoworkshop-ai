@@ -1,4 +1,5 @@
 import {
+  AddToBasket,
   MarketplaceLanding,
   fetchFacets,
   fetchMechanics,
@@ -6,6 +7,7 @@ import {
   fetchStats,
   fetchVin,
 } from '@autoworkshop/marketplace-ui';
+import { currentViewer } from '@autoworkshop/next-shell';
 
 /**
  * `/` — THE PUBLIC FRONT DOOR, ON THE APP THAT OWNS THE APEX.
@@ -48,12 +50,26 @@ import {
  * renders it, so the breadcrumb and active-nav concern the old redirect comment
  * raised does not arise.
  *
- * ── NO BASKET HERE ─────────────────────────────────────────────────────────
+ * ── 🔴 THE BASKET IS HERE NOW (owner, 2026-08-06) ──────────────────────────
  *
- * `renderAddToBasket` is omitted. The basket belongs to `customer-web`; a
- * workshop's staff browse the catalogue and buy through procurement, not a
- * consumer basket. The shared component renders cards without the button rather
- * than showing one that goes nowhere.
+ * This block used to read "NO BASKET HERE", on the reasoning that a workshop's
+ * staff buy through procurement rather than a consumer basket. The owner asked
+ * for the opposite, explicitly: the landing "must [have] procurement where items
+ * can be bought just like in solar, but must have [a] shopping cart".
+ *
+ * They are right, and the old reasoning had a hole in it. THE APEX IS NOT THE
+ * STAFF'S FRONT DOOR — it is EVERYBODY'S. `autoworkshop.aiappinvent.com` is the
+ * only address anyone has, and most people arriving at it are not workshop
+ * staff at all: they are somebody who searched for a part. Offering them a
+ * catalogue with no way to buy from it is the same defect as the register button
+ * that answered 400 — a front door that shows you the goods and gives you no
+ * till.
+ *
+ * ⚠️ `AddToBasket` AND `basket.ts` WERE MOVED INTO `@autoworkshop/marketplace-ui`,
+ * NOT COPIED. Neither touches a workspace — the basket is browser state — and
+ * this repository has THREE recorded instances of a copied file carrying its
+ * origin's workspace id, a bug that works locally (cookies ignore the PORT) and
+ * fails only in production. One implementation cannot drift. §0.3.
  */
 
 export const dynamic = 'force-dynamic';
@@ -67,6 +83,23 @@ function one(value: string | string[] | undefined): string {
 }
 
 export default async function Index({ searchParams }: { searchParams?: Promise<SearchParams> }) {
+  // WHO IS LOOKING. `currentViewer` returns null for a stranger, and this page
+  // is entirely public — it reads only unauthenticated endpoints — so a null
+  // here costs nothing but the personalised copy.
+  //
+  // ⚠️ WORKSPACE `'workshop'`, because this app owns the apex and its session
+  // cookie is `authjs.session-token.workshop`. Writing `'customer'` here would
+  // read a cookie that CANNOT EXIST on this host — and would pass every local
+  // test, because localhost:3000 and :3001 share one jar. That exact mistake has
+  // been made three times in this repository.
+  const viewerDescription = await currentViewer('workshop');
+  const viewer = viewerDescription
+    ? {
+        displayName: viewerDescription.displayName ?? null,
+        dashboardHref: '/home/dashboard',
+      }
+    : null;
+
   const params = (await searchParams) ?? {};
   const applied = {
     q: one(params.q),
@@ -126,6 +159,13 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       problems={problems}
       // This app serves the landing at the APEX.
       basePath="/"
+      // Owner request 2026-08-06. Two mounts, one component, and the basket now
+      // works on the address people actually visit.
+      basketHref="/basket"
+      renderAddToBasket={(part) => (
+        <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
+      )}
+      viewer={viewer}
     />
   );
 }

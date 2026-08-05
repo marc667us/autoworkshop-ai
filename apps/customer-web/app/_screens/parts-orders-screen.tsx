@@ -2,7 +2,8 @@ import { Suspense } from 'react';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { EmptyState, LoadingState, PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { primitive, themeVar } from '@autoworkshop/design-tokens';
-import { BasketPanel } from './basket-panel';
+import { BasketPanel } from '@autoworkshop/marketplace-ui';
+import { loadBasketAction, placeOrderAction } from './parts-order-actions';
 
 /**
  * My Parts Orders — the buyer's half of Slice A (migrations 022 and 023).
@@ -77,7 +78,7 @@ export function PartsOrdersScreen() {
         do not. It is a client component — see basket.ts for why a basket is
         browser state until it becomes orders.
       */}
-      <BasketPanel />
+      <BasketPanel loadParts={loadBasketAction} placeOrder={placeOrderAction} />
       <Suspense fallback={<LoadingState label="Loading your orders…" />}>
         <OrderList />
       </Suspense>
