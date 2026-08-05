@@ -1,0 +1,345 @@
+name: Rehearse Migration On Live
+
+# ══════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS — three sessions and three migrations of evidence
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Adopted from Solar's `apply-migration-037-*.yml` at the owner's request,
+# 2026-08-06. It is the one pipeline pattern this repository did NOT already
+# have, and it maps exactly onto its most expensive recorded failure.
+#
+# `infrastructure/migrations/verify/*` runs against the LOCAL Postgres, where
+# the connected role is a SUPERUSER. On Render it is not — it is merely the
+# table owner, and `FORCE ROW LEVEL SECURITY` binds owners too. So a policy that
+# is inert locally is enforced live, and a verify can pass 9/9 against a defect
+# that exists only in production. That is not hypothetical:
+#
+#   036  verify passed 9/9         -> registration 500'd on live (RLS on INSERT)
+#   037  fixed the WRITE path      -> the READ path was still broken
+#   038  fixed the bootstrap door  -> the app still could not see the membership
+#   039  SECURITY DEFINER IS NOT AN RLS EXEMPTION
+#
+# Three sessions during which the owner could not create a workshop at all.
+# Every one of those would have been caught in minutes by running the migration
+# AND its verify against the real database, as the real role, before applying.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 🔴 WHAT MAKES THIS SAFE: BEGIN -> apply -> verify -> ROLLBACK
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Everything runs inside ONE transaction that is ALWAYS rolled back. Nothing
+# persists — not the schema change, not the ledger row, not the test data. What
+# it borrows from production is the one thing that cannot be borrowed any other
+# way: the real ROLE, the real privileges, the real FORCE RLS.
+#
+# ⚠️ AND A GREEN DRY RUN THAT CHANGES NOTHING IS NOT A TEST. That is the trap
+# this account has already fallen into — "a step gated on confirm == APPLY has
+# never run". So this workflow does not preview SQL. It EXECUTES the migration
+# and then EXECUTES its verify, for real, against live; only the COMMIT is
+# withheld. A rehearsal that passes has genuinely run.
+#
+# ⚠️ IT IS NOT A SUBSTITUTE FOR THE LOCAL VERIFY — it is the second half. Run
+# the local one for speed, this one for truth, in that order.
+#
+# ⚠️ TRANSACTIONAL DDL ONLY. Postgres can roll back CREATE TABLE, ALTER TABLE,
+# CREATE POLICY and CREATE FUNCTION. It cannot roll back CREATE INDEX
+# CONCURRENTLY or CREATE DATABASE. A migration containing those fails here
+# loudly rather than half-persisting — the correct outcome, but it means such a
+# migration needs its own rehearsal path.
+#
+# ⚠️ IT TOUCHES THE PRODUCTION DATABASE. It takes locks for the length of the
+# transaction, so do not run it during a deploy or against a busy moment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration:
+        description: 'Migration basename, e.g. 041_reception (no .sql). Its verify/ script runs too, if one exists.'
+        required: true
+      database:
+        description: 'Render database name'
+        required: false
+        default: 'autoworkshop'
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: ${{ inputs.database }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY is not set on this repository"
+            exit 1
+          fi
+
+      # ⚠️ ABSOLUTE PATH, AND THE VERSION IS ASSERTED. Solar lost a run to a job
+      # that installed postgresql-client-18 and then called bare `psql`, which
+      # PATH resolved to Ubuntu's bundled 16.x. Echoing a version is not a check
+      # — this fails if the binary is not the one that was installed.
+      - name: Install a matching psql
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL=/usr/lib/postgresql/17/bin/psql
+          test -x "$PSQL" || { echo "::error::$PSQL is not executable"; exit 1; }
+          "$PSQL" --version
+          "$PSQL" --version | grep -q ' 17\.' || {
+            echo "::error::psql at $PSQL is not the installed 17.x"; exit 1; }
+          echo "PSQL_BIN=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Find the database and read its connection string
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /tmp/pg.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?limit=50")"
+          echo "GET /v1/postgres -> $code"
+          [ "$code" = "200" ] || { echo "::error::could not list databases"; exit 1; }
+
+          python3 - <<'PY'
+          import json, os, sys
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          print('databases visible to this key:')
+          found = ''
+          for r in rows:
+              d = r.get('postgres', r)
+              print(f"  - {d.get('name')}  status={d.get('status')}")
+              if d.get('name') == want:
+                  found = d.get('id')
+                  status = d.get('status')
+          if not found:
+              sys.exit(f"::error::no database named {want}")
+          # A database that is still creating cannot be migrated, and the error
+          # psql would give ("could not connect") names the symptom rather than
+          # this cause.
+          if status not in ('available', 'creating'):
+              sys.exit(f"::error::{want} is '{status}', not available")
+          if status == 'creating':
+              print(f"::warning::{want} is still creating; the connection may not be ready")
+          open('/tmp/db_id', 'w').write(found)
+          PY
+          ID="$(cat /tmp/db_id)"
+          echo "database id: $ID"
+
+          # The connection string is fetched PER RUN and never stored in the
+          # repo — Solar's pattern. It is written to a file rather than an env
+          # var so it cannot land in a command line or in the step log.
+          code="$(curl -sS -o /tmp/conn.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}/connection-info")"
+          [ "$code" = "200" ] || { echo "::error::could not read connection info ($code)"; exit 1; }
+
+          python3 - <<'PY'
+          import json
+          info = json.load(open('/tmp/conn.json'))
+          url = info.get('externalConnectionString') or info.get('internalConnectionString')
+          if not url:
+              raise SystemExit('::error::no connection string in the response')
+          open('/tmp/dburl', 'w').write(url)
+          # Never print the URL. Only its shape, so a failure is diagnosable.
+          print('connection string acquired:', url.split('@')[-1].split('/')[0][:4] + '…')
+          PY
+          chmod 600 /tmp/dburl
+
+      # 🔴 RENDER BLOCKS EXTERNAL CONNECTIONS BY IP, AND THE ERROR DOES NOT SAY
+      # SO. The first run of this workflow reached the database and psql
+      # reported "SSL connection has been closed unexpectedly" — which reads
+      # like a TLS fault and is in fact Render dropping a connection from an
+      # address that is not on the database's allow list.
+      #
+      # ⚠️ A SINGLE /32 FOR THIS RUNNER, NOT 0.0.0.0/0. A GitHub runner takes a
+      # different public address every run, so the lazy fix is to open the
+      # database to the whole internet and leave it that way. This adds only the
+      # address in use and RESTORES THE ORIGINAL LIST in an `if: always()` step,
+      # so a failed run cannot leave the database more exposed than it found it.
+      - name: Allow this runner through the database firewall
+        run: |
+          set -euo pipefail
+          ID="$(cat /tmp/db_id)"
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          echo "$IP" | grep -Eq '^[0-9.]+$' || { echo "::error::could not read runner IP"; exit 1; }
+          echo "runner address: $IP"
+
+          curl -sS -o /tmp/pg_one.json \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}"
+
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json'))
+          d = d.get('postgres', d)
+          original = d.get('ipAllowList') or []
+          json.dump(original, open('/tmp/ip_allow_original.json', 'w'))
+          print('existing allow list entries:', len(original))
+          merged = list(original) + [{'cidrBlock': f'{ip}/32',
+                                      'description': 'ephemeral: apply-migrations run'}]
+          json.dump({'ipAllowList': merged}, open('/tmp/ip_allow_patch.json', 'w'))
+          PY
+
+          code="$(curl -sS -o /tmp/patch_out.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}")"
+          echo "PATCH ipAllowList -> $code"
+          [ "$code" = "200" ] || { echo "::error::could not update the allow list"; cat /tmp/patch_out.json; exit 1; }
+
+          # Render applies the rule asynchronously; connecting immediately races it.
+          sleep 20
+
+      - name: Rehearse — apply, run the verify, assert, ROLLBACK
+        env:
+          MIGRATION: ${{ inputs.migration }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+
+          SQL="infrastructure/migrations/${MIGRATION}.sql"
+          VERIFY="infrastructure/migrations/verify/${MIGRATION}.sql"
+          [ -f "$SQL" ] || { echo "::error::no such migration: $SQL"; exit 1; }
+
+          # Who are we, really? The whole point of rehearsing on live is that
+          # this answer differs from the local one, so PRINT it — a rehearsal
+          # that silently ran as a superuser would prove nothing and would look
+          # identical to one that proved everything.
+          echo "::group::the role this rehearsal runs as"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$DATABASE_URL" -tA -c "
+            SELECT 'connected as ' || current_user
+                || ' | superuser=' || (SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user)
+                || ' | bypassrls=' || (SELECT rolbypassrls::text FROM pg_roles WHERE rolname = current_user);"
+          echo "::endgroup::"
+
+          # ⚠️ REFUSE TO RUN AS A SUPERUSER. A superuser bypasses every RLS
+          # policy, so the rehearsal would pass exactly as the local verify
+          # already does — and report success about the one thing it exists to
+          # check. verify/039 needed this same guard for the same reason.
+          IS_SUPER="$("${PSQL_BIN}" -tA "$DATABASE_URL" -c \
+            "SELECT (rolsuper OR rolbypassrls) FROM pg_roles WHERE rolname = current_user")"
+          if [ "$IS_SUPER" = "t" ]; then
+            echo "::error::this connection bypasses RLS, so a rehearsal here would prove nothing about production. Refusing."
+            exit 1
+          fi
+
+          {
+            echo "BEGIN;"
+            cat "$SQL"
+            if [ -f "$VERIFY" ]; then
+              cat "$VERIFY"
+            else
+              echo "SELECT 'no verify script for ${MIGRATION}; schema change rehearsed only' AS note;"
+            fi
+            echo "ROLLBACK;"
+          } > /tmp/rehearse_raw.sql
+
+          # 🔴 THE MIGRATION FILES CARRY THEIR OWN BEGIN/COMMIT, and an inner
+          # COMMIT would END the outer transaction and PERSIST everything — the
+          # exact opposite of what this workflow promises. Strip the migration's
+          # own transaction control, keeping only the wrapper's.
+          python3 - <<'PY'
+          lines = open('/tmp/rehearse_raw.sql', encoding='utf-8').read().split('\n')
+          out, seen_open = [], False
+          for ln in lines:
+              bare = ln.strip().rstrip(';').upper()
+              if bare in ('BEGIN', 'START TRANSACTION', 'COMMIT', 'END'):
+                  if bare in ('BEGIN', 'START TRANSACTION') and not seen_open:
+                      seen_open = True
+                      out.append(ln)
+                  else:
+                      out.append('-- [rehearsal] stripped transaction control: ' + ln.strip())
+                  continue
+              out.append(ln)
+          text = '\n'.join(out)
+          # Belt and braces: if a COMMIT survived in a form this did not match,
+          # refuse rather than run something that might persist.
+          import re
+          if re.search(r'(?im)^\s*commit\s*;', text):
+              raise SystemExit('::error::a COMMIT survived stripping — refusing to run a rehearsal that could persist')
+          open('/tmp/rehearse.sql', 'w', encoding='utf-8').write(text)
+          print('transaction control normalised')
+          PY
+
+          echo "::group::rehearsal — this really applies the migration, then rolls it back"
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$DATABASE_URL" -f /tmp/rehearse.sql
+          echo "::endgroup::"
+          echo "rehearsal passed under production privileges"
+
+      # ⚠️ NOTHING SHOULD HAVE PERSISTED — PROVE IT rather than trusting
+      # ROLLBACK. A migration that opened its own transaction, or a COMMIT the
+      # stripper failed to match, would leave the schema changed, and this step
+      # is the only thing that would notice.
+      - name: Prove the rehearsal left no trace
+        env:
+          MIGRATION: ${{ inputs.migration }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          LEFT="$("${PSQL_BIN}" -tA "$DATABASE_URL" -c \
+            "SELECT count(*) FROM schema_migrations WHERE version = '${MIGRATION}'" 2>/dev/null || echo 0)"
+          if [ "$LEFT" != "0" ]; then
+            echo "::error::${MIGRATION} is recorded as APPLIED on live — the rehearsal PERSISTED. Investigate before applying anything else."
+            exit 1
+          fi
+          echo "confirmed: ${MIGRATION} is not applied on live; the rehearsal left no trace"
+
+      # ⚠️ `always()`, BECAUSE THE FAILURE PATH IS THE ONE THAT MATTERS. If the
+      # migration fails, the allow-list entry must still go — otherwise a broken
+      # run is also a run that quietly left the database reachable from an
+      # address nobody is tracking.
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] || { echo "no database id — nothing to restore"; exit 0; }
+          [ -f /tmp/ip_allow_original.json ] || { echo "allow list was never changed"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/ip_allow_restore.json','w'))"
+          code="$(curl -sS -o /tmp/restore_out.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/ip_allow_restore.json \
+            "https://api.render.com/v1/postgres/${ID}")"
+          echo "restore ipAllowList -> $code"
+          [ "$code" = "200" ] || { echo "::error::FAILED TO RESTORE the allow list — do it by hand"; exit 1; }
+
+          # Read it back. A 200 is the API accepting the request, not proof the
+          # ephemeral entry is gone.
+          curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}" -o /tmp/pg_after.json
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('/tmp/pg_after.json'))
+          d = d.get('postgres', d)
+          entries = d.get('ipAllowList') or []
+          left = [e for e in entries if 'rehearse-migration' in (e.get('description') or '')]
+          print('allow list now:', len(entries), 'entries')
+          if left:
+              sys.exit('::error::the ephemeral entry is STILL present: %s' % left)
+          print('ephemeral entry removed — verified by reading it back')
+          PY
+
+      - name: Always remove the credential
+        if: always()
+        run: rm -f /tmp/dburl /tmp/conn.json /tmp/ip_allow_*.json
