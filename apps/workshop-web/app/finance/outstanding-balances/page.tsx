@@ -1,22 +1,21 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { OutstandingBalancesScreen } from '../../_screens/outstanding-balances-screen';
 
 /**
- * /finance/outstanding-balances — "Outstanding Balances".
+ * `/finance/outstanding-balances` — "Outstanding Balances". Slice 3 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * What the workshop is owed, oldest due date first. The balance is summed from
+ * payments and credit notes, never a stored counter.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/finance/outstanding-balances';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/finance/outstanding-balances');
-  return <PlannedScreen route="/finance/outstanding-balances" title="Outstanding Balances" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <OutstandingBalancesScreen route={ROUTE} />;
 }

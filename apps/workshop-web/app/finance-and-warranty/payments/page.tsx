@@ -1,22 +1,22 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { ReceivePaymentScreen } from '../../_screens/receive-payment-screen';
 
 /**
- * /finance-and-warranty/payments — "Payments".
+ * `/finance-and-warranty/payments` — "Payments". Slice 3 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * The collection desk. Lists only what is still owed, because a desk taking
+ * money wants the invoices somebody might walk up and pay, not a billing
+ * history. Payments are RECORDED, not taken (ADR-012).
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/finance-and-warranty/payments';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/finance-and-warranty/payments');
-  return <PlannedScreen route="/finance-and-warranty/payments" title="Payments" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <ReceivePaymentScreen route={ROUTE} />;
 }

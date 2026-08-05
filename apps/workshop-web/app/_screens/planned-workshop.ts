@@ -272,18 +272,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Finance and warranty (default §34) ───────────────────────────────────
-  '/finance-and-warranty/invoices': {
-    does: 'Invoices raised against completed work.',
-    now: 'The quotation is the priced document that exists today, and an invoice is raised from it.',
-    href: '/solution-and-approval/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/finance-and-warranty/payments': {
-    does: 'What has been paid, by whom, and what is still outstanding.',
-    now: 'There is no in-app payment yet — deliberately. The quotation carries the agreed amount.',
-    href: '/solution-and-approval/quotations',
-    hrefLabel: 'Quotations',
-  },
   '/finance-and-warranty/warranty-records': {
     does: 'What each repair is warranted for, and until when.',
     now: 'Warranty terms are a later phase. The job card records exactly what was done, which is what a claim is judged on.',
@@ -298,68 +286,8 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Finance (owner §46) ──────────────────────────────────────────────────
-  '/finance/invoices': {
-    does: 'Every invoice this workshop has raised.',
-    now: 'Quotations are the priced records that exist, and invoicing is raised from them.',
-    href: '/repair-control/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/finance/payments': {
-    does: 'Money received, against which job, and by what method.',
-    now: 'In-app payment is deliberately not built. Quotations carry the agreed amounts.',
-    href: '/repair-control/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/finance/outstanding-balances': {
-    does: 'Who owes what, and for how long.',
-    now: 'Ledgers follow invoicing. Approved quotations are the amounts committed to today.',
-    href: '/repair-control/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/finance/refunds': {
-    does: 'Refunds issued, and the reason recorded for each.',
-    now: 'A refund follows a complaint, and complaints are recorded against the job they concern.',
-    href: '/workshop-operations/customer-complaints',
-    hrefLabel: 'Customer complaints',
-  },
-  '/finance/workshop-revenue': {
-    does: 'What the workshop earned, by period, service and technician.',
-    now: 'Revenue reporting needs invoicing first. Approved quotations are the closest measure available now.',
-    href: '/repair-control/quotations',
-    hrefLabel: 'Quotations',
-  },
 
   // ── Collection and payment (reception §48) ───────────────────────────────
-  '/collection-and-payment/ready-for-collection': {
-    does: 'Vehicles finished and waiting for their owner.',
-    now: 'A job reaching the collection stage appears on your task list.',
-    href: '/home/my-tasks',
-    hrefLabel: 'My tasks',
-  },
-  '/collection-and-payment/invoices': {
-    does: 'The invoice for a completed job, ready to hand over.',
-    now: 'The approved quotation is the priced document today, and it states what the customer agreed to pay.',
-    href: '/customer-approval/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/collection-and-payment/receive-payment': {
-    does: 'Recording a payment against a job at the counter.',
-    now: 'In-app payment is deliberately not built. Take payment as the workshop normally does; the quotation is the amount.',
-    href: '/customer-approval/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/collection-and-payment/receipts': {
-    does: 'The receipt issued for a payment taken.',
-    now: 'Printed documents are a later phase. The quotation records what was agreed.',
-    href: '/customer-approval/quotations',
-    hrefLabel: 'Quotations',
-  },
-  '/collection-and-payment/vehicle-release': {
-    does: 'Handing the vehicle back — keys, signature, and the release record.',
-    now: 'Find the vehicle to confirm its job is complete before releasing it.',
-    href: '/vehicles/vehicle-search',
-    hrefLabel: 'Find a vehicle',
-  },
 
   // ── Reports ──────────────────────────────────────────────────────────────
   '/reports/operations': {
