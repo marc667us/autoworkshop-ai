@@ -260,26 +260,70 @@ jobs:
           # exact opposite of what this workflow promises. Strip the migration's
           # own transaction control, keeping only the wrapper's.
           python3 - <<'PY'
-          lines = open('/tmp/rehearse_raw.sql', encoding='utf-8').read().split('\n')
-          out, seen_open = [], False
-          for ln in lines:
-              bare = ln.strip().rstrip(';').upper()
-              if bare in ('BEGIN', 'START TRANSACTION', 'COMMIT', 'END'):
-                  if bare in ('BEGIN', 'START TRANSACTION') and not seen_open:
-                      seen_open = True
-                      out.append(ln)
-                  else:
-                      out.append('-- [rehearsal] stripped transaction control: ' + ln.strip())
-                  continue
-              out.append(ln)
-          text = '\n'.join(out)
-          # Belt and braces: if a COMMIT survived in a form this did not match,
-          # refuse rather than run something that might persist.
           import re
-          if re.search(r'(?im)^\s*commit\s*;', text):
-              raise SystemExit('::error::a COMMIT survived stripping — refusing to run a rehearsal that could persist')
+
+          # 🔴 ONLY AT THE TOP LEVEL. A plpgsql function body is FULL of BEGIN
+          # and END, and they are not transaction control — they are the
+          # language's block syntax:
+          #
+          #     CREATE FUNCTION f() ... AS $$
+          #     BEGIN                      <- NOT a transaction
+          #         IF ... THEN ... END IF;
+          #     END;                       <- NOT a commit
+          #     $$;
+          #
+          # The first version of this stripper commented those out and produced
+          # `syntax error at or near "IF"` on migration 041's append-only
+          # trigger. Found by running this workflow for real against live, which
+          # is the entire argument for the workflow existing: a rehearsal that
+          # only previewed SQL would have reported success.
+          #
+          # So track dollar-quoted blocks ($$ ... $$ and $tag$ ... $tag$) and
+          # leave everything inside them completely alone.
+          lines = open('/tmp/rehearse_raw.sql', encoding='utf-8').read().split('\n')
+          out, seen_open, dollar_tag = [], False, None
+
+          for ln in lines:
+              if dollar_tag is None:
+                  bare = ln.strip().rstrip(';').upper()
+                  if bare in ('BEGIN', 'START TRANSACTION', 'COMMIT', 'END'):
+                      if bare in ('BEGIN', 'START TRANSACTION') and not seen_open:
+                          seen_open = True
+                          out.append(ln)
+                      else:
+                          out.append('-- [rehearsal] stripped transaction control: ' + ln.strip())
+                      # A line consumed here cannot also open a dollar quote.
+                      continue
+
+              # Toggle on every dollar-quote marker on the line, so `AS $$` opens
+              # and a lone `$$;` closes. An even number on one line is a no-op,
+              # which is correct for a single-line function body.
+              for tag in re.findall(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$', ln):
+                  if dollar_tag is None:
+                      dollar_tag = tag
+                  elif dollar_tag == tag:
+                      dollar_tag = None
+              out.append(ln)
+
+          if dollar_tag is not None:
+              raise SystemExit('::error::unbalanced dollar-quote (%s) — refusing to run a rehearsal built from SQL this did not parse' % dollar_tag)
+
+          text = '\n'.join(out)
+
+          # Belt and braces. If a top-level COMMIT survived in a form the loop
+          # did not match, refuse rather than run something that could persist.
+          # Checked OUTSIDE dollar quotes only, for the same reason as above.
+          depth_check, tag = [], None
+          for ln in text.split('\n'):
+              if tag is None and re.match(r'(?i)^\s*commit\s*;', ln):
+                  depth_check.append(ln.strip())
+              for t in re.findall(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$', ln):
+                  tag = t if tag is None else (None if tag == t else tag)
+          if depth_check:
+              raise SystemExit('::error::a top-level COMMIT survived stripping (%s) — refusing' % depth_check[:2])
+
           open('/tmp/rehearse.sql', 'w', encoding='utf-8').write(text)
-          print('transaction control normalised')
+          print('transaction control normalised (dollar-quoted bodies left untouched)')
           PY
 
           echo "::group::rehearsal — this really applies the migration, then rolls it back"
