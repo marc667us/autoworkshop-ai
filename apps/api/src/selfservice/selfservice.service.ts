@@ -441,6 +441,31 @@ export class SelfServiceService {
     const cid = await this.db.withTenant(ctx, async (client) => {
       const customerId = await this.resolveCustomer(client, ctx);
 
+      // 🔴 FINDING 3 (Codex): THE JOB CARD MUST BE THIS CUSTOMER'S.
+      //
+      // `addDocument` and `addMaintenance` both check that the vehicle they
+      // name belongs to the caller. This did not check the job card at all —
+      // and organisation-scoped RLS cannot tell two customers apart, so a
+      // customer holding another's job-card uuid could raise a case against it.
+      // `listCases` joins and returns `job_number`, so that leaked the other
+      // customer's job number and misdirected the workshop's triage.
+      //
+      // Migration 050 adds a trigger enforcing the same rule, because the next
+      // caller will forget. This exists so the refusal is a sentence.
+      if (input.jobCardId) {
+        const owned = await client.query(
+          `SELECT 1 FROM repair.job_cards
+            WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 AND customer_id = $4
+            LIMIT 1`,
+          [input.jobCardId, ctx.tenantId, ctx.organizationId, customerId],
+        );
+        if (!owned.rowCount) {
+          throw new NotFoundException(
+            'That repair is not one of yours. You can raise a case about any repair in your history, or leave it unlinked.',
+          );
+        }
+      }
+
       // 🔴 `support.next_case_reference` — THE ATOMIC ALLOCATOR, not a count.
       //
       // The first draft of this built the reference from `count(*) + 1` with a

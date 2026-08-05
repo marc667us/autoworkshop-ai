@@ -44,8 +44,16 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * A WebSocket would need a long-lived connection per participant on a free
  * instance that sleeps. Signalling is bounded — a few messages while the call
  * connects — so a short poll on `seq` is the right shape and needs no new
- * transport. `seq` is an identity column, so "everything after N" cannot miss a
- * candidate the way a timestamp cursor can.
+ * transport.
+ *
+ * 🔴 THIS COMMENT USED TO CLAIM THE CURSOR "cannot miss a candidate the way a
+ * timestamp cursor can". THAT WAS FALSE, and Codex caught it. An identity value
+ * is allocated at INSERT and becomes visible at COMMIT, so 10 and 11 can be
+ * taken concurrently, 11 can commit first, and a poller that advances past 11
+ * never sees 10. What makes the cursor safe is the row lock in `postSignal` —
+ * not the column type. The distinction matters because the wrong version of
+ * this sentence is exactly the kind of confident comment that stops the next
+ * reader checking.
  */
 
 /** Every workshop role may hold a conversation; so may a customer. As slice 7. */
@@ -204,13 +212,65 @@ export class CallsService {
     }
 
     return this.db.withTenant(ctx, async (client) => {
+      // 🔴 FINDING 2 (Codex): ORGANISATION SCOPE IS NOT ACCESS.
+      //
+      // This validated the job card by tenant and organisation, and validated
+      // the thread NOT AT ALL. Neither is sufficient: org scope does not
+      // separate two CUSTOMERS, and it certainly does not separate two private
+      // conversations inside one workshop — slice 7 established that thread
+      // access is PARTICIPATION.
+      //
+      // Left as it was, a call could be pinned to another customer's repair or
+      // to a conversation the caller was never part of.
+      const isCustomer = ctx.activeRole === 'customer';
+
       if (input.jobCardId) {
-        const jc = await client.query(
-          `SELECT 1 FROM repair.job_cards
-            WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
-          [input.jobCardId, ctx.tenantId, ctx.organizationId],
+        // A workshop user may call about any job in their workshop; a CUSTOMER
+        // may only call about their own. That distinction needs the caller's
+        // role, which is why it lives here and not in the trigger.
+        const jc = isCustomer
+          ? await client.query(
+              `SELECT 1
+                 FROM repair.job_cards jc
+                 JOIN core.customers c ON c.id = jc.customer_id
+                WHERE jc.id = $1
+                  AND jc.tenant_id = $2
+                  AND jc.organization_id = $3
+                  AND c.user_id = $4
+                LIMIT 1`,
+              [input.jobCardId, ctx.tenantId, ctx.organizationId, ctx.userId],
+            )
+          : await client.query(
+              `SELECT 1 FROM repair.job_cards
+                WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
+              [input.jobCardId, ctx.tenantId, ctx.organizationId],
+            );
+        if (!jc.rowCount) {
+          throw new NotFoundException(
+            isCustomer
+              ? 'That repair is not one of yours. You can call about any of the repairs in your history.'
+              : 'That job card is not in this workshop.',
+          );
+        }
+      }
+
+      if (input.threadId) {
+        const thread = await client.query(
+          `SELECT 1
+             FROM comms.threads t
+            WHERE t.id = $1
+              AND t.tenant_id = $2
+              AND t.organization_id = $3
+              AND EXISTS (SELECT 1 FROM comms.participants p
+                           WHERE p.thread_id = t.id AND p.user_id = $4)
+            LIMIT 1`,
+          [input.threadId, ctx.tenantId, ctx.organizationId, ctx.userId],
         );
-        if (!jc.rowCount) throw new NotFoundException('That job card is not in this workshop.');
+        if (!thread.rowCount) {
+          throw new NotFoundException(
+            'That conversation is not one of yours, so a call cannot be attached to it.',
+          );
+        }
       }
 
       // 🔴 AN IN-APP CALL STARTS `ringing`, NOT `scheduled`. A scheduled call
@@ -353,6 +413,30 @@ export class CallsService {
   ): Promise<{ seq: string }> {
     return this.db.withTenant(ctx, async (client) => {
       await this.assertParticipant(client, ctx, callId);
+
+      // 🔴 THE SEQUENCE GAP — found by Codex, and it is a real one I missed.
+      //
+      // `seq` is an identity column, so a value is allocated at INSERT time but
+      // only becomes VISIBLE at COMMIT. Two concurrent signals can therefore
+      // take 10 and 11, commit 11 FIRST, and a peer polling `seq > cursor`
+      // advances past 11 — after which 10 commits and is never delivered.
+      //
+      // A dropped ICE candidate is a call that intermittently fails to connect
+      // for a reason nobody can reproduce, which is the worst kind of defect
+      // this feature could have.
+      //
+      // Locking the CALL ROW makes signal inserts for one call serialise:
+      // transaction A holds the lock until it commits, so B cannot be allocated
+      // a number until A is visible. Allocation order therefore equals commit
+      // order, and the cursor becomes safe.
+      //
+      // ⚠️ THE COST IS NOTHING HERE. A call is two people exchanging perhaps
+      // twenty small messages over a few seconds; serialising them is free. The
+      // same trick on a high-throughput table would not be.
+      //
+      // ⚠️ ONLY ON WRITE. `pollSignals` must NOT take this lock, or every poll
+      // would block every send.
+      await client.query('SELECT id FROM comms.calls WHERE id = $1 FOR UPDATE', [callId]);
 
       if (input.toUserId) {
         const peer = await client.query(
