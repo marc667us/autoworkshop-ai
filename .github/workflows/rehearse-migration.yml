@@ -78,6 +78,24 @@ on:
 permissions:
   contents: read
 
+# 🔴 ONE REHEARSAL AT A TIME. Two concurrent runs BROKE EACH OTHER on
+# 2026-08-07: each adds an ephemeral entry to the Render database firewall and
+# each restore step writes back the list it captured at ITS start — so the
+# second run to finish setting up had its entry removed by the first to finish,
+# and the survivor died mid-post-check with
+#
+#     psql: error: SSL connection has been closed unexpectedly
+#
+# which reads like a database fault and is not one. The migration under test was
+# fine; the harness was standing on its own foot.
+#
+# ⚠️ `cancel-in-progress: false` — a rehearsal in flight has ALTERED THE
+# firewall and must be allowed to reach its `always()` restore step. Cancelling
+# it would leave production reachable from a runner IP nobody is tracking.
+concurrency:
+  group: rehearse-migration-on-live
+  cancel-in-progress: false
+
 jobs:
   rehearse:
     runs-on: ubuntu-latest
