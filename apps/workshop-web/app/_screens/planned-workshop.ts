@@ -272,18 +272,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Finance and warranty (default §34) ───────────────────────────────────
-  '/finance-and-warranty/warranty-records': {
-    does: 'What each repair is warranted for, and until when.',
-    now: 'Warranty terms are a later phase. The job card records exactly what was done, which is what a claim is judged on.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/finance-and-warranty/warranty-claims': {
-    does: 'Claims made against a previous repair, and how each was settled.',
-    now: 'A return under warranty is worked as a job card against the same vehicle.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
 
   // ── Finance (owner §46) ──────────────────────────────────────────────────
 
