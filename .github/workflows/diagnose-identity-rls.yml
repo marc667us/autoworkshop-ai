@@ -256,15 +256,20 @@ jobs:
       - name: Read the membership four ways, and compare
         run: |
           set -euo pipefail
-          EMAIL_SQL="${PROBE_EMAIL:-}"
+          # ⚠️ HEREDOC, NOT `-c`. psql does NOT interpolate `-v` variables into a
+          # `--command` string — substitution happens only for input read from a
+          # file or stdin. The first draft of this step used `-c` and died with
+          # `syntax error at or near ":"`, taking the whole four-way probe with
+          # it. Every variable-using query below is fed on stdin for that reason.
           echo "::group::the account under test"
-          "${PSQL_BIN}" -v ON_ERROR_STOP=1 -v probe_email="${EMAIL_SQL}" "$(cat /tmp/dburl)" -tAc "
-            SELECT COALESCE(
-                     (SELECT u.keycloak_subject || ' | ' || u.email
-                        FROM identity.users u
-                       WHERE (:'probe_email' = '' OR u.email = :'probe_email')
-                       ORDER BY u.created_at DESC LIMIT 1),
-                     'NO USER ROW MATCHED')" | tee /tmp/who.txt
+          "${PSQL_BIN}" -v ON_ERROR_STOP=1 -v probe_email="${PROBE_EMAIL:-}" -tA "$(cat /tmp/dburl)" <<'SQL' | tee /tmp/who.txt
+          SELECT COALESCE(
+                   (SELECT u.keycloak_subject || ' | ' || u.email
+                      FROM identity.users u
+                     WHERE (:'probe_email' = '' OR u.email = :'probe_email')
+                     ORDER BY u.created_at DESC LIMIT 1),
+                   'NO USER ROW MATCHED');
+          SQL
           echo "::endgroup::"
 
           SUBJECT="$(cut -d'|' -f1 /tmp/who.txt | tr -d ' ')"
