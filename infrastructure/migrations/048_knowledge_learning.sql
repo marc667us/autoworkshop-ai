@@ -227,6 +227,65 @@ CREATE INDEX IF NOT EXISTS idx_cert_user   ON learning.certifications (organizat
 CREATE INDEX IF NOT EXISTS idx_cert_expiry ON learning.certifications (organization_id, expires_on)
     WHERE expires_on IS NOT NULL;
 
+-- ── 🔴 THE SEED RUNS BEFORE RLS IS FORCED, AND THAT ORDER IS LOAD-BEARING ──
+--
+-- This block used to sit at the END of the file, after
+-- `ALTER TABLE knowledge.fault_codes FORCE ROW LEVEL SECURITY` and after a
+-- policy that grants SELECT and nothing else. Under FORCE RLS an INSERT with no
+-- INSERT policy is REFUSED — including for the table's owner, which is what
+-- FORCE means.
+--
+-- It passed locally anyway, because the local `autoworkshop` role is
+-- `superuser=true bypassrls=true` and no policy applied to it at all. On Render
+-- that role is NOT a superuser, and the live rehearsal failed with
+--
+--     ERROR:  new row violates row-level security policy for table "fault_codes"
+--
+-- This is the exact defect class `rehearse-migration.yml` was built for after
+-- 036-039 cost three sessions, and it is the first time it has caught one
+-- before the migration reached production rather than after.
+--
+-- ⚠️ DO NOT MOVE THIS BELOW THE RLS BLOCK. Seeding reference data is a write,
+-- and this table deliberately has no INSERT policy because the application must
+-- never write to it.
+
+-- ── seed the standard fault codes ───────────────────────────────────────────
+--
+-- ⚠️ A SMALL, HONEST SET. These are the generic OBD-II codes every scanner
+-- reports — public standard, no licence. The full manufacturer-specific set is
+-- tens of thousands of codes and is exactly the licensed content §4 stages;
+-- seeding a plausible-looking subset and calling the index complete would be
+-- the "disconnected mock page" failure in data form. The screen says how many
+-- codes are held so nobody mistakes this for the whole standard.
+
+INSERT INTO knowledge.fault_codes (code, system, title, description, common_causes) VALUES
+  ('P0300', 'powertrain', 'Random/multiple cylinder misfire detected',
+   'The engine control module has detected misfires across more than one cylinder.',
+   'Worn spark plugs; failing coils; vacuum leak; low fuel pressure; timing.'),
+  ('P0301', 'powertrain', 'Cylinder 1 misfire detected',
+   'Misfire isolated to cylinder 1.', 'Spark plug; coil; injector; compression.'),
+  ('P0171', 'powertrain', 'System too lean (bank 1)',
+   'The mixture on bank 1 is leaner than the ECM can correct for.',
+   'Vacuum leak; dirty MAF; weak fuel pump; leaking intake gasket.'),
+  ('P0420', 'powertrain', 'Catalyst system efficiency below threshold (bank 1)',
+   'The catalytic converter is not converting as expected.',
+   'Failing catalytic converter; faulty downstream oxygen sensor; exhaust leak.'),
+  ('P0128', 'powertrain', 'Coolant thermostat below regulating temperature',
+   'The engine is not reaching operating temperature in the expected time.',
+   'Thermostat stuck open; faulty coolant temperature sensor.'),
+  ('P0442', 'powertrain', 'Evaporative emission system small leak detected',
+   'A small leak in the EVAP system.', 'Loose or failed fuel cap; cracked hose; purge valve.'),
+  ('C0035', 'chassis', 'Left front wheel speed sensor circuit',
+   'The ABS module cannot read the left front wheel speed sensor.',
+   'Damaged sensor; wiring; contaminated reluctor ring.'),
+  ('B1318', 'body', 'Battery voltage low',
+   'System voltage below the threshold body modules require.',
+   'Failing battery; charging system fault; parasitic drain.'),
+  ('U0100', 'network', 'Lost communication with ECM/PCM',
+   'A module has lost communication with the engine control module on the bus.',
+   'CAN bus wiring; failed module; poor ground; low battery voltage.')
+ON CONFLICT (code) DO NOTHING;
+
 -- ── row-level security ──────────────────────────────────────────────────────
 
 DO $$
@@ -297,42 +356,5 @@ REVOKE DELETE ON knowledge.procedures    FROM autoworkshop_app;
 REVOKE DELETE ON knowledge.diagrams      FROM autoworkshop_app;
 REVOKE DELETE ON learning.courses        FROM autoworkshop_app;
 REVOKE DELETE ON learning.certifications FROM autoworkshop_app;
-
--- ── seed the standard fault codes ───────────────────────────────────────────
---
--- ⚠️ A SMALL, HONEST SET. These are the generic OBD-II codes every scanner
--- reports — public standard, no licence. The full manufacturer-specific set is
--- tens of thousands of codes and is exactly the licensed content §4 stages;
--- seeding a plausible-looking subset and calling the index complete would be
--- the "disconnected mock page" failure in data form. The screen says how many
--- codes are held so nobody mistakes this for the whole standard.
-
-INSERT INTO knowledge.fault_codes (code, system, title, description, common_causes) VALUES
-  ('P0300', 'powertrain', 'Random/multiple cylinder misfire detected',
-   'The engine control module has detected misfires across more than one cylinder.',
-   'Worn spark plugs; failing coils; vacuum leak; low fuel pressure; timing.'),
-  ('P0301', 'powertrain', 'Cylinder 1 misfire detected',
-   'Misfire isolated to cylinder 1.', 'Spark plug; coil; injector; compression.'),
-  ('P0171', 'powertrain', 'System too lean (bank 1)',
-   'The mixture on bank 1 is leaner than the ECM can correct for.',
-   'Vacuum leak; dirty MAF; weak fuel pump; leaking intake gasket.'),
-  ('P0420', 'powertrain', 'Catalyst system efficiency below threshold (bank 1)',
-   'The catalytic converter is not converting as expected.',
-   'Failing catalytic converter; faulty downstream oxygen sensor; exhaust leak.'),
-  ('P0128', 'powertrain', 'Coolant thermostat below regulating temperature',
-   'The engine is not reaching operating temperature in the expected time.',
-   'Thermostat stuck open; faulty coolant temperature sensor.'),
-  ('P0442', 'powertrain', 'Evaporative emission system small leak detected',
-   'A small leak in the EVAP system.', 'Loose or failed fuel cap; cracked hose; purge valve.'),
-  ('C0035', 'chassis', 'Left front wheel speed sensor circuit',
-   'The ABS module cannot read the left front wheel speed sensor.',
-   'Damaged sensor; wiring; contaminated reluctor ring.'),
-  ('B1318', 'body', 'Battery voltage low',
-   'System voltage below the threshold body modules require.',
-   'Failing battery; charging system fault; parasitic drain.'),
-  ('U0100', 'network', 'Lost communication with ECM/PCM',
-   'A module has lost communication with the engine control module on the bus.',
-   'CAN bus wiring; failed module; poor ground; low battery voltage.')
-ON CONFLICT (code) DO NOTHING;
 
 COMMIT;
