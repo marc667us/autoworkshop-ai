@@ -13,6 +13,7 @@ DECLARE
     tid uuid; oid uuid; jc uuid;
     inv uuid; pay uuid;
     refused boolean;
+    rec record;
     passed int := 0;
 BEGIN
     SELECT id INTO tid FROM identity.tenants LIMIT 1;
@@ -35,6 +36,24 @@ BEGIN
     -- RENDER IS NOT" (036, 039, now this), and the first time a rehearsal caught
     -- it before the migration reached production rather than after.
     PERFORM set_config('app.tenant_id', tid::text, true);
+
+    -- ── diagnostic, printed before the first insert ────────────────────
+    -- Measure, do not infer. The first two rehearsals failed here and guessing
+    -- which setting the policy reads is what produced the second failure.
+    RAISE NOTICE '  ctx: current_user=% tenant_setting=% current_tenant_id=% org=%',
+        current_user,
+        COALESCE(current_setting('app.tenant_id', true), '<unset>'),
+        COALESCE(identity.current_tenant_id()::text, '<null>'),
+        COALESCE(oid::text, '<null>');
+    RAISE NOTICE '  is_platform_admin=%', identity.is_platform_admin();
+    FOR rec IN
+        SELECT policyname, cmd, COALESCE(qual, '-') AS using_expr,
+               COALESCE(with_check, '-') AS check_expr
+          FROM pg_policies WHERE schemaname='finance' AND tablename='invoices'
+    LOOP
+        RAISE NOTICE '  policy % (%): USING % CHECK %',
+            rec.policyname, rec.cmd, rec.using_expr, rec.check_expr;
+    END LOOP;
 
     -- 1. a draft invoice can be built
     INSERT INTO finance.invoices (tenant_id, organization_id, job_card_id,
