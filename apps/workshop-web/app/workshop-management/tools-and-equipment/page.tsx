@@ -1,22 +1,22 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { ToolsScreen } from '../../_screens/tools-screen';
 
 /**
- * /workshop-management/tools-and-equipment — "Tools and Equipment".
+ * `/workshop-management/tools-and-equipment` — "Tools and Equipment". Slice 4 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * A tool is NOT a stock item — it is borrowed and comes back. Calibration is
+ * tracked because an out-of-date torque wrench produces measurements a repair
+ * is later judged on.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/workshop-management/tools-and-equipment';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/workshop-management/tools-and-equipment');
-  return <PlannedScreen route="/workshop-management/tools-and-equipment" title="Tools and Equipment" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <ToolsScreen route={ROUTE} />;
 }

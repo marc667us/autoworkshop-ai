@@ -14,6 +14,7 @@ import { MediaModule } from './media/media.module';
 import { ReceptionModule } from './reception/reception.module';
 import { FinanceModule } from './finance/finance.module';
 import { WarrantyModule } from './warranty/warranty.module';
+import { PartsModule } from './parts/parts.module';
 import { SecurityModule } from './security/security.module';
 import { OperationsModule } from './operations/operations.module';
 
@@ -41,6 +42,7 @@ import { OperationsModule } from './operations/operations.module';
     ReceptionModule,
     FinanceModule,
     WarrantyModule,
+    PartsModule,
     SecurityModule,
     OperationsModule,
   ],

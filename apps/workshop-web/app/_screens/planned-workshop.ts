@@ -70,112 +70,16 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop floor (default §34, manager §47) ────────────────────────────
-  '/workshop-floor/tools-and-equipment': {
-    does: 'The workshop’s tools and rigs, who has each, and when it is next serviced.',
-    now: 'Tool records are a later phase. Tools used on a job are recorded on that job card.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
 
   // ── Solution and approval (default §34) ──────────────────────────────────
 
   // ── Customer approval (reception §48) ────────────────────────────────────
 
   // ── Parts and supply (default §34) ───────────────────────────────────────
-  '/parts-and-supply/parts-depot': {
-    does: 'What is on the shelf, where it is, and what is running low.',
-    now: 'Stock control is a later phase. Parts used on a job are recorded on that job card.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts-and-supply/reservations': {
-    does: 'Parts held for a specific job so they cannot be used on another.',
-    now: 'Reservations need stock control first. The job card lists the parts each job needs.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts-and-supply/procurement': {
-    does: 'Raising an order with a supplier and tracking it to delivery.',
-    now: 'The parts marketplace is live and public — search verified suppliers by vehicle or part number and order with an account.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
-  '/parts-and-supply/goods-receipt': {
-    does: 'Booking a delivery in and checking it against what was ordered.',
-    now: 'Goods receipt follows procurement. Parts fitted to a job are recorded on the job card today.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts-and-supply/suppliers': {
-    does: 'The suppliers this workshop buys from, and the terms agreed with each.',
-    now: 'Every verified supplier on the platform is listed in the marketplace, with the parts they stock.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
-  '/parts-and-supply/marketplace': {
-    does: 'Sourcing a part from the wider supplier network.',
-    now: 'It is live and public: search by make, model, year or part number, at supplier list prices in cedis.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
 
   // ── Parts and suppliers (owner §46) ──────────────────────────────────────
-  '/parts-and-suppliers/inventory': {
-    does: 'Stock on hand, its value, and what needs reordering.',
-    now: 'Stock control is a later phase. Parts consumed are recorded per job card.',
-    href: '/workshop-operations/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts-and-suppliers/parts-reservations': {
-    does: 'Parts committed to a job and unavailable to others.',
-    now: 'Reservations need stock control first. Each job card lists the parts that job requires.',
-    href: '/workshop-operations/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts-and-suppliers/procurement': {
-    does: 'Purchase orders, their approval, and delivery tracking.',
-    now: 'Order through the marketplace today — it is live, and one basket becomes one order per supplier.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
-  '/parts-and-suppliers/suppliers': {
-    does: 'Your supplier list, with lead times and agreed pricing.',
-    now: 'The marketplace lists every verified supplier and what each stocks.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
-  '/parts-and-suppliers/marketplace': {
-    does: 'The wider parts network, beyond your own suppliers.',
-    now: 'It is live and public — search by vehicle or part number and compare supplier prices in cedis.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
 
   // ── Parts (manager §47) ──────────────────────────────────────────────────
-  '/parts/parts-status': {
-    does: 'Which jobs are waiting on parts, and how long each has waited.',
-    now: 'A job held for parts sits at that stage on its job card, which is where the wait is visible today.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts/reservations': {
-    does: 'Parts held against a job so they are not used elsewhere.',
-    now: 'Reservations need stock control first. The job card lists what each job needs.',
-    href: '/workshop-floor/job-cards',
-    hrefLabel: 'Job cards',
-  },
-  '/parts/purchase-requisitions': {
-    does: 'Requests to buy, and their approval before an order is placed.',
-    now: 'The marketplace is live and can be ordered from directly while requisitions are built.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
-  '/parts/supplier-inquiries': {
-    does: 'Questions put to suppliers about price, stock or fitment, and their replies.',
-    now: 'The marketplace shows each supplier’s stock status and list price without having to ask.',
-    href: '/',
-    hrefLabel: 'Parts marketplace',
-  },
 
   // ── Communication (T-0017 / C5, across trees) ────────────────────────────
   '/communication/messages': {
@@ -368,12 +272,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop management (owner §46) ──────────────────────────────────────
-  '/workshop-management/tools-and-equipment': {
-    does: 'The workshop’s equipment register and its service schedule.',
-    now: 'Equipment records are a later phase. Tools used on a job are noted on the job card.',
-    href: '/workshop-operations/job-cards',
-    hrefLabel: 'Job cards',
-  },
   '/workshop-management/service-categories': {
     does: 'The services this workshop offers, and the standard time for each.',
     now: 'Pricing rules are where the money side of a service is set today.',
