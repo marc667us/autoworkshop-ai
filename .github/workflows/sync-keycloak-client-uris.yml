@@ -117,6 +117,49 @@ jobs:
               raw, _, code = out.rpartition('\n')
               return int(code), raw
 
+          # 🔴 NEVER PUSH A LOCALHOST OR PLAINTEXT REDIRECT TO A REMOTE REALM.
+          #
+          # Found by the dry run of this very workflow, against my own design.
+          # The committed file carries `http://localhost:3000/*` and friends
+          # because developers need them; the production realm was provisioned
+          # WITHOUT them, deliberately. Add-only reconciliation would therefore
+          # have "helpfully" added every one of them to production.
+          #
+          # That is not untidiness, it is a hole. These are PUBLIC clients using
+          # PKCE, and a registered `http://localhost:*/*` redirect is the classic
+          # authorization-code exfiltration path: an attacker who gets a signed-in
+          # victim to open a crafted /auth URL has the code delivered to a
+          # listener on the victim's own machine, and a public client needs no
+          # secret to redeem it. The same argument applies to any `http://` in a
+          # realm reached over TLS.
+          #
+          # So the filter is on the TARGET, not on the file: a sync aimed at a
+          # local Keycloak keeps them, and a sync aimed at anything else drops
+          # them and SAYS which ones it dropped. Silent filtering would be its own
+          # defect — "no silent caps".
+          def is_local_target(url):
+              host = urllib.parse.urlparse(url).hostname or ''
+              return host in ('localhost', '127.0.0.1', '::1', 'host.docker.internal')
+
+          LOCAL_TARGET = is_local_target(KC)
+
+          def safe_for_target(value):
+              if LOCAL_TARGET:
+                  return True
+              v = value.strip()
+              # `exp://` is Expo's native deep link; it is not a web redirect and
+              # carries no browser origin, so the localhost reasoning above does
+              # not apply to it. It is still refused for a remote realm because
+              # nothing has yet published a production mobile scheme, and
+              # registering a dev one live would be the same mistake by another
+              # name. Slice work that ships mobile must add the real scheme.
+              if v.startswith('exp://'):
+                  return False
+              parsed = urllib.parse.urlparse(v)
+              if parsed.scheme and parsed.scheme != 'https':
+                  return False
+              return not is_local_target(v)
+
           with open('infrastructure/keycloak/realm-autoworkshop.json') as fh:
               declared = {c['clientId']: c for c in json.load(fh).get('clients', [])}
 
@@ -143,6 +186,12 @@ jobs:
                   # ADD-ONLY. Anything live has and the file does not is left
                   # exactly where it is; see the header for why.
                   new = [v for v in want_v if v not in have_v]
+
+                  dropped = [v for v in new if not safe_for_target(v)]
+                  for v in dropped:
+                      print(f'  {client_id:32} skipped {field} (dev-only): {v}')
+                  new = [v for v in new if safe_for_target(v)]
+
                   if new:
                       additions[field] = have_v + new
 
