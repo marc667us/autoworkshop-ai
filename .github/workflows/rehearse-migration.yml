@@ -57,9 +57,13 @@ on:
         description: 'Migration basename, e.g. 041_reception (no .sql). Its verify/ script runs too, if one exists.'
         required: true
       database:
-        description: 'Render database name'
+        # The Render SERVICE name, which is `autoworkshop-postgres` — not the
+        # database name inside it. Getting this wrong is a clean failure ("no
+        # database named autoworkshop", with the visible list printed), which is
+        # how the first run of this workflow found it.
+        description: 'Render Postgres service name'
         required: false
-        default: 'autoworkshop'
+        default: 'autoworkshop-postgres'
 
 permissions:
   contents: read
