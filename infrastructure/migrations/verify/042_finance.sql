@@ -191,14 +191,35 @@ BEGIN
     EXCEPTION WHEN check_violation THEN refused := true;
     END;
     IF NOT refused THEN RAISE EXCEPTION 'a payment was EDITED'; END IF;
+    -- 🔴 ASSERT THE EFFECT, NOT THE MECHANISM — and this check had it wrong.
+    --
+    -- It used to demand a `check_violation`, and on production it FAILED while
+    -- the data was perfectly safe. The two environments protect the row by
+    -- DIFFERENT means:
+    --
+    --   local  — the role is a SUPERUSER, bypasses RLS, the DELETE reaches the
+    --            row, and `trg_payment_immutable` raises.
+    --   live   — `finance.payments` has SELECT/INSERT/UPDATE policies and NO
+    --            DELETE policy, so under FORCE RLS the DELETE matches ZERO rows.
+    --            Nothing is deleted and NOTHING IS RAISED. The trigger never
+    --            fires, because no row was ever targeted.
+    --
+    -- Both outcomes are acceptable — the payment survives either way — but only
+    -- one of them tells the caller. A test that demanded the exception reported
+    -- a defect that did not exist, which is how a verify trains people to ignore
+    -- it. So: try the delete, tolerate either refusal, and assert the thing that
+    -- actually matters — THE ROW IS STILL THERE.
     refused := false;
     BEGIN
         DELETE FROM finance.payments WHERE id = pay;
     EXCEPTION WHEN check_violation THEN refused := true;
     END;
-    IF NOT refused THEN RAISE EXCEPTION 'a payment was DELETED'; END IF;
+    PERFORM 1 FROM finance.payments WHERE id = pay;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'a payment was DELETED — the row is gone (raised=%)', refused;
+    END IF;
     passed := passed + 1;
-    RAISE NOTICE '  7/8 a payment refuses both UPDATE and DELETE';
+    RAISE NOTICE '  7/8 a payment survives UPDATE and DELETE (delete raised=%)', refused;
 
     -- 8. INJECT: refund more than was paid
     refused := false;
