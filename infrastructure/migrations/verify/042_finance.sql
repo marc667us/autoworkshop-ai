@@ -16,8 +16,38 @@ DECLARE
     rec record;
     passed int := 0;
 BEGIN
-    SELECT id INTO tid FROM identity.tenants LIMIT 1;
+    -- 🔴 THE TENANT CANNOT BE DISCOVERED UNDER PRODUCTION RLS, BY DESIGN.
+    --
+    -- `identity.tenants` carries `USING (id = identity.current_tenant_id())`, so
+    -- a caller with no tenant context reads ZERO rows — you must already know
+    -- which tenant you are to see it. That is correct security and it makes a
+    -- fixture that discovers a tenant impossible to write.
+    --
+    -- Locally the role is a SUPERUSER, so the discovery below works and this
+    -- verify passed 8/8 while proving nothing about RLS. Against production the
+    -- same script left `tid` NULL, `app.tenant_id` empty, and every insert was
+    -- refused. Measured, after two failed rehearsals:
+    --
+    --   ctx: current_user=autoworkshop tenant_setting= current_tenant_id=<null> org=<null>
+    --
+    -- So: an already-established context WINS, and the caller supplies it
+    -- (`rehearse-migration.yml` has a `tenant_id` input). Discovery is the
+    -- LOCAL fallback only.
+    tid := identity.current_tenant_id();
+    IF tid IS NULL THEN
+        SELECT id INTO tid FROM identity.tenants LIMIT 1;
+    END IF;
+    IF tid IS NULL THEN
+        RAISE EXCEPTION
+            'verify/042 has no tenant context and cannot discover one — identity.tenants '
+            'is readable only by the tenant it belongs to. Re-run the rehearsal with a '
+            'tenant_id input. Refusing to report a pass that tested nothing.';
+    END IF;
+    PERFORM set_config('app.tenant_id', tid::text, true);
     SELECT id INTO oid FROM identity.organizations WHERE tenant_id = tid LIMIT 1;
+    IF oid IS NULL THEN
+        RAISE EXCEPTION 'verify/042: tenant % has no organisation to bill from', tid;
+    END IF;
     SELECT id INTO jc  FROM repair.job_cards WHERE tenant_id = tid LIMIT 1;
     IF jc IS NULL THEN jc := gen_random_uuid(); END IF;
     -- 🔴 `app.tenant_id`, NOT `app.current_tenant`.

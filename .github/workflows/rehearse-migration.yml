@@ -56,6 +56,16 @@ on:
       migration:
         description: 'Migration basename, e.g. 041_reception (no .sql). Its verify/ script runs too, if one exists.'
         required: true
+      tenant_id:
+        # 🔴 REQUIRED FOR ANY VERIFY THAT WRITES TENANT-OWNED ROWS.
+        #
+        # `identity.tenants` is readable only by the tenant it belongs to
+        # (`USING id = current_tenant_id()`), so a fixture cannot discover one.
+        # Locally the superuser can, which is exactly why a verify passes there
+        # while proving nothing. Supply the tenant to rehearse as.
+        description: 'Tenant uuid to establish context as. Needed by verifies that write rows.'
+        required: false
+        default: ''
       database:
         # The Render SERVICE name, which is `autoworkshop-postgres` — not the
         # database name inside it. Getting this wrong is a clean failure ("no
@@ -214,6 +224,7 @@ jobs:
       - name: Rehearse — apply, run the verify, assert, ROLLBACK
         env:
           MIGRATION: ${{ inputs.migration }}
+          TENANT_ID: ${{ inputs.tenant_id }}
         run: |
           set -euo pipefail
           export DATABASE_URL="$(cat /tmp/dburl)"
@@ -246,6 +257,12 @@ jobs:
 
           {
             echo "BEGIN;"
+            # Establish the tenant context BEFORE anything runs, so a verify sees
+            # the same world the application does. Transaction-local, so the
+            # ROLLBACK takes it with everything else.
+            if [ -n "${TENANT_ID:-}" ]; then
+              echo "SELECT set_config('app.tenant_id', '${TENANT_ID}', true);"
+            fi
             cat "$SQL"
             if [ -f "$VERIFY" ]; then
               cat "$VERIFY"
