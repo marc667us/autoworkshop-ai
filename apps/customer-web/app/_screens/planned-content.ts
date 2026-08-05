@@ -73,18 +73,6 @@ export const CUSTOMER_PLANNED: Record<string, PlannedScreen> = {
     href: '/service-and-repairs/report-a-problem',
     hrefLabel: 'Report a problem',
   },
-  '/communication/voice-calls': {
-    does: 'Calls the workshop from inside the app, with the call logged against the job.',
-    now: 'Call the workshop on their own number. The job number is on your repair list if they ask for it.',
-    href: '/service-and-repairs/service-requests',
-    hrefLabel: 'Find your job number',
-  },
-  '/communication/video-consultations': {
-    does: 'A video call so a technician can see the fault before the vehicle comes in.',
-    now: 'Describe the problem in as much detail as you can when you report it.',
-    href: '/service-and-repairs/report-a-problem',
-    hrefLabel: 'Report a problem',
-  },
   '/payments/quotations': {
     does: 'Every price the workshop has quoted you, including ones you have not answered yet.',
     now: 'A quotation reaches you as a repair proposal, with the price and the options to choose between.',

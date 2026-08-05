@@ -19,6 +19,7 @@ import { CommsModule } from './comms/comms.module';
 import { SelfServiceModule } from './selfservice/selfservice.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { ReportsModule } from './reports/reports.module';
+import { CallsModule } from './calls/calls.module';
 import { SettingsModule } from './settings/settings.module';
 import { SecurityModule } from './security/security.module';
 import { OperationsModule } from './operations/operations.module';
@@ -53,6 +54,7 @@ import { OperationsModule } from './operations/operations.module';
     SelfServiceModule,
     KnowledgeModule,
     ReportsModule,
+    CallsModule,
     SecurityModule,
     OperationsModule,
   ],

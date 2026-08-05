@@ -61,6 +61,10 @@ export { ViewerSwitchers } from './ViewerSwitchers';
 export { ActingAsControl } from './ActingAsControl';
 export { activeRoleName, ACTIVE_ROLE_COOKIE } from './active-role';
 export { activeRoleHeader } from './viewer';
+// Exported for the slice-11 signalling proxy, which must send the SAME
+// organisation header every server-side read sends — a call negotiated in
+// one organisation and read in another would be a real isolation hole.
+export { activeOrganizationHeader } from './viewer';
 
 /**
  * "Do I belong to a workshop yet?" — answerable for a user `/me` cannot

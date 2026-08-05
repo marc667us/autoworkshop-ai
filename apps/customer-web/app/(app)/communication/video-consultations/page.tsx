@@ -1,19 +1,20 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../../_screens/planned-screen';
+import { CustomerCallsScreen } from '../../../_screens/customer-calls-screen';
 
 /**
- * /communication/video-consultations — `01 (1).txt` §33, the customer workspace.
+ * `/communication/video-consultations` - the customer workspace, `01 (1).txt` section 33. Slice 11.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Voice and video happen IN THIS APP. The media goes straight between the
+ * customer's device and the workshop's - it does not pass through this platform
+ * and is not recorded.
  *
- * `requireNavRoute` resolves against the viewer's VISIBLE NAVIGATION and is not
- * authentication — same reasoning as `/my-vehicles/garage`.
+ * `requireNavRoute` FIRST (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/communication/video-consultations';
+
 export default async function Page() {
-  await requireNavRoute('customer', '/communication/video-consultations');
-  return <PlannedScreen route="/communication/video-consultations" title="Video Consultations" />;
+  await requireNavRoute('customer', ROUTE);
+  return <CustomerCallsScreen route={ROUTE} fallbackTitle="Video Consultations" />;
 }

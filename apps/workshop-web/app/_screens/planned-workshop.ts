@@ -70,30 +70,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   // ── Parts (manager §47) ──────────────────────────────────────────────────
 
   // ── Communication (T-0017 / C5, across trees) ────────────────────────────
-  '/communication/calls': {
-    does: 'Calls made and received, logged against the job they concern.',
-    now: 'Call logging is a later phase. Customer phone numbers are on their record.',
-    href: '/customer-reception/customers',
-    hrefLabel: 'Customers',
-  },
-  '/communication/voice-calls': {
-    does: 'Calling a customer from the app, with the call logged against their job.',
-    now: 'Calling is a later phase. Find the customer to get their number.',
-    href: '/customers/customer-search',
-    hrefLabel: 'Find a customer',
-  },
-  '/communication/video-consultations': {
-    does: 'A video call with a customer or a specialist, recorded against the job.',
-    now: 'Video is a later phase. A fault is communicated today through the diagnosis record on the job card.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
-  '/communication/specialist-consultations': {
-    does: 'Consultations booked with an outside specialist, and what each concluded.',
-    now: 'Internal review is the second opinion that exists today, and it is recorded against the job.',
-    href: '/repair-control/internal-review',
-    hrefLabel: 'Internal review',
-  },
 
   // ── Knowledge and staff ──────────────────────────────────────────────────
 
