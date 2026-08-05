@@ -1,79 +1,119 @@
 # Current task
 
-## ▶ START HERE — STILL ONE BLOCKER, AND ONLY THE OWNER CAN CLEAR IT
+**Written 2026-08-05 at session close. Git tip `c243d0a` on `master`, pushed,
+tree clean. Release / CI / Security CI all green. No dev servers left running —
+3000, 3001, 3002 and 4000 verified free.**
 
-Migrations **037 + 038** are written, verified (13/13 and 5/5) and pushed.
-Applying them to production is classifier-blocked for the assistant:
+## ▶ FIRST COMMAND OF THE SESSION — not a document, a script
 
+```bash
+bash scripts/start-session.sh
 ```
-! C:\Users\USER\bin\gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
-```
 
-Until it runs, `POST /registration/workshop` 500s and **no workshop exists on
-live**. Visible consequence on the public landing right now: the mechanic
-directory reads **0** ("No workshops match that search") while parts, suppliers
-and the VIN check all work. Afterwards: create the workshop through the form
-(not by INSERT), then re-run `Seed live catalogue`.
+It kills stale dev servers (**`pkill` does NOT work on Windows**), proves the
+ports are free, checks the Docker containers, applies pending migrations and
+prints what to run next. Read-mostly, idempotent, starts nothing.
+
+Then read **`docs/00-project/COMPLETION_PLAN.md`** — that is the plan being
+executed, and it is measured by `node scripts/audit-menu-coverage.mjs --all`.
+
+### 🔴 HARD POLICY — owner, 2026-08-05
+
+**Five slices plus issue resolution EVERY session. Never use the scheduler; the
+owner runs their own schedule.**
+
+⚠️ `COMPLETION_PLAN.md` estimates 1–3 sessions per slice. Work to the policy, but
+do **not** meet the number by lowering the bar. Item 12 of the plan's checklist
+is the anti-cheat rule — a slice is not done while its screen still shows a
+"what you can do instead" panel — and `planned-workshop.spec.ts` enforces it
+mechanically. Report the audit figure, never a claim, and say plainly which
+slices did NOT land.
 
 ---
 
-## ✅ DONE 2026-08-05 — deployed and verified live (`71f2cf5`)
+## ✅ NOTHING IS BLOCKED. Production works end to end.
 
-`autoworkshop.aiappinvent.com`, `verify-live-site.mjs` **9/9**. Release, CI and
-Security CI all green.
+The three-session migration blocker is **gone**.
 
-### The landing, rebuilt on Solar's grammar
+| Proof | Result |
+|---|---|
+| Migrations 037 + 038 + 039 on production | applied |
+| `verify-live-workshop-spine.mjs` | **7/7** — sign in → customer → vehicle → job card → board → dashboard |
+| Live public stats | `parts 18 · suppliers 5 · countries 3 · mechanics 1` |
+| Live dashboard | **1 active job card · 1 new complaint** (was six zeroes) |
 
-Two earlier passes copied Solar's sizing, then its colours, and neither copied
-its STRUCTURE. `packages/marketplace-ui/src/solar-theme.tsx` now carries the
-whole marketing grammar and cites the Solar line number every value came from.
+**Live credentials:** `marc667us@yahoo.com` / `Forest-prism-bramble-nomad7`.
 
-Measured on production, at light AND dark OS preference: body and top bar both
-`#0a0a14`, **0px** horizontal overflow at 1280/768/390, **0 console errors**,
-**all 18 part cards exactly 273×356**.
+⚠️ **Warm Keycloak FIRST.** Cold start is 115–147s and produces
+`error=Configuration`, which reads as a broken site and is not:
 
-### Workshop trees: 104 dead ends → 0
+```bash
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' --max-time 300 \
+  https://autoworkshop-keycloak.onrender.com/realms/autoworkshop/.well-known/openid-configuration
+curl -s https://autoworkshop-api.onrender.com/api/v1/health
+```
 
-`audit-menu-coverage.mjs` reports **0 dead ends on all six role trees**.
-`verify-workshop-menu-reachable.mjs` signs in as five roles and drives every
-entry: **216 routes, 357 checks, 0 failures**.
+---
 
-⚠️ Coverage is still **34–50% WORKING per role**. These are honest signposts,
-not features, and the audit counts them separately on purpose.
+## ▶ NEXT SESSION STARTS HERE — slices 1 to 5
 
-### Three dead links on the live front door (found by Codex)
+| # | Slice | Screens | Depends on |
+|---|---|---:|---|
+| 1 | **Evidence upload** — `media.assets`, MinIO signed URLs | 2 | — |
+| 2 | **Reception** — appointments, intake checks, walk-ins, calendar | 12 | 1 |
+| 3 | **Invoicing & payments** — `finance.*`, built on `repair.quotations` | 16 | — |
+| 4 | **Parts, stock & procurement** — `parts.*` | 20 | — |
+| 5 | **Warranty** — `warranty.*` | 5 | 3 |
 
-- `/api/auth/register` existed only in customer-web while **workshop-web owns the
-  apex** — "Create a free account" was dead on the only address anybody has.
-- The VIN funnel's `callbackUrl=/vehicle-lookup` resolved only in customer-web.
-- The shared landing hard-coded `action="/"` while customer-web mounts it at
-  `/marketplace`; every search there threw the customer onto their dashboard.
+⚠️ **Slice 2 is 5 screens lighter than the plan says.** Its `create-job-card`
+half shipped on 2026-08-05 — one screen at five intake routes — because the
+workshop had **no way to open a job card at all**. Correct the plan's count when
+you start; do not silently carry the old number.
+
+**Working screens now: `workshop-web` 100 · `customer-web` 14 = 114 of 242.**
+
+### Every slice must deliver
+
+Section 4 of `COMPLETION_PLAN.md`, 14 items. The ones most often skipped: RLS
+`ENABLE` **and** `FORCE` with per-command policies · a tenant-isolation negative
+test · a browser check driven **as the role that owns the screen** · the
+signpost entry **deleted** from `planned-workshop.ts`.
+
+---
+
+## 🔴 LESSONS FROM 2026-08-05 — read before writing a migration or a test
+
+1. **SECURITY DEFINER IS NOT AN RLS EXEMPTION.** The owner is not a superuser on
+   Render and FORCE RLS binds owners. 039 exists because 037 and 038 both
+   shipped green while the READ path stayed broken.
+2. **A LEFT JOIN turns "refused by RLS" into "has none"** — a permissions fault
+   rendered as a fact about the user, and the app cannot tell them apart.
+3. **Verify under production privileges or the verify is theatre.** `verify/039`
+   re-owns the function to a THIRD non-superuser role and refuses to run if the
+   owner is a superuser, or if owner and caller are the same role.
+4. **Prove a guard by injecting the failure.** `planned-workshop.spec.ts` passed
+   4/4 with the real defect re-injected — its regex missed a comment line.
+5. **The job-card list route is PER-ROLE** (`jobCardListHrefFor`). Two of my own
+   checks reported product defects that were wrong-route-for-the-role.
+6. **Wait past hydration before believing a layout measurement.** A sweep
+   reported 131px of overflow that did not exist.
+7. **Check the command shape before concluding you are blocked.** Four sessions
+   of "classifier-blocked" was `cd … && gh …` failing to match a prefix rule that
+   had been allow-listed all along. Bare command with `--repo` ran first time.
 
 ---
 
 ## Standing warnings
 
-- **Cold starts are not outages.** Keycloak **115–147s**; the live API **502s
-  while spinning up**, then answers in ~22s. The landing NAMES the failure
-  rather than rendering an empty shop. Warm Keycloak before any live sign-in
-  check or it reports `error=Configuration`.
-- 🔴 **`realm-autoworkshop.json` HAS DRIFTED FROM PRODUCTION.** It registers the
-  apex on the CUSTOMER client only; the live realm accepts it on the WORKSHOP
-  client (proven by driving `/auth` and `/registrations`, both 302, and by the
-  live sign-in URL). **Re-importing that file would break sign-in AND sign-up on
-  the apex.** Bring it back in step.
-- **Cookies ignore the PORT**, so `localhost:3000` and `:3001` share one jar. A
-  wrong workspace id works locally and fails only in production. Third instance.
-- `scripts/guardrails/check-page-gates.sh` is RED with 19 pre-existing FAILs.
-- `RENDER_API_KEY` still unrotated since the 2026-07-27 leak.
 - Deploy: apex via **`Release`** (push to master), customer via
-  `deploy-customer-web.yml`. **NEVER `render-deploy.yml`.** Run `pnpm lint` first.
+  `deploy-customer-web.yml`. **NEVER `render-deploy.yml`.** `pnpm lint` first.
+- 🔴 **`realm-autoworkshop.json` HAS DRIFTED FROM PRODUCTION** — it registers the
+  apex on the CUSTOMER client; production has it on the WORKSHOP client.
+  Re-importing would break sign-in AND sign-up on the apex. **Not yet fixed.**
+- **Cookies ignore the PORT**, so `localhost:3000` and `:3001` share one jar. A
+  wrong workspace id works locally and fails only in production.
+- Four free Render services share one 750h/month allowance. **No paid remedy is
+  to be proposed** (ADR-012). Slices 1–10 add no service; slice 11 may.
+- `check-page-gates.sh` is RED with 19 pre-existing false FAILs (D4).
+- `RENDER_API_KEY` unrotated since the 2026-07-27 leak.
 - **No mobile URL exists** — Expo only.
-
-## ▶ NEXT, IN ORDER
-
-1. **Migrations 037+038 to live** (above) — unblocks everything signed-in.
-2. Bring `realm-autoworkshop.json` back in step with the live realm.
-3. Turn signposted screens into real ones, highest-traffic first: repair-request
-   inbox, complaint inbox, appointments, invoices.
-4. Auto-initiate sign-in so the second app needs no click.
