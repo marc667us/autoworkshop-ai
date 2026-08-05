@@ -10,6 +10,7 @@ import { PublicModule } from './public/public.module';
 import { MarketplaceModule } from './marketplace/marketplace.module';
 import { CatalogueModule } from './catalogue/catalogue.module';
 import { RepairModule } from './repair/repair.module';
+import { MediaModule } from './media/media.module';
 import { SecurityModule } from './security/security.module';
 import { OperationsModule } from './operations/operations.module';
 
@@ -33,6 +34,7 @@ import { OperationsModule } from './operations/operations.module';
     MarketplaceModule,
     CatalogueModule,
     RepairModule,
+    MediaModule,
     SecurityModule,
     OperationsModule,
   ],

@@ -88,6 +88,51 @@ default_export_body() {
   sed -n '/export default/,$p' <<<"$1"
 }
 
+# Inline `const ROUTE = '/some/path'` so a page that names its route once and
+# uses the constant twice is matched as strictly as one that repeats the literal.
+#
+# WHY (fixed 2026-08-06). Sixteen correctly-gated pages read:
+#
+#     const ROUTE = '/home/approvals';
+#     await requireNavRoute('workshop', ROUTE);
+#     return <ProposalQueueScreen route={ROUTE} />;
+#
+# which is BETTER code than repeating the string — the gate and the screen
+# cannot drift apart — and the guardrail failed every one of them for it. A
+# check that penalises the safer shape pushes authors toward the riskier one.
+#
+# This does NOT weaken the check: the literal is substituted in, so the call
+# must still name THIS page's own route. A const holding the wrong path fails
+# exactly as a wrong literal does — proven by a self-test case below.
+#
+# Only route-shaped literals (starting `/`) are inlined, so an unrelated string
+# constant cannot accidentally rewrite the body being matched.
+inline_route_consts() {
+  local body="$1" decl name lit
+  while IFS= read -r decl; do
+    [ -n "$decl" ] || continue
+    name="$(sed -E "s/^[[:space:]]*(export[[:space:]]+)?const[[:space:]]+([A-Za-z_\$][A-Za-z0-9_\$]*).*/\2/" <<<"$decl")"
+    lit="$(sed -E "s/^[^=]*=[[:space:]]*['\"](\/[^'\"]*)['\"].*/\1/" <<<"$decl")"
+    [ -n "$name" ] && [ -n "$lit" ] || continue
+    # `|` as the delimiter, not `/` — the replacement IS a route and is full of
+    # slashes, which silently turned this substitution into a syntax error.
+    body="$(sed -E "s|\\b${name}\\b|'${lit}'|g" <<<"$body")"
+  done < <(grep -E "^[[:space:]]*(export[[:space:]]+)?const[[:space:]]+[A-Za-z_\$][A-Za-z0-9_\$]*[[:space:]]*=[[:space:]]*['\"]/" <<<"$body")
+  printf '%s' "$body"
+}
+
+# A route that is deliberately reachable without signing in must SAY SO, in the
+# file, with the marker below. The public parts marketplace and the VIN funnel
+# are the two real cases: both are advertised on the public landing page, and
+# gating them on the viewer's navigation would 404 the visitors they exist for.
+#
+# The marker is read BEFORE comments are stripped, and every exempted file is
+# printed at the end of a run. An exemption you can see and grep for is a
+# decision; one the script makes silently is a hole.
+PUBLIC_MARKER='@public-route'
+declare -a PUBLIC_PAGES=()
+is_public_page() { grep -qF "$PUBLIC_MARKER" "$1"; }
+
 # Returns 0 when the page is properly gated.
 check_page() {
   local page="$1" workspace="$2" permission="$3"
@@ -132,13 +177,29 @@ check_page() {
 check_page_route() {
   local page="$1" workspace="$2" app_dir="$3"
   local body route first_await
-  body="$(strip_comments "$page")"
+  body="$(inline_route_consts "$(strip_comments "$page")")"
 
   # apps/workshop-web/app/customer-reception/customers/page.tsx
   #   -> /customer-reception/customers
   route="${page#"$app_dir"}"
   route="${route%/page.*}"
   route="${route%/default.*}"
+
+  # ROUTE GROUPS ARE NOT PATH SEGMENTS. `app/(app)/payments/quotations/page.tsx`
+  # serves `/payments/quotations`; the parentheses exist to share a layout and
+  # Next strips them from the URL entirely.
+  #
+  # WHY THIS MATTERS MORE THAN A TIDY-UP (fixed 2026-08-06). Deriving the route
+  # literally made this guardrail demand `requireNavRoute('customer',
+  # '/(app)/payments/quotations')` — a path that appears in no navigation tree,
+  # so satisfying it would have 404'd every one of those pages for every viewer,
+  # including entitled ones. The check was therefore not merely noisy: taking its
+  # advice would have broken the whole customer workspace. It reported 19 FAILs
+  # against correct code and had done since customer-web adopted route groups.
+  #
+  # A guardrail nobody can act on is one everybody learns to ignore, which is how
+  # 121 new pages landed while a Stage-0 gate sat red.
+  route="$(sed -E 's:/\([^/)]*\)::g' <<<"$route")"
 
   # A DETAIL page gates on its PARENT LIST route, so trailing dynamic segments
   # are stripped:
@@ -202,6 +263,16 @@ is_exempt_page() { # is_exempt_page <page> <app_dir>
     # and reads nothing, so a gate there would only make the redirect fail
     # differently. The dashboard it lands on is itself a page and IS checked.
     "$2/page.tsx") return 0 ;;
+    # The sign-in failure screens, and they must NOT be gated. `/auth/error` is
+    # reached BY a visitor whose sign-in did not complete — gating it on the
+    # viewer's navigation would 404 the one screen that explains why they could
+    # not sign in, turning a recoverable Keycloak cold start back into the blank
+    # 404 this route was added to replace. The pages themselves say so; see
+    # apps/customer-web/app/auth/error/page.tsx.
+    #
+    # This is an exemption, not a hole: these screens render a message from the
+    # error query parameter and read no tenant data whatsoever.
+    */auth/error/*|*/auth/signin/*) return 0 ;;
   esac
   return 1
 }
@@ -215,6 +286,7 @@ scan() {
     [ -d "$app_dir" ] || continue
     while IFS= read -r page; do
       is_exempt_page "$page" "$app_dir" && continue
+      if is_public_page "$page"; then PUBLIC_PAGES+=("$page"); continue; fi
       check_page_route "$page" "$workspace" "$app_dir" || failures=$((failures + 1))
     done < <(find "$app_dir" \( -name 'page.tsx' -o -name 'page.jsx' -o -name 'page.js' -o -name 'page.mjs' -o -name 'default.tsx' \) -type f)
   done
@@ -227,6 +299,7 @@ scan() {
 
     while IFS= read -r page; do
       is_exempt_page "$page" "$app_dir" && continue
+      if is_public_page "$page"; then PUBLIC_PAGES+=("$page"); continue; fi
       check_page "$page" "$workspace" "$permission" || failures=$((failures + 1))
       # Next also resolves default/template as route entry points.
     done < <(find "$app_dir" \( -name 'page.tsx' -o -name 'page.jsx' -o -name 'page.js' -o -name 'page.mjs' -o -name 'default.tsx' \) -type f)
@@ -408,17 +481,119 @@ FIXTURE
 export default async function P(){ const d = await load(); return d }
 FIXTURE
 
+  # ---- ROUTE GROUPS --------------------------------------------------------
+  # `app/(app)/payments/quotations/page.tsx` serves `/payments/quotations`.
+  # These pin the 2026-08-06 fix in BOTH directions: the honest gate passes, and
+  # the literal `(app)` path — which resolves in no navigation tree and could
+  # therefore only ever 404 — must still fail. Without the second case the fix
+  # could be "simplified" into accepting anything.
+  run_group_case() { # run_group_case <want> <label>   (fixture on stdin)
+    local want="$1" label="$2" tmp got
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/apps/customer-web/app/(app)/payments/quotations"
+    cat > "$tmp/apps/customer-web/app/(app)/payments/quotations/page.tsx"
+    if scan "$tmp" >/dev/null 2>&1; then got=pass; else got=fail; fi
+    rm -rf "$tmp"
+    if [ "$got" = "$want" ]; then
+      echo "  ok   - $label ($got)"
+    else
+      echo "  FAIL - $label: wanted $want, got $got"
+      fails=$((fails + 1))
+    fi
+  }
+
+  run_group_case pass "group: (app) is stripped — gate names the real URL" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('customer', '/payments/quotations'); return null }
+FIXTURE
+
+  run_group_case fail "group: gated on the literal (app) path, which no nav carries" <<'FIXTURE'
+export default async function P(){ await requireNavRoute('customer', '/(app)/payments/quotations'); return null }
+FIXTURE
+
+  run_group_case fail "group: still catches a genuinely ungated page" <<'FIXTURE'
+export default async function P(){ const d = await load(); return d }
+FIXTURE
+
+  # ---- the sign-in failure screens ----------------------------------------
+  # Exempt, because they are reached BY someone who could not sign in. An
+  # ungated fixture here must PASS — if this case ever starts failing, the
+  # exemption has been lost and /auth/error will 404 the people who need it.
+  auth_tmp="$(mktemp -d)"
+  mkdir -p "$auth_tmp/apps/customer-web/app/auth/error"
+  cat > "$auth_tmp/apps/customer-web/app/auth/error/page.tsx" <<'FIXTURE'
+export default function P(){ return null }
+FIXTURE
+  if scan "$auth_tmp" >/dev/null 2>&1; then
+    echo "  ok   - auth: /auth/error is exempt and need not be gated (pass)"
+  else
+    echo "  FAIL - auth: /auth/error must be exempt — gating it 404s the sign-in error"
+    fails=$((fails + 1))
+  fi
+  rm -rf "$auth_tmp"
+
+  # ---- the `const ROUTE` indirection --------------------------------------
+  # Accepting it must not become accepting anything. The wrong-route case is the
+  # one that matters: if it ever passes, the indirection has turned the whole
+  # route check off.
+  run_route_case pass "const: route named once via a constant" <<'FIXTURE'
+const ROUTE = '/customer-reception/customers';
+export default async function P(){ await requireNavRoute('workshop', ROUTE); return <S route={ROUTE}/> }
+FIXTURE
+
+  run_route_case fail "const: constant holds a DIFFERENT route" <<'FIXTURE'
+const ROUTE = '/customer-reception/vehicles';
+export default async function P(){ await requireNavRoute('workshop', ROUTE); return null }
+FIXTURE
+
+  run_route_case fail "const: constant is right but the gate is not awaited" <<'FIXTURE'
+const ROUTE = '/customer-reception/customers';
+export default async function P(){ requireNavRoute('workshop', ROUTE); return null }
+FIXTURE
+
+  run_route_case fail "const: constant is right but data is loaded first" <<'FIXTURE'
+const ROUTE = '/customer-reception/customers';
+export default async function P(){ const d = await load(); await requireNavRoute('workshop', ROUTE); return d }
+FIXTURE
+
+  # ---- the deliberately-public marker -------------------------------------
+  # Must exempt, and must exempt ONLY on the marker — an ungated page without it
+  # still fails. Otherwise the escape hatch becomes the default.
+  run_route_case pass "public: marked @public-route is exempt" <<'FIXTURE'
+// @public-route — advertised on the public landing; gating it 404s the visitor.
+export default async function P(){ const d = await load(); return d }
+FIXTURE
+
+  run_route_case fail "public: an ungated page WITHOUT the marker still fails" <<'FIXTURE'
+// an ordinary comment that says nothing about being public
+export default async function P(){ const d = await load(); return d }
+FIXTURE
+
   if [ "$fails" -gt 0 ]; then
     echo "check-page-gates --self-test: $fails case(s) wrong"; exit 1
   fi
-  echo "check-page-gates --self-test: OK (23/23)"
+  echo "check-page-gates --self-test: OK (33/33)"
   exit 0
 fi
 
 # ---- normal run ------------------------------------------------------------
-if ! scan "$REPO_ROOT"; then
+scan_status=0
+scan "$REPO_ROOT" || scan_status=$?
+
+# Always print the exemptions, pass or fail. A page that opted out of the gate is
+# the most interesting thing this script knows; burying it would make the marker
+# a quiet bypass rather than a declaration.
+if [ "${#PUBLIC_PAGES[@]}" -gt 0 ]; then
+  echo ""
+  echo "deliberately public (${PUBLIC_MARKER}) — reachable without signing in:"
+  for p in "${PUBLIC_PAGES[@]}"; do
+    echo "  ${p#"$REPO_ROOT"/}"
+  done
+fi
+
+if [ "$scan_status" -ne 0 ]; then
   echo ""
   echo "check-page-gates: ungated page(s). See packages/next-shell/src/require-access.ts."
   exit 1
 fi
+echo ""
 echo "check-page-gates: OK — every concrete page in a gated workspace is gated before any data access"

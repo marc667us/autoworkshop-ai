@@ -20,6 +20,8 @@ import { themeVar, primitive } from '@autoworkshop/design-tokens';
  * whatever NHTSA vPIC knows. The public endpoint would answer the same VIN with
  * less — which is the gate, and it lives at the API, not on this page.
  *
+ * @public-route
+ *
  * ⚠️ NO `requireNavRoute` GATE. This route is deliberately outside the §33
  * navigation tree: it is a destination people ARRIVE at from an external link,
  * not an item they browse to. Gating it on the nav tree would 404 the very

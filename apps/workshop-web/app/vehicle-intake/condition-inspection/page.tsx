@@ -1,22 +1,28 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { ConditionInspectionScreen } from '../../_screens/condition-inspection-screen';
 
 /**
- * /vehicle-intake/condition-inspection — "Condition Inspection".
+ * `/vehicle-intake/condition-inspection` — slice 1 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * Photograph the vehicle as it arrives. The first screen in the product that can
+ * put a file into MinIO at all: `StorageService` had a complete SigV4 presigner
+ * and an integration spec and was wired into NO module, while
+ * `repair.execution_evidence.storage_key` had sat deliberately unused since
+ * migration 019 waiting for exactly this.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
-export default async function Page() {
-  await requireNavRoute('workshop', '/vehicle-intake/condition-inspection');
-  return <PlannedScreen route="/vehicle-intake/condition-inspection" title="Condition Inspection" />;
+const ROUTE = '/vehicle-intake/condition-inspection';
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  await requireNavRoute('workshop', ROUTE);
+  return <ConditionInspectionScreen route={ROUTE} searchParams={await searchParams} />;
 }

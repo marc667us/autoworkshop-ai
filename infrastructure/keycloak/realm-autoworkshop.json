@@ -166,10 +166,12 @@
       },
       "redirectUris": [
         "http://localhost:3000/*",
+        "https://autoworkshop-customer.onrender.com/*",
         "https://autoworkshop.aiappinvent.com/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
+        "https://autoworkshop-customer.onrender.com",
         "https://autoworkshop.aiappinvent.com"
       ],
       "protocolMappers": [
@@ -201,10 +203,12 @@
       },
       "redirectUris": [
         "http://localhost:3001/*",
+        "https://autoworkshop.aiappinvent.com/*",
         "https://workshop.autoworkshop.aiappinvent.com/*"
       ],
       "webOrigins": [
         "http://localhost:3001",
+        "https://autoworkshop.aiappinvent.com",
         "https://workshop.autoworkshop.aiappinvent.com"
       ],
       "protocolMappers": [

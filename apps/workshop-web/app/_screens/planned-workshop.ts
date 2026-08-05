@@ -86,18 +86,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Vehicle intake (reception §48) ───────────────────────────────────────
-  '/vehicle-intake/condition-inspection': {
-    does: 'The walk-round on arrival: existing damage, photographed and agreed with the customer.',
-    now: 'Evidence capture is a later phase. Record the vehicle now so the inspection has something to attach to.',
-    href: '/vehicles/register-vehicle',
-    hrefLabel: 'Register a vehicle',
-  },
-  '/vehicle-intake/issue-intake-receipt': {
-    does: 'The receipt the customer takes away, listing what was left with the workshop.',
-    now: 'Printed documents are a later phase. The vehicle record holds everything a receipt would state.',
-    href: '/vehicles/vehicle-search',
-    hrefLabel: 'Find a vehicle',
-  },
 
   // ── Workshop operations (owner §46) ──────────────────────────────────────
   '/workshop-operations/appointments': {

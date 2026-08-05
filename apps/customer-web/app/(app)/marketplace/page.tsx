@@ -5,6 +5,8 @@ import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from '@
 /**
  * `/marketplace` — THE PUBLIC LANDING, REACHABLE WHILE SIGNED IN.
  *
+ * @public-route
+ *
  * Owner request 2026-08-03: "user must be able [to] access the landing even
  * when logged in by clicking [the] autoworkshop logo".
  *

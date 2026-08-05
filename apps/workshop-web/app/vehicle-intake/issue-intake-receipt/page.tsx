@@ -1,22 +1,26 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { IntakeReceiptScreen } from '../../_screens/intake-receipt-screen';
 
 /**
- * /vehicle-intake/issue-intake-receipt — "Issue Intake Receipt".
+ * `/vehicle-intake/issue-intake-receipt` — slice 1 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * The customer's written acknowledgement that the workshop has their vehicle,
+ * and the natural pair to the condition inspection: one records the state, this
+ * one hands it to the person who owns the car.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
-export default async function Page() {
-  await requireNavRoute('workshop', '/vehicle-intake/issue-intake-receipt');
-  return <PlannedScreen route="/vehicle-intake/issue-intake-receipt" title="Issue Intake Receipt" />;
+const ROUTE = '/vehicle-intake/issue-intake-receipt';
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  await requireNavRoute('workshop', ROUTE);
+  return <IntakeReceiptScreen route={ROUTE} searchParams={await searchParams} />;
 }

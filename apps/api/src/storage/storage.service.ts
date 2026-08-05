@@ -94,7 +94,76 @@ export class StorageService {
    * credential — anyone holding it can write that key — so its lifetime is the
    * only thing limiting the damage.
    */
+  /**
+   * Where any attachment lives — the general form of `evidenceKey`.
+   *
+   * `evidenceKey` bakes `executions/<id>/evidence/` into the path, which was
+   * right while a repair execution was the only thing that could carry a file.
+   * Slice 1 of `COMPLETION_PLAN.md` attaches files to vehicle intakes and slice
+   * 7 to messages, so the owner type is now a segment rather than a constant.
+   *
+   * ⚠️ THE SAME TWO PROPERTIES AS `evidenceKey`, and they are the load-bearing
+   * ones. THE TENANT LEADS: object storage has no row-level security, so the key
+   * layout plus who may mint a URL is the ONLY isolation available, and a
+   * tenant-first prefix is what lets a bucket policy or an operator's `mc`
+   * command scope by tenant. THE FILENAME IS NOT USED: a caller-supplied name
+   * may contain `../`, a null byte, or 4KB of unicode.
+   *
+   * `ownerType` is sanitised even though it arrives from a closed enum — the
+   * enum is enforced at the boundary today, and a key builder that assumes its
+   * caller validated is one refactor away from path traversal.
+   */
+  assetKey(params: {
+    tenantId: string;
+    organizationId: string;
+    ownerType: string;
+    ownerId: string;
+    assetId: string;
+    extension: string;
+  }): string {
+    const ext = params.extension.replace(/[^a-z0-9]/gi, '').slice(0, 8).toLowerCase();
+    const ownerType = params.ownerType.replace(/[^a-z0-9_]/gi, '').slice(0, 40).toLowerCase();
+    return (
+      `tenants/${params.tenantId}/organizations/${params.organizationId}` +
+      `/${ownerType}/${params.ownerId}/${params.assetId}${ext ? `.${ext}` : ''}`
+    );
+  }
+
+  /**
+   * A presigned GET URL — how a stored file is displayed.
+   *
+   * ⚠️ WITHOUT THIS THE UPLOAD HALF IS USELESS. The bucket is not public (and
+   * must not be: it holds photographs of customers' vehicles), so a browser
+   * cannot fetch an object with an `<img src>` pointing at MinIO. Minting a
+   * short-lived signed GET is what makes an uploaded photograph visible, and it
+   * keeps the file out of the API process on the way back exactly as the PUT
+   * keeps it out on the way in.
+   *
+   * FIVE MINUTES, shorter than the PUT's fifteen. A read URL is handed to a page
+   * that renders immediately, so it needs no headroom for a slow upload — and it
+   * is the one more likely to end up in a browser history or a screenshot.
+   */
+  presignGet(key: string, expiresInSeconds = 300): { url: string; key: string; expiresIn: number } {
+    return this.presign('GET', key, expiresInSeconds);
+  }
+
   presignPut(key: string, expiresInSeconds = 900): { url: string; key: string; expiresIn: number } {
+    return this.presign('PUT', key, expiresInSeconds);
+  }
+
+  /**
+   * SigV4 presigning, shared by both verbs.
+   *
+   * The method is part of the CANONICAL REQUEST, so a URL signed for PUT cannot
+   * be replayed as a GET or the other way round — the signature simply will not
+   * verify. That is a property worth having rather than an implementation
+   * detail: it means handing somebody a read URL never grants them a write.
+   */
+  private presign(
+    method: 'GET' | 'PUT',
+    key: string,
+    expiresInSeconds: number,
+  ): { url: string; key: string; expiresIn: number } {
     const accessKey = this.config.get<string>('S3_ACCESS_KEY') ?? '';
     const secretKey = this.config.get<string>('S3_SECRET_KEY') ?? '';
     const endpoint = this.endpoint();
@@ -135,7 +204,7 @@ export class StorageService {
       .join('&');
 
     const canonicalRequest = [
-      'PUT',
+      method,
       canonicalUri,
       canonicalQuery,
       `host:${host}\n`,

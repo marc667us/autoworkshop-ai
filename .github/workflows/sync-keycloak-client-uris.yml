@@ -1,0 +1,218 @@
+name: Sync Keycloak Client URIs
+
+# WHY THIS EXISTS
+#
+# `deploy-keycloak.yml` imports `realm-autoworkshop.json` on FIRST BOOT ONLY.
+# Every change made to the live realm afterwards — by hand, by kcadm, by the
+# admin console — is invisible to the committed file, and every change made to
+# the committed file is invisible to the live realm. The two drift silently and
+# the only symptom is a sign-in that stops working.
+#
+# On 2026-08-06 that drift was measured, not guessed:
+#
+#   client                        redirect_uri                                       live realm
+#   autoworkshop-workshop-web     https://autoworkshop.aiappinvent.com/...           ACCEPTED (302)
+#   autoworkshop-customer-web     https://autoworkshop-customer.onrender.com/...     REJECTED (400)
+#
+# The apex runs workshop-web and signs in fine; the committed file did not carry
+# that URI, so re-importing the realm would have taken production sign-in down.
+# And customer-web, which IS deployed and answering 200, could not sign anyone in
+# at all — its own callback URL was registered on neither client.
+#
+# THIS WORKFLOW IS ADD-ONLY BY DESIGN. It never removes a redirect URI or a web
+# origin from the live realm, only adds the ones the committed file declares and
+# the realm is missing. A reconciler that can delete is a reconciler that can
+# lock everybody out the first time the committed file is stale — which is the
+# exact condition this workflow exists to detect. Removing a stale URI is a
+# deliberate, separately-reviewed act, not a side effect of a sync.
+#
+# Dry run is the default and it does something real: it reads the live realm and
+# prints the diff. A dry run that only previews its own SQL teaches you nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write the missing URIs to the live realm. Anything else = dry run (still reads live).'
+        required: false
+        default: ''
+      keycloak_url:
+        description: 'Public Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KC_URL: ${{ inputs.keycloak_url }}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — the admin password must be present
+        run: |
+          if [ -z "$KC_ADMIN_PASSWORD" ]; then
+            echo "::error::KC_BOOTSTRAP_ADMIN_PASSWORD is not set on this repo."
+            exit 1
+          fi
+
+      # Keycloak on the free tier takes 115-147s to wake. Every check after this
+      # would report a broken realm if it ran against a cold instance, so wake it
+      # deliberately and say how long it took rather than letting a timeout be
+      # read as an outage.
+      - name: Warm Keycloak
+        run: |
+          echo "waking Keycloak (cold start is 115-147s on the free tier)"
+          curl -sS -o /dev/null -w 'discovery %{http_code} in %{time_total}s\n' \
+            --max-time 300 \
+            "$KC_URL/realms/autoworkshop/.well-known/openid-configuration"
+
+      - name: Get an admin token
+        run: |
+          # Sent with -d @- so the password never appears in the process table.
+          TOKEN="$(printf '%s' \
+            "client_id=admin-cli&grant_type=password&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASSWORD}" \
+            | curl -sS --max-time 120 -d @- \
+                "$KC_URL/realms/master/protocol/openid-connect/token" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::could not obtain an admin token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "KC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "admin token acquired"
+
+      - name: Reconcile client redirect URIs and web origins
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess, sys, urllib.parse
+
+          KC = os.environ['KC_URL'].rstrip('/')
+          TOKEN = os.environ['KC_TOKEN']
+          APPLY = os.environ.get('CONFIRM', '') == 'APPLY'
+          REALM = 'autoworkshop'
+
+          def api(method, path, body=None):
+              cmd = ['curl', '-sS', '--max-time', '120', '-X', method,
+                     '-H', f'Authorization: Bearer {TOKEN}',
+                     '-H', 'Content-Type: application/json',
+                     '-w', '\n%{http_code}',
+                     f'{KC}/admin/realms/{REALM}{path}']
+              if body is not None:
+                  # -d @- keeps the payload off the process table.
+                  out = subprocess.run(cmd + ['-d', '@-'], input=json.dumps(body),
+                                       capture_output=True, text=True, check=True).stdout
+              else:
+                  out = subprocess.run(cmd, capture_output=True, text=True,
+                                       check=True).stdout
+              raw, _, code = out.rpartition('\n')
+              return int(code), raw
+
+          with open('infrastructure/keycloak/realm-autoworkshop.json') as fh:
+              declared = {c['clientId']: c for c in json.load(fh).get('clients', [])}
+
+          code, raw = api('GET', '/clients')
+          if code != 200:
+              print(f'::error::listing clients returned HTTP {code}: {raw[:400]}')
+              sys.exit(1)
+          live = {c['clientId']: c for c in json.loads(raw)}
+
+          changed = missing_total = 0
+
+          for client_id, want in sorted(declared.items()):
+              have = live.get(client_id)
+              if have is None:
+                  # Not an error: the realm may legitimately not carry every app
+                  # yet. Say so loudly rather than silently skipping.
+                  print(f'  {client_id:32} NOT PRESENT on the live realm — skipped')
+                  continue
+
+              additions = {}
+              for field in ('redirectUris', 'webOrigins'):
+                  want_v = want.get(field) or []
+                  have_v = have.get(field) or []
+                  # ADD-ONLY. Anything live has and the file does not is left
+                  # exactly where it is; see the header for why.
+                  new = [v for v in want_v if v not in have_v]
+                  if new:
+                      additions[field] = have_v + new
+
+              if not additions:
+                  print(f'  {client_id:32} in step')
+                  continue
+
+              missing_total += sum(len(v) for v in additions.values())
+              for field, merged in additions.items():
+                  added = [v for v in merged if v not in (have.get(field) or [])]
+                  for v in added:
+                      print(f'  {client_id:32} MISSING {field}: {v}')
+
+              if not APPLY:
+                  continue
+
+              payload = dict(have)
+              payload.update(additions)
+              code, raw = api('PUT', f"/clients/{urllib.parse.quote(have['id'])}", payload)
+              if code not in (200, 204):
+                  print(f'::error::updating {client_id} returned HTTP {code}: {raw[:400]}')
+                  sys.exit(1)
+              changed += 1
+              print(f'  {client_id:32} UPDATED')
+
+          print()
+          if missing_total == 0:
+              print('live realm already carries every URI the committed file declares')
+          elif APPLY:
+              print(f'applied {missing_total} missing URI(s) across {changed} client(s)')
+          else:
+              print(f'DRY RUN — {missing_total} URI(s) are missing live. '
+                    'Re-run with confirm=APPLY to add them.')
+              print('nothing was written')
+          PY
+
+      # Proving the write by re-reading the client list would only prove Keycloak
+      # stored a string. What matters is whether the authorization endpoint now
+      # ACCEPTS the callback, so drive that instead — the same request a browser
+      # makes. An unregistered redirect_uri answers 400 "Invalid parameter";
+      # a registered one answers 302 to the login page.
+      - name: Prove it at the authorization endpoint, not in the config
+        run: |
+          set -uo pipefail
+          AUTH="$KC_URL/realms/autoworkshop/protocol/openid-connect/auth"
+          fail=0
+          check() {
+            client="$1"; uri="$2"
+            code="$(curl -sS -o /tmp/kcbody -w '%{http_code}' --max-time 60 -G "$AUTH" \
+              --data-urlencode "client_id=$client" \
+              --data-urlencode "response_type=code" \
+              --data-urlencode "scope=openid" \
+              --data-urlencode "redirect_uri=$uri")"
+            if [ "$code" = "302" ] || [ "$code" = "200" ]; then
+              if grep -qi 'Invalid parameter' /tmp/kcbody; then
+                echo "  REFUSED  $client  $uri"; fail=1
+              else
+                echo "  accepted $client  $uri"
+              fi
+            else
+              echo "  REFUSED  $client  $uri  (HTTP $code)"; fail=1
+            fi
+          }
+          check autoworkshop-workshop-web https://autoworkshop.aiappinvent.com/api/auth/callback/keycloak
+          check autoworkshop-customer-web https://autoworkshop-customer.onrender.com/api/auth/callback/keycloak
+          echo
+          if [ "$CONFIRM" = "APPLY" ] && [ "$fail" -ne 0 ]; then
+            echo "::error::a callback the deployed apps actually use is still refused"
+            exit 1
+          fi
+          if [ "$fail" -ne 0 ]; then
+            echo "::warning::a callback is refused — this was a dry run, so that is expected until you re-run with confirm=APPLY"
+          fi
