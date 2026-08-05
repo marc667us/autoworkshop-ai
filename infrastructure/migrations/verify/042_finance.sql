@@ -14,6 +14,8 @@ DECLARE
     inv uuid; pay uuid;
     refused boolean;
     rec record;
+    me uuid;
+    built_own_world boolean := false;
     passed int := 0;
 BEGIN
     -- 🔴 THE TENANT CANNOT BE DISCOVERED UNDER PRODUCTION RLS, BY DESIGN.
@@ -33,39 +35,80 @@ BEGIN
     -- So: an already-established context WINS, and the caller supplies it
     -- (`rehearse-migration.yml` has a `tenant_id` input). Discovery is the
     -- LOCAL fallback only.
-    tid := identity.current_tenant_id();
-    IF tid IS NULL THEN
-        SELECT id INTO tid FROM identity.tenants LIMIT 1;
+    -- 🔴 THE FIXTURE BUILDS ITS OWN WORLD, because it cannot borrow one.
+    --
+    -- `identity.tenants` carries `USING (id = identity.current_tenant_id())`, so
+    -- a caller with no tenant context reads ZERO rows — you must already know
+    -- which tenant you are to see it. That is correct security and it makes a
+    -- fixture that DISCOVERS a tenant impossible to write.
+    --
+    -- Locally the role is a SUPERUSER and discovery worked, so this verify once
+    -- reported 8/8 while proving nothing whatever about RLS. Against production
+    -- the same script left `tid` NULL and every insert was refused:
+    --
+    --   ctx: current_user=autoworkshop tenant_setting= current_tenant_id=<null>
+    --   ERROR: new row violates row-level security policy for table "invoices"
+    --
+    -- ⚠️ SO IT OPENS 037/038's REGISTRATION BOOTSTRAP DOOR, which is the SAME
+    -- path `register_workshop` uses to create the very first tenant. The door's
+    -- guard is `current_user = <owner of register_workshop>`, and a migration or
+    -- rehearsal connects as exactly that owner — while the APPLICATION connects
+    -- as `autoworkshop_app` and cannot open it. That distinction is 038's whole
+    -- point, and it is why this is a legitimate fixture rather than a bypass.
+    --
+    -- Everything below is created inside the caller's transaction and is rolled
+    -- back with it. `rehearse-migration.yml` re-reads `schema_migrations`
+    -- afterwards to prove nothing persisted.
+    -- Any real user row; `identity.users` carries no RLS, so this is readable
+    -- with no tenant context. The bootstrap door requires `created_by` to match
+    -- `app.bootstrap_user`, so it must be a genuine id rather than a random one.
+    SELECT id INTO me FROM identity.users LIMIT 1;
+    IF me IS NULL THEN
+        RAISE EXCEPTION 'verify/042: no user rows at all — cannot build a fixture';
     END IF;
+
+    IF tid IS NULL THEN tid := identity.current_tenant_id(); END IF;
+
     IF tid IS NULL THEN
-        RAISE EXCEPTION
-            'verify/042 has no tenant context and cannot discover one — identity.tenants '
-            'is readable only by the tenant it belongs to. Re-run the rehearsal with a '
-            'tenant_id input. Refusing to report a pass that tested nothing.';
+        tid := gen_random_uuid();
+        oid := gen_random_uuid();
+
+        PERFORM set_config('app.bootstrap', 'on', true);
+        PERFORM set_config('app.bootstrap_user', me::text, true);
+
+        -- `slug` and `org_type` are NOT NULL with no default. The slug is
+        -- suffixed with the tenant's own uuid so two rehearsals running at once
+        -- cannot collide on a unique index.
+        INSERT INTO identity.tenants (id, name, slug, created_by)
+        VALUES (tid, 'verify-042 rehearsal tenant',
+                'verify-042-' || replace(tid::text, '-', ''), me);
+        INSERT INTO identity.organizations (id, tenant_id, name, org_type, created_by)
+        VALUES (oid, tid, 'verify-042 rehearsal workshop', 'individual_workshop', me);
+
+        -- Shut the door again the moment it is no longer needed. Leaving it open
+        -- for the rest of the transaction would mean every later statement in
+        -- this verify ran under a permission the application never has, and the
+        -- checks below would be testing the wrong world.
+        PERFORM set_config('app.bootstrap', 'off', true);
+        built_own_world := true;
+    ELSE
+        SELECT id INTO oid FROM identity.organizations WHERE tenant_id = tid LIMIT 1;
     END IF;
+
     PERFORM set_config('app.tenant_id', tid::text, true);
-    SELECT id INTO oid FROM identity.organizations WHERE tenant_id = tid LIMIT 1;
+
     IF oid IS NULL THEN
         RAISE EXCEPTION 'verify/042: tenant % has no organisation to bill from', tid;
     END IF;
-    SELECT id INTO jc  FROM repair.job_cards WHERE tenant_id = tid LIMIT 1;
+
+    -- `finance.invoices.job_card_id` carries no foreign key — a job card is
+    -- scoped by tenant + organisation and a composite FK would add nothing RLS
+    -- does not already enforce. So a synthetic id is honest here: this verify is
+    -- about the MONEY rules, and borrowing a real card would make it depend on
+    -- seed data that production may not have.
+    SELECT id INTO jc FROM repair.job_cards
+     WHERE tenant_id = tid AND organization_id = oid LIMIT 1;
     IF jc IS NULL THEN jc := gen_random_uuid(); END IF;
-    -- 🔴 `app.tenant_id`, NOT `app.current_tenant`.
-    --
-    -- `identity.current_tenant_id()` reads `app.tenant_id`. The first version of
-    -- this verify set `app.current_tenant`, which is not a setting anything
-    -- reads — and it PASSED 8/8 locally, because the local role is a SUPERUSER
-    -- and bypasses RLS entirely, so no policy ever consulted the value.
-    --
-    -- `rehearse-migration.yml` ran the same script against production as the
-    -- real, non-superuser role and it failed immediately:
-    --
-    --   ERROR: new row violates row-level security policy for table "invoices"
-    --
-    -- That is the third time this repository has met "LOCAL IS SUPERUSER,
-    -- RENDER IS NOT" (036, 039, now this), and the first time a rehearsal caught
-    -- it before the migration reached production rather than after.
-    PERFORM set_config('app.tenant_id', tid::text, true);
 
     -- ── diagnostic, printed before the first insert ────────────────────
     -- Measure, do not infer. The first two rehearsals failed here and guessing
