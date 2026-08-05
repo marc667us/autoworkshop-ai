@@ -83,6 +83,15 @@ import {
  */
 
 export interface MarketplaceLandingProps {
+  /**
+   * Whether this component should render the page's `<main>` landmark.
+   *
+   * `true` (default) when mounted outside an application shell — customer-web's
+   * `/`. `false` when the shell already provides one — workshop-web's `/`,
+   * where two `<main>` elements broke the skip link.
+   */
+  ownsMainLandmark?: boolean;
+
   stats: CatalogueStats | null;
   facets: CatalogueFacets | null;
   parts: PublicPart[];
@@ -179,7 +188,25 @@ export function MarketplaceLanding({
   renderAddToBasket,
   viewer = null,
   basketHref,
+  // 🔴 WHO OWNS THE `<main>` LANDMARK.
+  //
+  // customer-web mounts this at `/` OUTSIDE its shell — its root layout is only
+  // a ThemeProvider — so this component must supply the landmark or the page has
+  // none at all.
+  //
+  // workshop-web mounts it at `/` INSIDE `WorkspaceShell`, which already renders
+  // a `<main>`. Emitting a second one there produced TWO main landmarks: invalid
+  // HTML, and it breaks the skip link, which is the one control a keyboard user
+  // has for getting past the navigation.
+  //
+  // Defaulting to `true` keeps the customer app correct without a change, and
+  // the app that is already inside a shell says so.
+  ownsMainLandmark = true,
 }: MarketplaceLandingProps) {
+  // A plain container when somebody else owns the landmark. `section` would
+  // introduce a second banner-ish region; a `div` adds no semantics at all,
+  // which is exactly right for a purely visual wrapper.
+  const Root = (ownsMainLandmark ? 'main' : 'div') as 'main';
   // Cards are grouped under category headings, preserving the order the API
   // returned (category display_order, then name) rather than re-sorting here —
   // two sort orders for one list is how a grid starts disagreeing with its chips.
@@ -200,7 +227,7 @@ export function MarketplaceLanding({
     applied.q || applied.make || applied.model || applied.year || applied.manufacturer || applied.category;
 
   return (
-    <main
+    <Root
       style={{
         // The landing owns the whole viewport background, not just its column —
         // a dark card column on a light page is the thing that looked wrong.
@@ -905,7 +932,14 @@ export function MarketplaceLanding({
           style={{
             borderTop: `1px solid ${SOLAR.border}`,
             paddingTop: primitive.space[4],
-            color: SOLAR.muted,
+            // 🔴 `sub`, NOT `muted`, for the same measured reason as LABEL:
+            // #6868a0 on this background is 3.62:1 and 13px is small text, so
+            // WCAG AA wants 4.5:1. #9090c0 gives 6.19:1.
+            //
+            // ⚠️ THIS TEXT IS THE HONEST NOTICE about what the marketplace
+            // cannot do yet, so it is the LAST paragraph on the page that
+            // should be hard to read.
+            color: SOLAR.sub,
             fontSize: '13px',
             lineHeight: 1.7,
           }}
@@ -927,7 +961,7 @@ export function MarketplaceLanding({
           </p>
         </footer>
       </div>
-    </main>
+    </Root>
   );
 }
 

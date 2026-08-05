@@ -44,7 +44,21 @@ export const SOLAR = {
   borderLift: '#2e2e5a',
   text: '#e2e2f0',
   sub: '#9090c0',
-  muted: '#6868a0',
+  /**
+   * 🔴 RAISED FROM #6868a0, WHICH WAS 3.62:1 AND FAILED WCAG AA EVERYWHERE.
+   *
+   * axe flagged only the handful of nodes VISIBLE in the test viewport — the
+   * filter labels and the footer notice. But `muted` is used on 13px and 11px
+   * text throughout the part cards and mechanic cards too, and those are empty
+   * locally because the test server has no API. They would have failed in
+   * PRODUCTION, with data, where nothing was checking.
+   *
+   * So the token is fixed rather than the four nodes that happened to be
+   * on screen. #7c7cb0 on the card (#0f0f22) measures 4.84:1 — over the 4.5:1
+   * AA threshold for small text — and stays visibly dimmer than `sub`
+   * (#9090c0, 6.19:1), so the hierarchy this palette encodes is preserved.
+   */
+  muted: '#7c7cb0',
   gold: '#f59e0b',
   goldLight: '#fbbf24',
   orange: '#ea580c',
@@ -130,7 +144,19 @@ export const LABEL: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '.5px',
   textTransform: 'uppercase',
-  color: SOLAR.muted,
+  // 🔴 `sub`, NOT `muted`. MEASURED, not chosen by eye.
+  //
+  // `muted` (#6868a0) on the card (#0f0f22) is 3.62:1. These labels are 11px —
+  // bold does not make them "large text" (that needs 18.66px bold or 24px), so
+  // WCAG AA wants 4.5:1 and axe was right to fail all four of them on both the
+  // workshop and customer landings.
+  //
+  // `sub` (#9090c0) on the same background is 6.19:1. It is already in this
+  // palette and already used for secondary copy, so this is not a new colour —
+  // it is the one that should have been used for a form label in the first
+  // place. `muted` remains correct for genuinely de-emphasised text at a larger
+  // size.
+  color: SOLAR.sub,
   marginBottom: '6px',
 };
 

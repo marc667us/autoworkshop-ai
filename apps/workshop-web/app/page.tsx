@@ -148,6 +148,11 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
 
   return (
     <MarketplaceLanding
+      // This app mounts the landing INSIDE `WorkspaceShell`, which already
+      // renders the `<main>` landmark. Two of them is invalid HTML and breaks
+      // the skip link — the one control a keyboard user has for getting past
+      // the navigation.
+      ownsMainLandmark={false}
       stats={statsResult.ok ? statsResult.data : null}
       facets={facetsResult.ok ? facetsResult.data : null}
       parts={partsResult.ok ? partsResult.data.parts : []}
