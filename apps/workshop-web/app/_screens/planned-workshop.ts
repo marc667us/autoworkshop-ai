@@ -96,42 +96,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Knowledge and staff ──────────────────────────────────────────────────
-  '/knowledge-and-staff/repair-knowledge': {
-    does: 'Write-ups of faults this workshop has fixed before, and what actually worked.',
-    now: 'The knowledge base is built from confirmed diagnoses — every diagnosis recorded now feeds it.',
-    href: '/repair-services/diagnosis',
-    hrefLabel: 'Diagnosis',
-  },
-  '/knowledge-and-staff/fault-and-repair-knowledge-base': {
-    does: 'Searchable fault-and-fix history across every job this workshop has done.',
-    now: 'It is assembled from confirmed diagnoses, which are being recorded now.',
-    href: '/repair-control/diagnosis',
-    hrefLabel: 'Diagnosis',
-  },
-  '/knowledge-and-staff/repair-procedures-library': {
-    does: 'Step-by-step procedures for common repairs, with times and tools.',
-    now: 'Repair plans carry the steps agreed for each job — the same content, one job at a time.',
-    href: '/repair-control/repair-plans',
-    hrefLabel: 'Repair plans',
-  },
-  '/knowledge-and-staff/wiring-diagrams': {
-    does: 'Circuit diagrams for the vehicles this workshop sees.',
-    now: 'Diagrams are licensed content and are staged deliberately. The diagnosis record holds what has been measured on the vehicle itself.',
-    href: '/repair-control/diagnosis',
-    hrefLabel: 'Diagnosis',
-  },
-  '/knowledge-and-staff/training': {
-    does: 'Courses assigned to your technicians, and who has completed what.',
-    now: 'Training records are a later phase. Quality control is the check that catches a skills gap today.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
-  '/knowledge-and-staff/certifications': {
-    does: 'The certifications your staff hold, and when each expires.',
-    now: 'Certifications are not recorded in the app yet; the workshop keeps them.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
 
   // ── Finance and warranty (default §34) ───────────────────────────────────
 

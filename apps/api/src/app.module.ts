@@ -17,6 +17,7 @@ import { WarrantyModule } from './warranty/warranty.module';
 import { PartsModule } from './parts/parts.module';
 import { CommsModule } from './comms/comms.module';
 import { SelfServiceModule } from './selfservice/selfservice.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
 import { SettingsModule } from './settings/settings.module';
 import { SecurityModule } from './security/security.module';
 import { OperationsModule } from './operations/operations.module';
@@ -49,6 +50,7 @@ import { OperationsModule } from './operations/operations.module';
     SettingsModule,
     CommsModule,
     SelfServiceModule,
+    KnowledgeModule,
     SecurityModule,
     OperationsModule,
   ],
