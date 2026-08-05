@@ -51,10 +51,29 @@ export class MembershipRepository {
       role_name: string;
       status: 'active' | 'suspended' | 'revoked';
     }>(
-      `SELECT m.user_id, u.display_name, m.tenant_id, m.organization_id,
+      /*
+       * 🔴 NO JOIN. `display_name` is returned by the function itself since
+       * migration 039.
+       *
+       * This used to be `FROM identity.memberships_for_subject($1) m JOIN
+       * identity.users u ON u.id = m.user_id`, with a comment saying the join
+       * "costs nothing" because the function already joins that table. It was
+       * free only because `identity.users` happens to carry no RLS — which is
+       * true today and is not a property anything guarantees. A SECURITY
+       * DEFINER function's exemption does NOT extend to a join written outside
+       * it: that join runs as the caller.
+       *
+       * ⚠️ AND IT IS STILL A LEFT JOIN INSIDE THE FUNCTION, which is the shape
+       * that hid the real defect. A membership refused by RLS comes back as a
+       * row with NULL membership columns, indistinguishable from a user who
+       * genuinely has none — so `rows.filter(tenant_id !== null)` reported
+       * "no workshop" to somebody who had just created one. 039 makes the
+       * lookup able to read those rows; the filter below is still correct for
+       * a genuinely new user, which is the case it was written for.
+       */
+      `SELECT m.user_id, m.display_name, m.tenant_id, m.organization_id,
               m.branch_id, m.role_name, m.status
-         FROM identity.memberships_for_subject($1) m
-         JOIN identity.users u ON u.id = m.user_id`,
+         FROM identity.memberships_for_subject($1) m`,
       [subject],
     );
 
