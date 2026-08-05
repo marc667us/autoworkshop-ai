@@ -43,24 +43,6 @@ export const CUSTOMER_PLANNED: Record<string, PlannedScreen> = {
     href: '/service-and-repairs/repair-proposals',
     hrefLabel: 'See what needs you',
   },
-  '/home/notifications': {
-    does: 'A record of every update the workshop has sent you, so nothing is only in a text message.',
-    now: 'Your repair list shows the current stage of each job, updated as the workshop moves it on.',
-    href: '/service-and-repairs/repair-tracking',
-    hrefLabel: 'Track your repairs',
-  },
-  '/my-vehicles/documents': {
-    does: 'Stores your registration, insurance and inspection certificates against each vehicle.',
-    now: 'File storage is not connected yet, so keep documents yourself. Your vehicle details are in your garage.',
-    href: '/my-vehicles/garage',
-    hrefLabel: 'Open your garage',
-  },
-  '/my-vehicles/maintenance-schedule': {
-    does: 'Tells you when each vehicle is next due for a service, based on its mileage and the manufacturer’s intervals.',
-    now: 'Service intervals are not configured yet. Your completed work, with mileage, is in your service history.',
-    href: '/my-vehicles/service-history',
-    hrefLabel: 'Read your service history',
-  },
   '/service-and-repairs/appointments': {
     does: 'Books a time to bring the vehicle in, and shows what you have booked.',
     now: 'Report the problem and the workshop will contact you to arrange a time.',
@@ -144,24 +126,6 @@ export const CUSTOMER_PLANNED: Record<string, PlannedScreen> = {
     now: 'Everything you can do today is in the menu: your garage, reporting a problem, and tracking a repair.',
     href: '/home/dashboard',
     hrefLabel: 'Back to your dashboard',
-  },
-  '/support/support-cases': {
-    does: 'Raises a problem with the SERVICE itself — not with a vehicle — and tracks the answer.',
-    now: 'Contact the workshop directly. A fault with a vehicle belongs on Report a Problem instead.',
-    href: '/service-and-repairs/report-a-problem',
-    hrefLabel: 'Report a vehicle problem',
-  },
-  '/settings/authorized-drivers': {
-    does: 'Lets somebody else — a spouse, a driver, an employee — deal with the workshop about your vehicle.',
-    now: 'Only your own account can act on your vehicles. Tell the workshop directly if somebody else will bring it in.',
-    href: '/settings/profile',
-    hrefLabel: 'Your profile',
-  },
-  '/settings/communication-preferences': {
-    does: 'Chooses how the workshop reaches you, and about what.',
-    now: 'The workshop uses the phone number and email on your profile.',
-    href: '/settings/profile',
-    hrefLabel: 'Check your details',
   },
   '/settings/security': {
     does: 'Your password, sessions and sign-in history.',

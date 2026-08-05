@@ -1,19 +1,17 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../../_screens/planned-screen';
+import { CommunicationPreferencesScreen } from '../../../_screens/communication-preferences-screen';
 
 /**
- * /settings/communication-preferences — `01 (1).txt` §33, the customer workspace.
+ * `/settings/communication-preferences` - the customer workspace, `01 (1).txt` section 33. Slice 9.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
- *
- * `requireNavRoute` resolves against the viewer's VISIBLE NAVIGATION and is not
- * authentication — same reasoning as `/my-vehicles/garage`.
+ * `requireNavRoute` FIRST: a concrete page.tsx resolves ahead of the catch-all
+ * and so carries NO route check unless it makes one (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/settings/communication-preferences';
+
 export default async function Page() {
-  await requireNavRoute('customer', '/settings/communication-preferences');
-  return <PlannedScreen route="/settings/communication-preferences" title="Communication Preferences" />;
+  await requireNavRoute('customer', ROUTE);
+  return <CommunicationPreferencesScreen route={ROUTE} />;
 }
