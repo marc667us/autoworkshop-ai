@@ -335,44 +335,122 @@ jobs:
           CLOSE_RE = re.compile(r'(?i)^\s*(commit|end)\b(\s+(work|transaction))?'
                                 r'(\s+and(\s+no)?\s+chain)?\s*;\s*$')
 
-          lines = open('/tmp/rehearse_raw.sql', encoding='utf-8').read().split('\n')
-          out, seen_open, dollar_tag = [], False, None
+          TAG_RE = re.compile(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$')
 
-          for ln in lines:
-              if dollar_tag is None:
-                  if OPEN_RE.match(ln) or CLOSE_RE.match(ln):
-                      if OPEN_RE.match(ln) and not seen_open:
-                          seen_open = True
-                          out.append(ln)
-                      else:
-                          out.append('-- [rehearsal] stripped transaction control: ' + ln.strip())
-                      # A line consumed here cannot also open a dollar quote.
+          # 🔴 A1 — WHY A `$$` TOGGLE IS NOT ENOUGH. Found by Codex, 2026-08-06.
+          #
+          # The first version counted every `$$` it saw ANYWHERE on a line. A
+          # migration carrying
+          #
+          #     -- $$ mentions a dollar quote in a comment
+          #     COMMIT;
+          #     -- $$
+          #
+          # left BOTH the stripper and the survivor scan believing they were
+          # inside a dollar-quoted body across that COMMIT. Two guards, one
+          # blind spot, and the COMMIT would have reached production from the
+          # workflow whose entire promise is that nothing persists.
+          #
+          # Postgres does not read it that way, so neither may we. At the top
+          # level a `$$` inside a line comment, a block comment or a string
+          # literal is not a dollar quote at all. INSIDE a dollar-quoted body it
+          # is the opposite: the closing tag is scanned literally, and a `--`
+          # does NOT hide it — so the body-side rule must stay dumb on purpose.
+          #
+          # Hence a real lexer rather than a toggle: line comments, NESTED block
+          # comments (Postgres nests them), single-quoted strings with their ''
+          # escape, and dollar quotes.
+          def line_top_level(sql):
+              """Whether the lexer is at top level as each line BEGINS."""
+              states = [True]
+              i, n = 0, len(sql)
+              dq, in_str, in_line_comment, block_depth = None, False, False, 0
+              while i < n:
+                  ch = sql[i]
+                  if ch == '\n':
+                      in_line_comment = False
+                      i += 1
+                      states.append(dq is None and not in_str and block_depth == 0)
                       continue
+                  if in_line_comment:
+                      i += 1; continue
+                  if block_depth:
+                      if sql.startswith('/*', i): block_depth += 1; i += 2; continue
+                      if sql.startswith('*/', i): block_depth -= 1; i += 2; continue
+                      i += 1; continue
+                  if in_str:
+                      if ch == "'":
+                          if sql.startswith("''", i): i += 2; continue
+                          in_str = False
+                      i += 1; continue
+                  if dq is not None:
+                      # Only the matching tag closes it. Comments do not apply
+                      # here — this mirrors Postgres, it is not an oversight.
+                      m = TAG_RE.match(sql, i)
+                      if m and m.group(0) == dq:
+                          dq = None; i += len(m.group(0)); continue
+                      i += 1; continue
+                  # ── top level ──
+                  if sql.startswith('--', i): in_line_comment = True; i += 2; continue
+                  if sql.startswith('/*', i): block_depth = 1; i += 2; continue
+                  if ch == "'": in_str = True; i += 1; continue
+                  m = TAG_RE.match(sql, i)
+                  if m: dq = m.group(0); i += len(m.group(0)); continue
+                  i += 1
+              return states, dq, in_str, block_depth
 
-              # Toggle on every dollar-quote marker on the line, so `AS $$` opens
-              # and a lone `$$;` closes. An even number on one line is a no-op,
-              # which is correct for a single-line function body.
-              for tag in re.findall(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$', ln):
-                  if dollar_tag is None:
-                      dollar_tag = tag
-                  elif dollar_tag == tag:
-                      dollar_tag = None
+          # Prove the LEXER before trusting it, on the exact shape Codex found.
+          # A guard is only worth having if its failure is demonstrated.
+          _probe = "-- $$\nCOMMIT;\n-- $$\n"
+          if not line_top_level(_probe)[0][1]:
+              raise SystemExit('::error::self-check failed: a `$$` inside a LINE COMMENT '
+                               'still hides a top-level COMMIT from the stripper')
+          _probe = "SELECT '$$';\nCOMMIT;\n"
+          if not line_top_level(_probe)[0][1]:
+              raise SystemExit('::error::self-check failed: a `$$` inside a STRING LITERAL '
+                               'still hides a top-level COMMIT from the stripper')
+          _probe = "/* $$ */\nCOMMIT;\n"
+          if not line_top_level(_probe)[0][1]:
+              raise SystemExit('::error::self-check failed: a `$$` inside a BLOCK COMMENT '
+                               'still hides a top-level COMMIT from the stripper')
+          # …and the must-NOT-catch direction: a real body must still be hidden,
+          # or the stripper comments out plpgsql `END;` and breaks the migration.
+          _probe = "CREATE FUNCTION f() RETURNS void AS $$\nBEGIN\nEND;\n$$ LANGUAGE plpgsql;\n"
+          if line_top_level(_probe)[0][2]:
+              raise SystemExit('::error::self-check failed: a plpgsql body is being read as '
+                               'top level — its END; would be wrongly stripped')
+
+          raw = open('/tmp/rehearse_raw.sql', encoding='utf-8').read()
+          lines = raw.split('\n')
+          states, dq_left, str_left, blk_left = line_top_level(raw)
+          if dq_left is not None:
+              raise SystemExit('::error::unbalanced dollar-quote (%s) — refusing to run a rehearsal built from SQL this did not parse' % dq_left)
+          if str_left:
+              raise SystemExit('::error::unterminated string literal — refusing to run a rehearsal built from SQL this did not parse')
+          if blk_left:
+              raise SystemExit('::error::unterminated block comment — refusing to run a rehearsal built from SQL this did not parse')
+
+          out, seen_open = [], False
+          for idx, ln in enumerate(lines):
+              top = states[idx] if idx < len(states) else False
+              if top and (OPEN_RE.match(ln) or CLOSE_RE.match(ln)):
+                  if OPEN_RE.match(ln) and not seen_open:
+                      seen_open = True
+                      out.append(ln)
+                  else:
+                      out.append('-- [rehearsal] stripped transaction control: ' + ln.strip())
+                  continue
               out.append(ln)
-
-          if dollar_tag is not None:
-              raise SystemExit('::error::unbalanced dollar-quote (%s) — refusing to run a rehearsal built from SQL this did not parse' % dollar_tag)
 
           text = '\n'.join(out)
 
           # Belt and braces. If a top-level COMMIT survived in a form the loop
           # did not match, refuse rather than run something that could persist.
-          # Checked OUTSIDE dollar quotes only, for the same reason as above.
-          survivors, tag = [], None
-          for ln in text.split('\n'):
-              if tag is None and CLOSE_RE.match(ln):
-                  survivors.append(ln.strip())
-              for t in re.findall(r'\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$', ln):
-                  tag = t if tag is None else (None if tag == t else tag)
+          # Re-lexed, not carried over — the stripping changed the text.
+          survivor_states = line_top_level(text)[0]
+          survivors = [ln.strip() for i2, ln in enumerate(text.split('\n'))
+                       if (survivor_states[i2] if i2 < len(survivor_states) else False)
+                       and CLOSE_RE.match(ln)]
           if survivors:
               raise SystemExit('::error::a top-level COMMIT/END survived stripping (%s) — refusing to run a rehearsal that could persist' % survivors[:3])
 
@@ -397,6 +475,63 @@ jobs:
           print('transaction control normalised (dollar-quoted bodies left untouched)')
           PY
 
+          # 🔴 A2 — FINGERPRINT THE SCHEMA ITSELF BEFORE TOUCHING IT.
+          #
+          # The old "left no trace" proof read `schema_migrations` and nothing
+          # else. But the ledger row is written at the END of a migration, so a
+          # COMMIT that escapes anywhere BEFORE it persists every schema change
+          # and leaves the ledger empty — and the check passes, reporting "left
+          # no trace" about a database that has just been altered. The proof was
+          # weaker than it read.
+          #
+          # This digest covers what a migration can actually change: columns,
+          # constraints, indexes, policies, functions, and the RLS
+          # enabled/forced flags that every slice in this repo depends on.
+          cat > /tmp/fingerprint.sql <<'FP'
+          SELECT md5(coalesce(string_agg(x, E'\n' ORDER BY x), '')) FROM (
+            SELECT format('COL %s.%s.%s %s %s', table_schema, table_name, column_name,
+                          data_type, is_nullable) AS x
+              FROM information_schema.columns
+             WHERE table_schema NOT IN ('pg_catalog','information_schema')
+            UNION ALL
+            SELECT format('POL %s.%s.%s %s', schemaname, tablename, policyname, cmd)
+              FROM pg_policies
+             WHERE schemaname NOT IN ('pg_catalog','information_schema')
+            UNION ALL
+            SELECT format('RLS %s.%s enabled=%s forced=%s', n.nspname, c.relname,
+                          c.relrowsecurity, c.relforcerowsecurity)
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind = 'r' AND n.nspname NOT IN ('pg_catalog','information_schema')
+            UNION ALL
+            SELECT format('CON %s.%s %s', n.nspname, con.conname, con.contype)
+              FROM pg_constraint con JOIN pg_namespace n ON n.oid = con.connamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+            UNION ALL
+            SELECT format('IDX %s.%s', schemaname, indexname)
+              FROM pg_indexes
+             WHERE schemaname NOT IN ('pg_catalog','information_schema')
+            UNION ALL
+            SELECT format('FUN %s.%s(%s)', n.nspname, p.proname, p.pronargs)
+              FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname NOT IN ('pg_catalog','information_schema')
+          ) s;
+          FP
+          "${PSQL_BIN}" -tA "$DATABASE_URL" -f /tmp/fingerprint.sql | tr -d '[:space:]' > /tmp/fp_before
+
+          # 🔴 A3 — SEQUENCES DO NOT ROLL BACK. `nextval()` is deliberately
+          # non-transactional in Postgres: it advances even when the transaction
+          # that called it aborts, because two sessions must never be handed the
+          # same id. So a rehearsal CANNOT promise a sequence is untouched, and
+          # claiming otherwise would be the same class of lie this workflow was
+          # built to stop. No migration in this repo uses one today; snapshot
+          # them so the claim stays true the day one does.
+          "${PSQL_BIN}" -tA "$DATABASE_URL" -c \
+            "SELECT coalesce(string_agg(format('%s.%s=%s', schemaname, sequencename,
+                                               coalesce(last_value, 0)), E'\n'
+                                        ORDER BY schemaname, sequencename), '')
+               FROM pg_sequences
+              WHERE schemaname NOT IN ('pg_catalog','information_schema')" > /tmp/seq_before
+
           echo "::group::rehearsal — this really applies the migration, then rolls it back"
           "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$DATABASE_URL" -f /tmp/rehearse.sql
           echo "::endgroup::"
@@ -419,6 +554,30 @@ jobs:
             echo "::error::${MIGRATION} is recorded as APPLIED on live — the rehearsal PERSISTED. Investigate before applying anything else."
             exit 1
           fi
+          # ── A2: the ledger is the WEAKEST of the three proofs, so it is no
+          # longer the only one. Re-fingerprint and compare.
+          "${PSQL_BIN}" -tA "$DATABASE_URL" -f /tmp/fingerprint.sql | tr -d '[:space:]' > /tmp/fp_after
+          if ! diff -q /tmp/fp_before /tmp/fp_after >/dev/null; then
+            echo "::error::THE LIVE SCHEMA CHANGED across this rehearsal ($(cat /tmp/fp_before) -> $(cat /tmp/fp_after)). A COMMIT escaped the stripper and the change PERSISTED. Do not apply anything else until this is understood."
+            exit 1
+          fi
+          echo "schema fingerprint unchanged: $(cat /tmp/fp_before)"
+
+          # ── A3: sequences are reported, never claimed clean. They cannot roll
+          # back, so silence here would be a false promise rather than a pass.
+          "${PSQL_BIN}" -tA "$DATABASE_URL" -c \
+            "SELECT coalesce(string_agg(format('%s.%s=%s', schemaname, sequencename,
+                                               coalesce(last_value, 0)), E'\n'
+                                        ORDER BY schemaname, sequencename), '')
+               FROM pg_sequences
+              WHERE schemaname NOT IN ('pg_catalog','information_schema')" > /tmp/seq_after
+          if diff -q /tmp/seq_before /tmp/seq_after >/dev/null; then
+            echo "sequences unchanged (none advanced during the rehearsal)"
+          else
+            echo "::warning::SEQUENCES ADVANCED and a ROLLBACK cannot undo that — nextval() is non-transactional by design. This is not a failure, but 'left no trace' is NOT true of these:"
+            diff /tmp/seq_before /tmp/seq_after || true
+          fi
+
           if [ "${ALREADY:-0}" != "0" ]; then
             echo "confirmed: ${MIGRATION} was already applied before this run; only its verify was rehearsed"
           else
