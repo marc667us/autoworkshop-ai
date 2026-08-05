@@ -1,22 +1,21 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { WorkflowRulesScreen } from '../../_screens/workflow-rules-screen';
 
 /**
- * /settings/workflow-rules — "Workflow Rules".
+ * `/settings/workflow-rules` — "Workflow Rules". Slice 6 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * What this workshop wants to happen automatically. Recorded, not yet running.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
  * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * (T-0005 finding 4). Without this line, giving a route a real screen would
+ * quietly make it reachable by a role whose tree does not contain it.
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/settings/workflow-rules';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/settings/workflow-rules');
-  return <PlannedScreen route="/settings/workflow-rules" title="Workflow Rules" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <WorkflowRulesScreen route={ROUTE} />;
 }

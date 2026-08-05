@@ -1,22 +1,21 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { ApprovalLimitsScreen } from '../../_screens/approval-limits-screen';
 
 /**
- * /settings/approval-limits — "Approval Limits".
+ * `/settings/approval-limits` — "Approval Limits". Slice 6 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * What each role may approve without asking the owner. Recorded, not yet enforced, and the screen says so.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
  * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * (T-0005 finding 4). Without this line, giving a route a real screen would
+ * quietly make it reachable by a role whose tree does not contain it.
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/settings/approval-limits';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/settings/approval-limits');
-  return <PlannedScreen route="/settings/approval-limits" title="Approval Limits" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <ApprovalLimitsScreen route={ROUTE} />;
 }

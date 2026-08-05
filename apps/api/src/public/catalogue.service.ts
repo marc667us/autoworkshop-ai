@@ -412,4 +412,53 @@ export class CatalogueService {
       mechanics: Number(r.mechanics ?? '0'),
     };
   }
+
+  /**
+   * A workshop's PUBLIC profile — slice 6.
+   *
+   * 🔴 THE ONE SCREEN OUTSIDE THE WORKSPACE THAT READS `core.opening_hours`,
+   * and the reason those two tables carry a `public_read` policy at all. The
+   * slice's acceptance check is "change opening hours; they appear on the public
+   * landing's workshop profile", and without this endpoint that check could not
+   * pass however correct the settings screen was.
+   *
+   * `queryWithoutTenant` — there IS no tenant here; the reader is a stranger.
+   * The `public_read` policies in 045 are what decide what comes back, gated on
+   * `is_published`, so an unpublished row is invisible rather than filtered in
+   * application code. Filtering here as well would be belt and braces; relying
+   * on it INSTEAD would be the whole defect.
+   */
+  async workshopProfile(organizationId: string): Promise<{
+    openingHours: { weekday: number; isClosed: boolean; opensAt: string | null; closesAt: string | null }[];
+    serviceCategories: { name: string; description: string | null; indicativePrice: string | null; currency: string }[];
+  }> {
+    const hours = await this.db.queryWithoutTenant<Record<string, unknown>>(
+      `SELECT weekday, is_closed, opens_at::text AS opens_at, closes_at::text AS closes_at
+         FROM core.opening_hours
+        WHERE organization_id = $1 AND is_published
+        ORDER BY weekday`,
+      [organizationId],
+    );
+    const cats = await this.db.queryWithoutTenant<Record<string, unknown>>(
+      `SELECT name, description, indicative_price, currency
+         FROM core.service_categories
+        WHERE organization_id = $1 AND is_published AND is_active
+        ORDER BY display_order, name`,
+      [organizationId],
+    );
+    return {
+      openingHours: hours.map((h) => ({
+        weekday: Number(h.weekday),
+        isClosed: h.is_closed as boolean,
+        opensAt: (h.opens_at as string | null) ?? null,
+        closesAt: (h.closes_at as string | null) ?? null,
+      })),
+      serviceCategories: cats.map((c) => ({
+        name: c.name as string,
+        description: (c.description as string | null) ?? null,
+        indicativePrice: c.indicative_price === null ? null : String(c.indicative_price),
+        currency: c.currency as string,
+      })),
+    };
+  }
 }

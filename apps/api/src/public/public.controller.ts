@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { CatalogueService } from './catalogue.service';
 import { decodeVin } from './vin';
 
@@ -127,5 +127,15 @@ export class PublicController {
   @Get('stats')
   async stats() {
     return this.catalogue.stats();
+  }
+
+  /**
+   * A workshop's public profile: when it opens and what it offers. Slice 6.
+   * Unauthenticated by design — this is what a stranger sees before deciding to
+   * book. Only PUBLISHED rows come back, and that is decided by RLS, not here.
+   */
+  @Get('workshops/:organizationId/profile')
+  async workshopProfile(@Param('organizationId', ParseUUIDPipe) organizationId: string) {
+    return this.catalogue.workshopProfile(organizationId);
   }
 }

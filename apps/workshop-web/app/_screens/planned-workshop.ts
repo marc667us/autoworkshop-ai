@@ -272,66 +272,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop management (owner §46) ──────────────────────────────────────
-  '/workshop-management/service-categories': {
-    does: 'The services this workshop offers, and the standard time for each.',
-    now: 'Pricing rules are where the money side of a service is set today.',
-    href: '/workshop-management/pricing-rules',
-    hrefLabel: 'Pricing rules',
-  },
-  '/workshop-management/opening-hours': {
-    does: 'When the workshop is open, and its holiday closures.',
-    now: 'Opening hours are part of the public workshop profile, which is editable now.',
-    href: '/workshop-management/workshop-profile',
-    hrefLabel: 'Workshop profile',
-  },
-  '/workshop-management/branches': {
-    does: 'Your branches, and which staff and jobs belong to each.',
-    now: 'Multi-branch is a later phase. The workshop profile describes the one branch that exists.',
-    href: '/workshop-management/workshop-profile',
-    hrefLabel: 'Workshop profile',
-  },
 
   // ── Settings ─────────────────────────────────────────────────────────────
-  '/settings/branches': {
-    does: 'Branch records and what each one covers.',
-    now: 'Multi-branch is a later phase. The workshop profile holds the current details.',
-    href: '/settings/workshop-profile',
-    hrefLabel: 'Workshop profile',
-  },
-  '/settings/approval-limits': {
-    does: 'How much each role may approve before it escalates.',
-    now: 'Approval authority follows the role today, and roles are set per staff member.',
-    href: '/workshop-management/staff',
-    hrefLabel: 'Staff',
-  },
-  '/settings/templates': {
-    does: 'Reusable wording for quotations, job cards and customer messages.',
-    now: 'Templates are a later phase. The workshop profile carries the details that would fill them.',
-    href: '/workshop-management/workshop-profile',
-    hrefLabel: 'Workshop profile',
-  },
-  '/settings/notifications': {
-    does: 'Which events raise an alert, and who receives it.',
-    now: 'Notification routing is a later phase. Contact details live on the workshop profile.',
-    href: '/workshop-management/workshop-profile',
-    hrefLabel: 'Workshop profile',
-  },
-  '/settings/security': {
-    does: 'Sign-in policy, sessions, and the audit trail.',
-    now: 'Sign-in is handled by Keycloak, and who may do what follows the roles set per staff member.',
-    href: '/workshop-management/staff',
-    hrefLabel: 'Staff',
-  },
-  '/settings/integrations': {
-    does: 'Connecting outside systems — accounting, scan tools, messaging.',
-    now: 'Integrations are tenant-configurable by design and none is mandatory. Nothing is connected yet.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
-  '/settings/workflow-rules': {
-    does: 'Rules that move a job on automatically, and who they notify.',
-    now: 'Stage transitions are driven by the people doing the work, and each is recorded on the job card.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
 };
