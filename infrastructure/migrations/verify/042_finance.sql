@@ -19,7 +19,22 @@ BEGIN
     SELECT id INTO oid FROM identity.organizations WHERE tenant_id = tid LIMIT 1;
     SELECT id INTO jc  FROM repair.job_cards WHERE tenant_id = tid LIMIT 1;
     IF jc IS NULL THEN jc := gen_random_uuid(); END IF;
-    PERFORM set_config('app.current_tenant', tid::text, true);
+    -- 🔴 `app.tenant_id`, NOT `app.current_tenant`.
+    --
+    -- `identity.current_tenant_id()` reads `app.tenant_id`. The first version of
+    -- this verify set `app.current_tenant`, which is not a setting anything
+    -- reads — and it PASSED 8/8 locally, because the local role is a SUPERUSER
+    -- and bypasses RLS entirely, so no policy ever consulted the value.
+    --
+    -- `rehearse-migration.yml` ran the same script against production as the
+    -- real, non-superuser role and it failed immediately:
+    --
+    --   ERROR: new row violates row-level security policy for table "invoices"
+    --
+    -- That is the third time this repository has met "LOCAL IS SUPERUSER,
+    -- RENDER IS NOT" (036, 039, now this), and the first time a rehearsal caught
+    -- it before the migration reached production rather than after.
+    PERFORM set_config('app.tenant_id', tid::text, true);
 
     -- 1. a draft invoice can be built
     INSERT INTO finance.invoices (tenant_id, organization_id, job_card_id,
