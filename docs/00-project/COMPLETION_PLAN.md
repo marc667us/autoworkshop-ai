@@ -11,6 +11,27 @@ insurance, towing, admin — are **out of scope for this plan**.
 
 ---
 
+## 0. ⚠️ THE SLICE SIZES BELOW ARE ESTIMATES, AND EVERY ONE CHECKED SO FAR WAS WRONG
+
+Measured on 2026-08-06 with `audit-menu-coverage.mjs`, against what the nav trees
+actually contain:
+
+| Slice | This plan said | Actually was |
+|---|---:|---:|
+| 2 Reception | 17 | **9** |
+| 3 Invoicing | 16 | **12** |
+| 4 Parts | 20 | **17** |
+| 5 Warranty | 5 | **2** |
+
+The estimates were written before the trees were counted, and routes were
+double-assigned across slices (`/reports/*` appears in several, and five slice-2
+screens had already shipped). **Re-measure before starting any slice.** The
+`working` column of `audit-menu-coverage.mjs` is the authority; this document is
+a plan, not a record.
+
+Slices 1–5 are DONE and on production: **157 of 242** (workshop-web 143,
+customer-web 14). Slices 6–11 are next.
+
 ## 1. The baseline I am measuring against
 
 Run `node scripts/audit-menu-coverage.mjs --all`. On 2026-08-05 it printed:
