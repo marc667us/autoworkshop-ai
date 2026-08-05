@@ -1,22 +1,22 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { AppointmentsScreen } from '../../_screens/appointments-screen';
 
 /**
- * /requests-and-reception/appointments — "Appointments".
+ * `/requests-and-reception/appointments` — "Appointments". Slice 2 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * ONE screen at four routes. Booking a customer in is the same act whatever
+ * the tree calls it; four different screens so each menu label could have its
+ * own would be four screens pretending to be different.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/requests-and-reception/appointments';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/requests-and-reception/appointments');
-  return <PlannedScreen route="/requests-and-reception/appointments" title="Appointments" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <AppointmentsScreen route={ROUTE} />;
 }

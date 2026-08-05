@@ -48,60 +48,18 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     href: '/home/dashboard',
     hrefLabel: 'Dashboard',
   },
-  '/home/workshop-calendar': {
-    does: 'The workshop’s week: what is booked in, what is due out, and which bay each job is in.',
-    now: 'The staging board is the live picture of where every job is right now, which is the half of the calendar that exists.',
-    href: '/workshop-floor/repair-staging',
-    hrefLabel: 'Repair staging board',
-  },
 
   // ── Requests and reception (manager §47) ─────────────────────────────────
-  '/requests-and-reception/appointments': {
-    does: 'Bookings, with the bay and technician each one needs.',
-    now: 'Appointments are not scheduled in the app yet. Register the customer when they arrive and open a job card.',
-    href: '/requests-and-reception/register-customer',
-    hrefLabel: 'Register a customer',
-  },
 
   // ── Requests (reception §48) ─────────────────────────────────────────────
-  '/requests/appointments': {
-    does: 'The booking diary — who is coming in, when, and for what.',
-    now: 'Bookings are not kept in the app yet. Search the customer when they arrive; their vehicles are already on file.',
-    href: '/customers/customer-search',
-    hrefLabel: 'Find a customer',
-  },
-  '/requests/walk-in-requests': {
-    does: 'Customers who arrive without a booking, and how each was fitted in.',
-    now: 'Register the customer, then their vehicle — a walk-in is recorded the same way as a booked job.',
-    href: '/customers/register-customer',
-    hrefLabel: 'Register a customer',
-  },
 
   // ── Customer reception (default §34) ─────────────────────────────────────
-  '/customer-reception/appointments': {
-    does: 'Bookings with their bay and technician allocation.',
-    now: 'Scheduling is a later phase. The customer list is where a booking would be raised from.',
-    href: '/customer-reception/customers',
-    hrefLabel: 'Customers',
-  },
 
   // ── Vehicle intake (reception §48) ───────────────────────────────────────
 
   // ── Workshop operations (owner §46) ──────────────────────────────────────
-  '/workshop-operations/appointments': {
-    does: 'The booking diary across every bay and technician.',
-    now: 'Scheduling is a later phase. The job card list is the live workload it would be planned against.',
-    href: '/workshop-operations/job-cards',
-    hrefLabel: 'Job cards',
-  },
 
   // ── Customers and vehicles (owner §46) ───────────────────────────────────
-  '/customers-and-vehicles/customer-feedback': {
-    does: 'What customers said after collection, and the score each job earned.',
-    now: 'Feedback is not collected in the app yet. Complaints — the feedback that matters most — are recorded per job.',
-    href: '/customers-and-vehicles/customers',
-    hrefLabel: 'Customers',
-  },
 
   // ── Customers (reception §48) ────────────────────────────────────────────
   '/customers/customer-messages': {
@@ -112,12 +70,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop floor (default §34, manager §47) ────────────────────────────
-  '/workshop-floor/service-bays': {
-    does: 'Each bay, what is in it, and how long it has been there.',
-    now: 'The staging board is the live floor view — every job and the stage it is at.',
-    href: '/workshop-floor/repair-staging',
-    hrefLabel: 'Repair staging board',
-  },
   '/workshop-floor/tools-and-equipment': {
     does: 'The workshop’s tools and rigs, who has each, and when it is next serviced.',
     now: 'Tool records are a later phase. Tools used on a job are recorded on that job card.',
@@ -500,12 +452,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── Workshop management (owner §46) ──────────────────────────────────────
-  '/workshop-management/service-bays': {
-    does: 'Your bays, what each is equipped for, and which jobs may use it.',
-    now: 'Bays are not modelled yet. The staging board is the live floor view.',
-    href: '/workshop-operations/repair-staging',
-    hrefLabel: 'Repair staging board',
-  },
   '/workshop-management/tools-and-equipment': {
     does: 'The workshop’s equipment register and its service schedule.',
     now: 'Equipment records are a later phase. Tools used on a job are noted on the job card.',

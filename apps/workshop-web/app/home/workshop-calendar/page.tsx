@@ -1,22 +1,23 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { WorkshopCalendarScreen } from '../../_screens/workshop-calendar-screen';
 
 /**
- * /home/workshop-calendar — "Workshop Calendar".
+ * `/home/workshop-calendar` — "Workshop Calendar". Slice 2 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * Seven days of bookings. Read-only: §34 puts this under HOME, which every
+ * workshop role reaches — including the technician, whose tree has no
+ * reception group, so a booking form here would offer an action the API
+ * refuses.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/home/workshop-calendar';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/home/workshop-calendar');
-  return <PlannedScreen route="/home/workshop-calendar" title="Workshop Calendar" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <WorkshopCalendarScreen route={ROUTE} />;
 }

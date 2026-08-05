@@ -1,22 +1,22 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { WalkInsScreen } from '../../_screens/walk-ins-screen';
 
 /**
- * /requests/walk-in-requests — "Walk-In Requests".
+ * `/requests/walk-in-requests` — "Walk-in Requests". Slice 2 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * Somebody at the counter with no booking. Free text for the person and the
+ * car, because neither is on file yet and forcing a customer record first is
+ * how a queue forms at the desk.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and so carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/requests/walk-in-requests';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/requests/walk-in-requests');
-  return <PlannedScreen route="/requests/walk-in-requests" title="Walk-In Requests" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <WalkInsScreen route={ROUTE} />;
 }
