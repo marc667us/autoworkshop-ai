@@ -296,7 +296,42 @@ export class CallsService {
 
       // The caller is added first and unconditionally: a call its own author
       // cannot join is a control with nowhere to go.
-      const invited = new Set<string>([ctx.userId, ...(input.participantUserIds ?? [])]);
+      const invited = new Set<string>([ctx.userId]);
+
+      // 🔴 EVERY INVITEE IS PROVED TO BE IN THIS ORGANISATION. Found by the
+      // Supervisor: the list was taken straight from the request body, and
+      // `identity.users` deliberately has NO RLS (one human may hold
+      // memberships in many tenants). So any uuid was accepted, inserted as a
+      // participant under the CALLER's tenant and organisation, and
+      // `listCalls` then joined `identity.users` and rendered that person's
+      // display name — or their EMAIL when no display name is set — to the
+      // attacker, across the tenant boundary, silently.
+      //
+      // ⚠️ AND A CUSTOMER'S LIST IS IGNORED ENTIRELY, which is what the comment
+      // below always claimed and the code did not do: it MERGED their list with
+      // the front desk rather than replacing it.
+      if (ctx.activeRole !== 'customer') {
+        for (const userId of input.participantUserIds ?? []) {
+          const reachable = await client.query(
+            `SELECT 1 FROM identity.memberships
+              WHERE tenant_id = $1 AND organization_id = $2
+                AND user_id = $3 AND status = 'active'
+              LIMIT 1
+             UNION ALL
+             SELECT 1 FROM core.customers
+              WHERE tenant_id = $1 AND organization_id = $2
+                AND user_id = $3
+              LIMIT 1`,
+            [ctx.tenantId, ctx.organizationId, userId],
+          );
+          if (!reachable.rowCount) {
+            throw new NotFoundException(
+              'One of the people you tried to call is not in this workshop.',
+            );
+          }
+          invited.add(userId);
+        }
+      }
 
       // A customer cannot name workshop staff, so their call reaches the front
       // desk — the same rule slice 7 applies to threads, and refusing loudly

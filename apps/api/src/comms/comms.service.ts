@@ -258,14 +258,58 @@ export class CommsService {
       // The job card must be THIS workshop's. RLS is tenant+org scoped, and the
       // explicit predicate makes the refusal a clear message rather than a
       // foreign-key error.
+      // 🔴 THE SAME DEFECT MIGRATION 050 FIXED FOR CASES AND CALLS, AND
+      // THREADS WERE LEFT OUT OF BOTH. Found by the Supervisor.
+      //
+      // Organisation scope does not separate two CUSTOMERS. A customer holding
+      // another's job-card uuid could open a thread against it, and
+      // `listThreads` joins and echoes that job number back. `customerId` was
+      // not validated at all, which echoed the other customer's display name.
+      const isCustomer = ctx.activeRole === 'customer';
+
       if (input.jobCardId) {
-        const jc = await client.query(
-          `SELECT 1 FROM repair.job_cards
-            WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
-          [input.jobCardId, ctx.tenantId, ctx.organizationId],
-        );
+        const jc = isCustomer
+          ? await client.query(
+              `SELECT 1
+                 FROM repair.job_cards jc
+                 JOIN core.customers c ON c.id = jc.customer_id
+                WHERE jc.id = $1 AND jc.tenant_id = $2 AND jc.organization_id = $3
+                  AND c.user_id = $4
+                LIMIT 1`,
+              [input.jobCardId, ctx.tenantId, ctx.organizationId, ctx.userId],
+            )
+          : await client.query(
+              `SELECT 1 FROM repair.job_cards
+                WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
+              [input.jobCardId, ctx.tenantId, ctx.organizationId],
+            );
         if (!jc.rowCount) {
-          throw new NotFoundException('That job card is not in this workshop.');
+          throw new NotFoundException(
+            isCustomer
+              ? 'That repair is not one of yours. You can message about any repair in your history.'
+              : 'That job card is not in this workshop.',
+          );
+        }
+      }
+
+      // A customer never names a customer: it is always themselves. Trusting
+      // the body here is what echoed somebody else's name back.
+      let customerId = input.customerId ?? null;
+      if (isCustomer) {
+        const mine = await client.query<{ id: string }>(
+          `SELECT id FROM core.customers
+            WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3 LIMIT 1`,
+          [ctx.tenantId, ctx.organizationId, ctx.userId],
+        );
+        customerId = mine.rows[0]?.id ?? null;
+      } else if (customerId) {
+        const exists = await client.query(
+          `SELECT 1 FROM core.customers
+            WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
+          [customerId, ctx.tenantId, ctx.organizationId],
+        );
+        if (!exists.rowCount) {
+          throw new NotFoundException('That customer is not in this workshop.');
         }
       }
 
@@ -280,7 +324,7 @@ export class CommsService {
           input.threadKind,
           input.subject.trim(),
           input.jobCardId ?? null,
-          input.customerId ?? null,
+          customerId,
           ctx.userId,
         ],
       );

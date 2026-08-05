@@ -36,6 +36,25 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * Locking reads to owners would make the booking screens lie.
  */
 
+/**
+ * 🔴 WHO MAY *READ* SETTINGS. Its absence was the worst defect in this branch.
+ *
+ * Every WRITE called `assertMayAdminister` or `assertMayGovern`. NO READ CALLED
+ * ANYTHING — and `customer` is a real grantable membership role whose
+ * `TenantContext.organizationId` IS the workshop's. So a signed-in customer,
+ * calling the API directly with their own bearer token, could read
+ * `/settings/security-posture`: the full administrator roster with names and
+ * email addresses, the last 25 permission denials, and the RLS posture.
+ * Also approval limits, integrations config, templates and workflow rules.
+ *
+ * The class comment above says "hiding is not refusing" and it was right about
+ * writes and wrong about reads. Found by the Supervisor.
+ */
+const MAY_READ_CONFIG = [
+  'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
+  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+] as const;
+
 /** Only these may CHANGE how the workshop is configured. */
 const MAY_ADMINISTER = ['workshop_owner', 'workshop_manager', 'platform_administrator'] as const;
 
@@ -143,6 +162,20 @@ export class SettingsService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
   ) {}
+
+  /**
+   * ⚠️ STAFF ONLY. Opening hours and service categories are deliberately NOT
+   * gated by this — they are published to the public profile anyway, and
+   * reception needs them to book anything at all.
+   */
+  private assertMayReadConfig(ctx: TenantContext): void {
+    if (!MAY_READ_CONFIG.includes(ctx.activeRole as (typeof MAY_READ_CONFIG)[number])) {
+      throw new ForbiddenException(
+        'This workshop\'s internal configuration is not visible to you. ' +
+          'The workshop\'s opening hours and services are on its public profile.',
+      );
+    }
+  }
 
   private assertMayAdminister(ctx: TenantContext): void {
     if (!MAY_ADMINISTER.includes(ctx.activeRole as (typeof MAY_ADMINISTER)[number])) {
@@ -352,6 +385,7 @@ export class SettingsService {
   // ── approval limits ───────────────────────────────────────────────────────
 
   async listApprovalLimits(ctx: TenantContext): Promise<ApprovalLimitRow[]> {
+    this.assertMayGovern(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, role_name, scope, max_amount, currency
@@ -403,6 +437,7 @@ export class SettingsService {
   // ── templates ─────────────────────────────────────────────────────────────
 
   async listTemplates(ctx: TenantContext): Promise<TemplateRow[]> {
+    this.assertMayReadConfig(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, template_key, channel, name, subject, body, is_active
@@ -470,6 +505,7 @@ export class SettingsService {
   // ── notification preferences ──────────────────────────────────────────────
 
   async listNotificationPrefs(ctx: TenantContext): Promise<NotificationPrefRow[]> {
+    this.assertMayReadConfig(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, event_key, channel, is_enabled, user_id
@@ -518,6 +554,7 @@ export class SettingsService {
   // ── workflow rules ────────────────────────────────────────────────────────
 
   async listWorkflowRules(ctx: TenantContext): Promise<WorkflowRuleRow[]> {
+    this.assertMayReadConfig(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, name, trigger_event, action_kind, execution_order, is_active
@@ -592,6 +629,7 @@ export class SettingsService {
    * returned here is settings, not keys.
    */
   async listIntegrations(ctx: TenantContext): Promise<IntegrationRow[]> {
+    this.assertMayGovern(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, provider_kind, provider_name, status, config,
@@ -678,6 +716,7 @@ export class SettingsService {
    * before creating one" rule in the Project Execution Directive §3.
    */
   async listBranches(ctx: TenantContext): Promise<BranchRow[]> {
+    this.assertMayReadConfig(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT b.id, b.name, b.location, b.status,
@@ -736,6 +775,7 @@ export class SettingsService {
    * is inert, recorded five or more times across these two projects.
    */
   async securityPosture(ctx: TenantContext): Promise<SecurityPostureRow> {
+    this.assertMayGovern(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const admins = await client.query(
         `SELECT u.id, COALESCE(NULLIF(btrim(u.display_name), ''), u.email) AS display_name,

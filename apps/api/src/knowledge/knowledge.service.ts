@@ -28,7 +28,24 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * to, so articles and procedures are organisation-scoped.
  */
 
-/** Everybody may READ the library. A workshop that hides its manuals has no library. */
+/**
+ * 🔴 "EVERYBODY" MEANT STAFF, AND THE CODE MEANT EVERYBODY.
+ *
+ * No read was gated, and `customer` is a real membership role inside the
+ * workshop's organisation — so a customer could read the workshop's repair
+ * procedures and safety notes (migration 048's own header calls them "its
+ * intellectual property and its liability") and, from `listCertifications`,
+ * every staff member's name, email and certification. Found by the Supervisor.
+ *
+ * `listFaultCodes` stays open: P0300 is a published standard, not anybody's
+ * property.
+ */
+const MAY_READ_LIBRARY = [
+  'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
+  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+] as const;
+
+/** Every workshop role may READ the library. A workshop that hides its manuals has no library. */
 const MAY_WRITE = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor',
   'technician', 'quality_controller', 'platform_administrator',
@@ -105,6 +122,15 @@ export class KnowledgeService {
     private readonly audit: AuditService,
   ) {}
 
+  private assertMayReadLibrary(ctx: TenantContext): void {
+    if (!MAY_READ_LIBRARY.includes(ctx.activeRole as (typeof MAY_READ_LIBRARY)[number])) {
+      throw new ForbiddenException(
+        'This workshop\'s technical library is for its staff. If you are a customer, ' +
+          'your repair history and messages are on your own pages.',
+      );
+    }
+  }
+
   private assertMayWrite(ctx: TenantContext): void {
     if (!MAY_WRITE.includes(ctx.activeRole as (typeof MAY_WRITE)[number])) {
       throw new ForbiddenException(
@@ -147,6 +173,7 @@ export class KnowledgeService {
   }
 
   async listArticles(ctx: TenantContext): Promise<ArticleRow[]> {
+    this.assertMayReadLibrary(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, title, body, category, fault_code, is_shared, created_at
@@ -192,6 +219,7 @@ export class KnowledgeService {
   }
 
   async listProcedures(ctx: TenantContext): Promise<ProcedureRow[]> {
+    this.assertMayReadLibrary(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, title, applies_to, steps, estimated_minutes, safety_notes,
@@ -248,6 +276,7 @@ export class KnowledgeService {
   }
 
   async listDiagrams(ctx: TenantContext): Promise<DiagramRow[]> {
+    this.assertMayReadLibrary(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, title, diagram_kind, applies_to, source, licence_note,
@@ -295,6 +324,7 @@ export class KnowledgeService {
   }
 
   async listCourses(ctx: TenantContext): Promise<CourseRow[]> {
+    this.assertMayReadLibrary(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT c.id, c.title, c.description, c.provider, c.duration_minutes,
@@ -349,6 +379,7 @@ export class KnowledgeService {
   }
 
   async listCertifications(ctx: TenantContext): Promise<CertificationRow[]> {
+    this.assertMayReadLibrary(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT c.id, c.user_id, c.name, c.awarded_on, c.expires_on, c.reference,

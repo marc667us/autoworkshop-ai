@@ -97,7 +97,17 @@ async function forward(
   const body = method === 'POST' ? await req.text() : undefined;
 
   try {
-    const res = await fetch(`${apiBaseUrl()}/${path}${search}`, {
+    // 🔴 `/api/v1` — THE API'S GLOBAL PREFIX, AND ITS ABSENCE MADE THE
+    // ENTIRE FEATURE DEAD. `main.ts` calls `setGlobalPrefix('api/v1')` and
+    // `apiBaseUrl()` returns the bare origin, so every other caller writes
+    // `${apiBaseUrl()}/api/v1${path}`. Without it every signalling request
+    // got Nest's 404: no ICE servers, no join, no offer, no candidates.
+    //
+    // ⚠️ AND NOTHING SAID SO. `CallRoom` swallowed the failure (`if (!res.ok)
+    // return`), so the UI sat at "Connecting" for ever — a feature that
+    // typechecks, lints, builds and has never once worked. Found by the
+    // Supervisor, not by any gate that ran green.
+    const res = await fetch(`${apiBaseUrl()}/api/v1/${path}${search}`, {
       method,
       headers,
       body,
