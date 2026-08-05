@@ -255,6 +255,25 @@ jobs:
             exit 1
           fi
 
+          # 🔴 IS IT ALREADY APPLIED? Re-running a migration's DDL over itself is
+          # not a rehearsal — it is a different operation with different failure
+          # modes. 042 re-run against the live schema failed with
+          #
+          #   cannot drop constraint uq_invoice_id_tenant ... other objects depend on it
+          #
+          # because `DROP CONSTRAINT IF EXISTS` is fine on a fresh database and
+          # not fine once the FK that needs it exists. That says nothing about
+          # whether the migration was safe to apply, and reading it as a failure
+          # of the migration would be wrong.
+          #
+          # So: when the migration is already applied, rehearse the VERIFY ALONE
+          # against the live schema. That is the more useful thing anyway — it
+          # re-proves the rules under production privileges without touching DDL.
+          ALREADY="$("${PSQL_BIN}" -tA "$DATABASE_URL" -c             "SELECT count(*) FROM schema_migrations WHERE version = '${MIGRATION}'" 2>/dev/null || echo 0)"
+          if [ "$ALREADY" != "0" ]; then
+            echo "::notice::${MIGRATION} is ALREADY APPLIED on this database — rehearsing its verify alone, no DDL."
+          fi
+
           {
             echo "BEGIN;"
             # Establish the tenant context BEFORE anything runs, so a verify sees
@@ -263,7 +282,9 @@ jobs:
             if [ -n "${TENANT_ID:-}" ]; then
               echo "SELECT set_config('app.tenant_id', '${TENANT_ID}', true);"
             fi
-            cat "$SQL"
+            if [ "$ALREADY" = "0" ]; then
+              cat "$SQL"
+            fi
             if [ -f "$VERIFY" ]; then
               cat "$VERIFY"
             else
@@ -380,6 +401,7 @@ jobs:
           "${PSQL_BIN}" -v ON_ERROR_STOP=1 "$DATABASE_URL" -f /tmp/rehearse.sql
           echo "::endgroup::"
           echo "rehearsal passed under production privileges"
+          echo "ALREADY=$ALREADY" >> "$GITHUB_ENV"
 
       # ⚠️ NOTHING SHOULD HAVE PERSISTED — PROVE IT rather than trusting
       # ROLLBACK. A migration that opened its own transaction, or a COMMIT the
@@ -393,11 +415,15 @@ jobs:
           export DATABASE_URL="$(cat /tmp/dburl)"
           LEFT="$("${PSQL_BIN}" -tA "$DATABASE_URL" -c \
             "SELECT count(*) FROM schema_migrations WHERE version = '${MIGRATION}'" 2>/dev/null || echo 0)"
-          if [ "$LEFT" != "0" ]; then
+          if [ "$LEFT" != "0" ] && [ "${ALREADY:-0}" = "0" ]; then
             echo "::error::${MIGRATION} is recorded as APPLIED on live — the rehearsal PERSISTED. Investigate before applying anything else."
             exit 1
           fi
-          echo "confirmed: ${MIGRATION} is not applied on live; the rehearsal left no trace"
+          if [ "${ALREADY:-0}" != "0" ]; then
+            echo "confirmed: ${MIGRATION} was already applied before this run; only its verify was rehearsed"
+          else
+            echo "confirmed: ${MIGRATION} is not applied on live; the rehearsal left no trace"
+          fi
 
       # ⚠️ `always()`, BECAUSE THE FAILURE PATH IS THE ONE THAT MATTERS. If the
       # migration fails, the allow-list entry must still go — otherwise a broken
