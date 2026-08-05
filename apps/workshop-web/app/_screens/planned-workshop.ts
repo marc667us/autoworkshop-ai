@@ -62,12 +62,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     href: '/requests-and-reception/register-customer',
     hrefLabel: 'Register a customer',
   },
-  '/requests-and-reception/vehicle-intake': {
-    does: 'Receiving a vehicle: condition, fuel, mileage, and the customer’s own account of the fault.',
-    now: 'Registering the vehicle records it against the customer, which is the step intake builds on.',
-    href: '/requests-and-reception/register-vehicle',
-    hrefLabel: 'Register a vehicle',
-  },
 
   // ── Requests (reception §48) ─────────────────────────────────────────────
   '/requests/appointments': {
@@ -90,35 +84,13 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     href: '/customer-reception/customers',
     hrefLabel: 'Customers',
   },
-  '/customer-reception/vehicle-intake': {
-    does: 'The intake check when a vehicle is handed over — condition, mileage, fuel, reported fault.',
-    now: 'Intake is recorded against the customer who brought the vehicle in, and their record carries the vehicles already on file.',
-    // 🔴 RETARGETED 2026-08-05. The obvious target was permission-GATED and this
-    // tree's viewers do not hold the permission, so the signpost 404'd for the
-    // very people it was written for. Found by driving it in a browser, not by
-    // reading the nav — `planned-workshop.spec.ts` now checks the gate too.
-    href: '/customer-reception/customers',
-    hrefLabel: 'Customers',
-  },
 
   // ── Vehicle intake (reception §48) ───────────────────────────────────────
-  '/vehicle-intake/receive-vehicle': {
-    does: 'Booking a vehicle in: keys, mileage, fuel level and the customer’s description of the fault.',
-    now: 'Register the vehicle against its owner — that record is what the intake steps attach to.',
-    href: '/vehicles/register-vehicle',
-    hrefLabel: 'Register a vehicle',
-  },
   '/vehicle-intake/condition-inspection': {
     does: 'The walk-round on arrival: existing damage, photographed and agreed with the customer.',
     now: 'Evidence capture is a later phase. Record the vehicle now so the inspection has something to attach to.',
     href: '/vehicles/register-vehicle',
     hrefLabel: 'Register a vehicle',
-  },
-  '/vehicle-intake/create-job-card': {
-    does: 'Turning a received vehicle into a job card the workshop can work.',
-    now: 'Find the vehicle first — its record carries the customer and the history a job card is opened from.',
-    href: '/vehicles/vehicle-search',
-    hrefLabel: 'Find a vehicle',
   },
   '/vehicle-intake/issue-intake-receipt': {
     does: 'The receipt the customer takes away, listing what was left with the workshop.',
@@ -133,12 +105,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     now: 'Scheduling is a later phase. The job card list is the live workload it would be planned against.',
     href: '/workshop-operations/job-cards',
     hrefLabel: 'Job cards',
-  },
-  '/workshop-operations/vehicle-intake': {
-    does: 'Receiving vehicles into the workshop and recording their condition on arrival.',
-    now: 'Register the vehicle against its owner; that is the record intake attaches to.',
-    href: '/customers-and-vehicles/register-vehicle',
-    hrefLabel: 'Register a vehicle',
   },
 
   // ── Customers and vehicles (owner §46) ───────────────────────────────────

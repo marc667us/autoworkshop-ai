@@ -123,3 +123,63 @@ export async function registerVehicleAction(formData: FormData): Promise<ActionR
 
   return { created: result.data.registrationNumber ?? 'the vehicle' };
 }
+
+/**
+ * OPEN A JOB CARD.
+ *
+ * ── 🔴 WHY THIS DID NOT EXIST UNTIL 2026-08-05 ──────────────────────────────
+ *
+ * `POST /job-cards` has been complete since Phase 5, and
+ * `JobCardService.CAN_CREATE_JOB` has always admitted `workshop_owner`,
+ * `workshop_manager` and `reception_staff`. Yet a repo-wide search for callers
+ * found exactly ONE, in `customer-web`'s "report a problem" screen.
+ *
+ * So the job card — the object the entire workshop application is built around
+ * — could only be created by a CUSTOMER, from a different app. A walk-in at the
+ * counter could not be booked in at all, and no amount of clicking around the
+ * workshop app would reveal why.
+ *
+ * That is the "complete service with no reachable caller" defect this
+ * repository has recorded twice before (`grant()` and `link_sponsor_user()`).
+ * The tell is the same each time: the service has tests, the tests pass, and
+ * they call it directly rather than through anything a person can reach.
+ *
+ * ⚠️ THE PERMISSION CHECK IS NOT HERE. `CAN_CREATE_JOB` is enforced in the
+ * service, and the API refuses a role that may not open a card whatever this
+ * form sends. This action only explains the refusal in words the person can act
+ * on (CLAUDE.md §8 — hidden is not secure).
+ */
+export async function createJobCardAction(formData: FormData): Promise<ActionResult> {
+  const result = await apiPost<{ id: string; jobNumber?: string }>('workshop', '/job-cards', {
+    vehicleId: text(formData, 'vehicleId'),
+    complaint: text(formData, 'complaint'),
+    priority: text(formData, 'priority'),
+    expectedCompletionOn: text(formData, 'expectedCompletionOn'),
+    mileageAtIntake: num(formData, 'mileageAtIntake'),
+    assignedTechnicianId: text(formData, 'assignedTechnicianId'),
+  });
+
+  if (!result.ok) {
+    return { error: explain(result.reason, result.message, 'job cards') };
+  }
+
+  // Every route a job card can appear at, across all four workshop trees. A
+  // card created by reception must show up on the manager's board without
+  // anybody reloading, and these lists are `force-dynamic` — so this is belt
+  // and braces, not load-bearing.
+  for (const p of [
+    '/workshop-floor/job-cards',
+    '/workshop-operations/job-cards',
+    '/workshop-floor/repair-staging',
+    '/workshop-operations/repair-staging',
+    '/home/my-tasks',
+    '/home/tasks',
+  ]) {
+    revalidatePath(p);
+  }
+
+  // The job NUMBER, not the id: it is what the card is called on the floor, on
+  // the board and to the customer on the phone. A uuid answers no question
+  // anybody has.
+  return { created: result.data.jobNumber ?? 'the job card' };
+}

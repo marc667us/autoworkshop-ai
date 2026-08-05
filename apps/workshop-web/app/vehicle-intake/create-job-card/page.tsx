@@ -1,22 +1,27 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { CreateJobCardScreen } from '../../_screens/create-job-card-screen';
 
 /**
- * /vehicle-intake/create-job-card — "Create Job Card".
+ * `/vehicle-intake/create-job-card` — "Create Job Card" (RECEPTION §48).
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * Opening a job card is the same act whatever the tree calls it, so all five
+ * intake routes mount ONE screen. Booking a vehicle in IS opening its job card:
+ * there is no intermediate record, and inventing one so each menu label could
+ * have its own page would be four screens pretending to be different.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * 🔴 UNTIL 2026-08-05 EVERY ONE OF THESE WAS A SIGNPOST, and the only caller of
+ * `POST /job-cards` anywhere in the product was customer-web's "report a
+ * problem". A walk-in at the counter could not be booked in at all.
+ *
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
+ * ahead of the catch-all and carries no route check unless it makes one
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/vehicle-intake/create-job-card';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/vehicle-intake/create-job-card');
-  return <PlannedScreen route="/vehicle-intake/create-job-card" title="Create Job Card" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <CreateJobCardScreen route={ROUTE} />;
 }
