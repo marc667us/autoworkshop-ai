@@ -1,22 +1,20 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { NotificationInboxScreen } from '../../_screens/notification-inbox-screen';
 
 /**
- * /home/notification-inbox — "Notification Inbox".
+ * `/home/notification-inbox` — "Notification Inbox". Slice 7.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * Everything waiting, counted from the real records. Categories with a count of
+ * zero are omitted entirely, so an empty inbox means nothing is waiting rather
+ * than that the page is unfinished.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
- * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * `requireNavRoute` FIRST (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/home/notification-inbox';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/home/notification-inbox');
-  return <PlannedScreen route="/home/notification-inbox" title="Notification Inbox" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <NotificationInboxScreen route={ROUTE} />;
 }

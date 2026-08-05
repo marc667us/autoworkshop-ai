@@ -1,22 +1,22 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { MessagesScreen } from '../../_screens/messages-screen';
 
 /**
- * /communication/specialist-support — "Specialist Support".
+ * `/communication/specialist-support` — "Specialist Support". Slice 7 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * ONE screen, filtered by `thread_kind`. `07.txt` gives each role its own tree
+ * and they disagree about where messages live; six separate screens would have
+ * meant six places for the same defect.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
  * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/communication/specialist-support';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/communication/specialist-support');
-  return <PlannedScreen route="/communication/specialist-support" title="Specialist Support" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <MessagesScreen route={ROUTE} kind="specialist_support" />;
 }

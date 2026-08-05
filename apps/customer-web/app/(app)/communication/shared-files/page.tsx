@@ -1,19 +1,19 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../../_screens/planned-screen';
+import { SharedFilesScreen } from '../../../_screens/shared-files-screen';
 
 /**
- * /communication/shared-files — `01 (1).txt` §33, the customer workspace.
+ * `/communication/shared-files` — the customer workspace, `01 (1).txt` §33. Slice 7.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Every file shared in a conversation — a view of media.links, never a second store.
  *
- * `requireNavRoute` resolves against the viewer's VISIBLE NAVIGATION and is not
- * authentication — same reasoning as `/my-vehicles/garage`.
+ * `requireNavRoute` FIRST: a concrete page.tsx resolves ahead of the catch-all
+ * and so carries NO route check unless it makes one (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/communication/shared-files';
+
 export default async function Page() {
-  await requireNavRoute('customer', '/communication/shared-files');
-  return <PlannedScreen route="/communication/shared-files" title="Shared Files" />;
+  await requireNavRoute('customer', ROUTE);
+  return <SharedFilesScreen route={ROUTE} />;
 }

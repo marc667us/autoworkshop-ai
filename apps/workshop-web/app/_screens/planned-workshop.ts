@@ -42,12 +42,6 @@ import type { PlannedScreen } from './planned-content';
  */
 export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   // ── Home ──────────────────────────────────────────────────────────────────
-  '/home/notification-inbox': {
-    does: 'One place for every alert the workshop raises — a job stalled, a part in, an approval overdue.',
-    now: 'Alerts are not collected into an inbox yet. The dashboard carries the live counts, and each queue shows what is actually waiting.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
 
   // ── Requests and reception (manager §47) ─────────────────────────────────
 
@@ -62,12 +56,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   // ── Customers and vehicles (owner §46) ───────────────────────────────────
 
   // ── Customers (reception §48) ────────────────────────────────────────────
-  '/customers/customer-messages': {
-    does: 'The message thread with each customer — what was promised, and when.',
-    now: 'Messaging is a later phase (T-0017). Customer contact details are on their record.',
-    href: '/customers/customer-search',
-    hrefLabel: 'Find a customer',
-  },
 
   // ── Workshop floor (default §34, manager §47) ────────────────────────────
 
@@ -82,12 +70,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
   // ── Parts (manager §47) ──────────────────────────────────────────────────
 
   // ── Communication (T-0017 / C5, across trees) ────────────────────────────
-  '/communication/messages': {
-    does: 'Every conversation the workshop is having, in one inbox.',
-    now: 'Messaging is a later phase (T-0017). Contact details are on each customer record, and job notes are on the job card.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
   '/communication/calls': {
     does: 'Calls made and received, logged against the job they concern.',
     now: 'Call logging is a later phase. Customer phone numbers are on their record.',
@@ -105,30 +87,6 @@ export const WORKSHOP_TREES_PLANNED: Record<string, PlannedScreen> = {
     now: 'Video is a later phase. A fault is communicated today through the diagnosis record on the job card.',
     href: '/home/dashboard',
     hrefLabel: 'Dashboard',
-  },
-  '/communication/customer-messages': {
-    does: 'The thread with each customer — what was agreed, and when.',
-    now: 'Messaging is a later phase. Decisions that matter are recorded on the proposal and the job card.',
-    href: '/home/my-tasks',
-    hrefLabel: 'My tasks',
-  },
-  '/communication/technician-messages': {
-    does: 'Messages to and from the floor, attached to the job they are about.',
-    now: 'The staging board shows who is on what, which is how work is currently passed along.',
-    href: '/workshop-floor/repair-staging',
-    hrefLabel: 'Repair staging board',
-  },
-  '/communication/supplier-messages': {
-    does: 'Correspondence with suppliers about orders and deliveries.',
-    now: 'Supplier messaging is a later phase; the marketplace carries stock and price without a conversation.',
-    href: '/home/my-tasks',
-    hrefLabel: 'My tasks',
-  },
-  '/communication/specialist-support': {
-    does: 'Asking an outside specialist about a fault this workshop has not seen before.',
-    now: 'Record what you have found on the diagnosis first — that record is what a specialist would be sent.',
-    href: '/repair-services/diagnosis',
-    hrefLabel: 'Diagnosis',
   },
   '/communication/specialist-consultations': {
     does: 'Consultations booked with an outside specialist, and what each concluded.',

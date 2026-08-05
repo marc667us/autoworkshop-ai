@@ -15,6 +15,7 @@ import { ReceptionModule } from './reception/reception.module';
 import { FinanceModule } from './finance/finance.module';
 import { WarrantyModule } from './warranty/warranty.module';
 import { PartsModule } from './parts/parts.module';
+import { CommsModule } from './comms/comms.module';
 import { SettingsModule } from './settings/settings.module';
 import { SecurityModule } from './security/security.module';
 import { OperationsModule } from './operations/operations.module';
@@ -45,6 +46,7 @@ import { OperationsModule } from './operations/operations.module';
     WarrantyModule,
     PartsModule,
     SettingsModule,
+    CommsModule,
     SecurityModule,
     OperationsModule,
   ],

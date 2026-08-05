@@ -91,12 +91,6 @@ export const CUSTOMER_PLANNED: Record<string, PlannedScreen> = {
     href: '/service-and-repairs/report-a-problem',
     hrefLabel: 'Report a problem',
   },
-  '/communication/messages': {
-    does: 'A written conversation with the workshop, kept against the job it is about.',
-    now: 'Messaging is not connected yet. Contact the workshop directly; every job shows its current stage here.',
-    href: '/service-and-repairs/repair-tracking',
-    hrefLabel: 'Track your repairs',
-  },
   '/communication/voice-calls': {
     does: 'Calls the workshop from inside the app, with the call logged against the job.',
     now: 'Call the workshop on their own number. The job number is on your repair list if they ask for it.',
@@ -106,12 +100,6 @@ export const CUSTOMER_PLANNED: Record<string, PlannedScreen> = {
   '/communication/video-consultations': {
     does: 'A video call so a technician can see the fault before the vehicle comes in.',
     now: 'Describe the problem in as much detail as you can when you report it.',
-    href: '/service-and-repairs/report-a-problem',
-    hrefLabel: 'Report a problem',
-  },
-  '/communication/shared-files': {
-    does: 'Photographs, videos and scan results shared between you and the workshop.',
-    now: 'File sharing is not connected yet. Describe what you have seen or heard when you report the problem.',
     href: '/service-and-repairs/report-a-problem',
     hrefLabel: 'Report a problem',
   },

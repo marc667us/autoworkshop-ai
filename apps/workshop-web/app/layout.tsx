@@ -13,6 +13,7 @@ import {
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction, switchUserAction } from './sign-out-action';
+import { liveCounters } from './_screens/live-counters';
 
 
 export const metadata: Metadata = {
@@ -58,6 +59,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // does not exist.
   const registration = signedIn ? await registrationStatus('workshop') : null;
   const onboarding = signedIn && needsWorkshop(registration);
+
+  // 🔴 REAL NUMBERS. Counted from the records, never invented — see
+  // `live-counters.ts` for what this replaced and why a missing badge is
+  // preferable to a wrong one. Skipped entirely during onboarding, where every
+  // count is necessarily zero and a badge would advertise work that cannot
+  // exist yet.
+  const { counters, warnings } = onboarding
+    ? { counters: {}, warnings: {} }
+    : await liveCounters(signedIn);
 
 
 
@@ -114,27 +124,33 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // single-role viewer gets `null` here and the shell falls back to its
           // read-only "Acting as" chip, so the role is stated either way.
           roleControl={<ActingAsControl viewer={viewer} />}
-          // ⚠️ NO BADGES DURING ONBOARDING. These are placeholder figures, and
-          // on a normal screen they are merely provisional — but shown to
-          // somebody whose workshop does not exist yet they are simply false:
-          // "10 tasks" and "12 active jobs" against an account that owns
-          // nothing. The first screen a user sees is the worst place to
-          // advertise work that is not there.
-          counters={onboarding ? {} : {
-            'workshop.tasks.open': 7,
-            'workshop.approvals.pending': 3,
-            'workshop.complaints.new': 4,
-            'workshop.appointments.today': 6,
-            'workshop.jobs.active': 12,
-            'workshop.proposals.pendingApproval': 2,
-            'workshop.messages.unread': 5,
-          }}
-          warnings={onboarding ? {} : { 'workshop.parts.reorderAlerts': 2 }}
+          // 🔴 REAL COUNTS, AND ONLY THE ONES THAT ARE REAL (slice 7).
+          //
+          // This block used to carry SEVEN INVENTED FIGURES — 7 open tasks, 12
+          // active jobs, 5 unread messages — on the first screen every user
+          // sees. Its own comment called them "provisional", but a badge does
+          // not read as provisional: it reads as a fact about your workshop,
+          // and a workshop with three jobs was being told it had twelve.
+          //
+          // `liveCounters()` returns what can be COUNTED from a real table
+          // today. Anything it cannot count is ABSENT rather than guessed —
+          // a missing badge says nothing, a wrong badge says something false.
+          // The remaining keys get their numbers as their slices land.
+          counters={onboarding ? {} : counters}
+          warnings={onboarding ? {} : warnings}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
-            { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks', count: 10 },
-            { id: 'messages', label: 'Messages and calls', icon: 'messages', count: 5 },
-            { id: 'notifications', label: 'Notifications', icon: 'notifications', count: 3 },
+            { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
+            {
+              id: 'messages',
+              label: 'Messages and calls',
+              icon: 'messages',
+              // `undefined` rather than 0: the shell renders no badge at all
+              // when there is nothing waiting, which is the correct look for
+              // an empty inbox and not the same as a badge reading "0".
+              count: counters['workshop.messages.unread'] || undefined,
+            },
+            { id: 'notifications', label: 'Notifications', icon: 'notifications' },
             { id: 'ai', label: 'AI assistant', icon: 'ai' },
             { id: 'help', label: 'Help and support', icon: 'help' },
           ]}
