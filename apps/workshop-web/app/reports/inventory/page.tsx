@@ -1,22 +1,24 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { ReportScreen } from '../../_screens/report-screen';
 
 /**
- * /reports/inventory — "Inventory".
+ * `/reports/inventory` - "Inventory". Slice 8 of `COMPLETION_PLAN.md`.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "Not built yet" badge.
- * The wording lives in `_screens/planned-workshop.ts`; see the header there for
- * why 104 of these arrived at once.
+ * Renders report `inventory`. Fourteen report routes map onto NINE distinct
+ * questions - sections 46 and 47 each name several of the same ones under
+ * different headings - so this is one screen and one service method, not
+ * fourteen places for the same arithmetic to drift. `navLabelFor` reads the
+ * heading back from whichever tree the viewer is in.
  *
- * `requireNavRoute` FIRST, before anything else: a concrete page.tsx resolves
+ * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
  * ahead of the catch-all and so carries NO route check unless it makes one
- * (T-0005 finding 4). Without this line, adding a friendly placeholder would
- * quietly make a route reachable by a role whose tree does not contain it.
+ * (T-0005 finding 4).
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/reports/inventory';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/reports/inventory');
-  return <PlannedScreen route="/reports/inventory" title="Inventory" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <ReportScreen route={ROUTE} reportKey="inventory" fallbackTitle="Inventory" />;
 }
