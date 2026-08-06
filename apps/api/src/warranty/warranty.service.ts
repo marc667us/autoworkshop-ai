@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface WarrantyPolicy {
   id: string;
@@ -112,6 +113,10 @@ export class WarrantyService {
   // ── policies ──────────────────────────────────────────────────────────────
 
   async listPolicies(ctx: TenantContext): Promise<WarrantyPolicy[]> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'The workshop warranty policies');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT p.*, j.job_number, v.registration_number, c.display_name AS customer_name,
@@ -191,6 +196,10 @@ export class WarrantyService {
   // ── claims ────────────────────────────────────────────────────────────────
 
   async listClaims(ctx: TenantContext, opts: { status?: string } = {}): Promise<WarrantyClaim[]> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'The workshop warranty claims');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT cl.*, p.policy_number, v.registration_number, c.display_name AS customer_name

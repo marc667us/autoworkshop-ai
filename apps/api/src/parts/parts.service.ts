@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface StockRow {
   stockItemId: string;
@@ -96,6 +97,10 @@ export class PartsService {
     ctx: TenantContext,
     opts: { needsReorderOnly?: boolean; q?: string } = {},
   ): Promise<StockRow[]> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'Workshop stock levels');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT * FROM parts.stock_on_hand
@@ -234,6 +239,10 @@ export class PartsService {
   // ── reservations ──────────────────────────────────────────────────────────
 
   async listReservations(ctx: TenantContext): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'Parts reservations');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT r.*, si.part_number, si.name, si.unit, j.job_number,
@@ -338,6 +347,10 @@ export class PartsService {
   // ── requisitions ──────────────────────────────────────────────────────────
 
   async listRequisitions(ctx: TenantContext): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'Purchase requisitions');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT rq.*, si.part_number, j.job_number,
@@ -414,6 +427,10 @@ export class PartsService {
   // ── purchase orders and receipts ──────────────────────────────────────────
 
   async listPurchaseOrders(ctx: TenantContext): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'Purchase orders');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT po.*,
@@ -433,6 +450,10 @@ export class PartsService {
   }
 
   async listGoodsReceipts(ctx: TenantContext): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'Goods receipts');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT g.*, po.order_number, po.supplier_name, u.display_name AS received_by_name
@@ -507,6 +528,10 @@ export class PartsService {
   // ── tools ─────────────────────────────────────────────────────────────────
 
   async listTools(ctx: TenantContext): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'The workshop tool register');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT * FROM parts.tools

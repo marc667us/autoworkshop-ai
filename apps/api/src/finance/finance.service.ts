@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import {
   FinanceInputError,
   invoiceStatusFor,
@@ -109,6 +110,10 @@ export class FinanceService {
     ctx: TenantContext,
     opts: { status?: string; jobCardId?: string; unpaidOnly?: boolean } = {},
   ): Promise<Invoice[]> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'The workshop invoice book');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT i.*, j.job_number, c.display_name AS customer_name,
@@ -145,6 +150,10 @@ export class FinanceService {
   }
 
   async getInvoice(ctx: TenantContext, invoiceId: string): Promise<Invoice> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'This invoice');
     return this.db.withTenant(ctx, async (client) => {
       const all = await this.listInvoices(ctx, {});
       const invoice = all.find((i) => i.id === invoiceId);
@@ -590,6 +599,10 @@ export class FinanceService {
 
   /** Payments across the organisation — the receipts and payments screens. */
   async listPayments(ctx: TenantContext): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    assertWorkshopStaff(ctx, 'The workshop payment record');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT p.id, p.amount, p.currency, p.payment_method, p.reference,
