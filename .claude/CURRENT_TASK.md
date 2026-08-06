@@ -30,32 +30,20 @@ Slice 12 landed; 13-16 did not. The session went deep on LIST A instead —
 A2 (the slice itself), A3 and A5 are closed — and turned up a severity-1
 finding. Said plainly rather than by redefining a slice as smaller.
 
-## ✅ FULLY DEPLOYED AND VERIFIED ON PRODUCTION
+## ✅ LIST A IS CLOSED — every item fixed and deployed
 
-All three links ran. Measured on `https://autoworkshop-api.onrender.com/api/v1`:
+A1 organisation RLS (migration 054, 49 tables) · A2 the isolation suite ·
+A3 the staff gate proven from outside · A4 the flake · A5 all 37 ungated reads
+argued · A6 approval limits ENFORCED.
 
-    my/invoices  my/payments  my/receipts
-    my/quotations  my/warranty  my/warranty-claims     ALL 401   <- slice 12 IS SERVING
-    users  memberships  appointments
-    walk-ins  customer-feedback                        ALL 401   <- A5 gates live
-    my/nope                                                 404   <- control
+**The one thing left is A7: `RENDER_API_KEY`, leaked 2026-07-27, OWNER ONLY.**
 
-apex 200 · 53 migrations applied / 0 pending · Release green · `Deploy API`
-green (`31110193262`).
+Production: 54 migrations, 0 pending. All six `/my/*` routes answer 401; the
+A5-gated staff routes answer 401; a bogus path answers 404; apex 200.
 
-🔴 **401, NOT 404, IS THE PROOF.** A route that 404s while typecheck, lint,
-build and CI are all green is the exact shape of the slice-11 defect. Probe the
-running thing after every deploy.
-
-⚠️ **RUNNER SATURATION LOOKS LIKE A BROKEN WORKFLOW.** The first `Deploy API`
-dispatch sat QUEUED for 15+ minutes and `gh run cancel` returned HTTP 500 on
-every attempt. Nothing was wrong with the workflow — CI, Security CI, Release,
-rehearse and apply-migrations had been dispatched at once and used up the
-runner concurrency. A fresh dispatch once they drained picked up a runner in
-21 seconds. **Run `31108990642` is still wedged in `queued` and can be ignored.**
-
-⚠️ **`gh workflow run` returned HTTP 500 AND THE RUN STARTED ANYWAY.** Check
-the run list before re-dispatching, or you deploy twice.
+🔴 **401, NOT 404, IS THE PROOF** that a route is really serving. Probe the
+running thing after every deploy — a 404 with everything else green is the
+exact shape of the slice-11 defect.
 
 ## ▶ THE FIRST THING TO DO
 
