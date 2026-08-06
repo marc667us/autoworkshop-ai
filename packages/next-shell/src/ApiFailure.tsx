@@ -97,6 +97,25 @@ const OTHER: Record<
   Exclude<Exclude<ApiResult<unknown>, { ok: true }>['reason'], 'unauthenticated'>,
   { title: string; message: string }
 > = {
+  /**
+   * 🔴 A SIGNED-IN IDENTITY THAT BELONGS TO NO WORKSHOP.
+   *
+   * `TenantGuard` answers 401 for this, the SAME status as an expired token,
+   * and the shell used to render "Your session has ended — signing in again
+   * will bring you straight back here". For this viewer that is false twice
+   * over: the session is fine, and signing in again brings them straight back
+   * to the same message. Reported for `admin@` on production, 2026-08-07.
+   *
+   * The remedy is not authentication, so this deliberately does NOT offer a
+   * sign-in link — offering one is what created the loop.
+   */
+  noMembership: {
+    title: 'Your account is not part of a workshop yet',
+    message:
+      'You are signed in — this is not a session problem, and signing in again will not change it. ' +
+      'Your account holds no active membership of any workshop, so there is no data for it to show. ' +
+      'Create a workshop from the dashboard, or ask an owner to add you to theirs.',
+  },
   forbidden: {
     title: 'You do not have access to this',
     message:

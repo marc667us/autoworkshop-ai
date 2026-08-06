@@ -36,6 +36,17 @@ export type ApiResult<T> =
       ok: false;
       /**
        * `unauthenticated` — no session, or the access token expired.
+       * `noMembership`     — 🔴 A VALID, SIGNED-IN IDENTITY THAT BELONGS TO NO
+       *                     WORKSHOP. `TenantGuard` answers 401 for this, the
+       *                     same status as an expired token, and collapsing the
+       *                     two told a signed-in admin "your session has ended,
+       *                     you were logged out" — which is FALSE, and sends
+       *                     them to sign in again, which cannot possibly help.
+       *                     They loop.
+       *
+       *                     Reported 2026-08-07 for `admin@` on production.
+       *                     Third instance of "a truth about A used as evidence
+       *                     for B" in this repository.
        * `forbidden`       — a valid identity that may not have this.
        * `notFound`        — the record does not exist for this tenant.
        * `invalid`         — the request was rejected on its CONTENT (400/409).
@@ -45,7 +56,13 @@ export type ApiResult<T> =
        *                     what to change, and "something went wrong" does not.
        * `unavailable`     — the API is down, unreachable, or answered garbage.
        */
-      reason: 'unauthenticated' | 'forbidden' | 'notFound' | 'invalid' | 'unavailable';
+      reason:
+        | 'unauthenticated'
+        | 'noMembership'
+        | 'forbidden'
+        | 'notFound'
+        | 'invalid'
+        | 'unavailable';
       status?: number;
       /**
        * Set for `invalid`, and for `forbidden` ON WRITES. Safe to show: these
@@ -141,8 +158,29 @@ export async function apiGet<T>(
 
   if (!response.ok) {
     switch (response.status) {
-      case 401:
+      case 401: {
+        // 🔴 TWO DIFFERENT FACTS SHARE THIS STATUS CODE. `TenantGuard` throws
+        // 401 both for "no bearer token / expired" and for
+        // `TenantResolutionError` — of which the common case is
+        // "user holds no active membership", i.e. somebody perfectly signed in
+        // who simply belongs to no workshop yet.
+        //
+        // The remedies are opposite: one is "sign in again", the other is
+        // "create or join a workshop". Telling the second group the first thing
+        // is how an account gets stuck in a sign-in loop it cannot escape.
+        //
+        // Read from the API's OWN message rather than guessing, and fall back
+        // to `unauthenticated` when it says nothing — the safer of the two.
+        const said = await response
+          .clone()
+          .json()
+          .then((b: { message?: string }) => String(b?.message ?? ''))
+          .catch(() => '');
+        if (/membership|no membership selected|not among the user/i.test(said)) {
+          return { ok: false, reason: 'noMembership', status: 401, message: said };
+        }
         return { ok: false, reason: 'unauthenticated', status: 401 };
+      }
       case 403:
         return { ok: false, reason: 'forbidden', status: 403 };
       case 404:
@@ -353,6 +391,17 @@ export function describeApiFailure(reason: Exclude<ApiResult<unknown>, { ok: tru
   description: string;
 } {
   switch (reason) {
+    case 'noMembership':
+      // 🔴 NOT "your session has ended". This viewer IS signed in; they hold no
+      // membership of any workshop. `TenantGuard` answers 401 for both, and
+      // collapsing them told a signed-in admin to sign in again — which cannot
+      // help, so they loop. Reported for `admin@` on production 2026-08-07.
+      return {
+        title: 'Your account is not part of a workshop yet',
+        description:
+          'You are signed in — signing in again will not change this. Create a workshop ' +
+          'from the dashboard, or ask an owner to add you to theirs.',
+      };
     case 'unauthenticated':
       return {
         title: 'Your session has ended',

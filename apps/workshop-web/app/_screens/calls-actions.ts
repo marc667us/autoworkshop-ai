@@ -17,7 +17,7 @@ import type { ActionResult } from '@autoworkshop/ui';
  */
 
 function explain(
-  reason: 'unauthenticated' | 'forbidden' | 'notFound' | 'invalid' | 'unavailable',
+  reason: 'unauthenticated' | 'noMembership' | 'forbidden' | 'notFound' | 'invalid' | 'unavailable',
   message: string | undefined,
   fallback: string,
 ): string {
@@ -28,6 +28,14 @@ function explain(
       // The API's own sentence. It names the alternative — "ring them instead",
       // "a call needs somebody to call" — and that is the actionable part.
       return message ?? fallback;
+    case 'noMembership':
+      // 🔴 NOT "your session has ended". This viewer IS signed in; they belong
+      // to no workshop. Saying otherwise sends them to sign in again, which
+      // changes nothing, and they loop.
+      return (
+        'You are signed in, but your account does not belong to a workshop yet. ' +
+        'Create one from the dashboard, or ask the workshop owner to add you.'
+      );
     case 'unauthenticated':
       return 'Your session has ended. Sign in again.';
     default:
