@@ -70,15 +70,23 @@ AS $$
 DECLARE
     keeper uuid;
 BEGIN
+    -- 🔴 ORGANISATION AS WELL AS TENANT. A tenant here holds MORE THAN ONE
+    -- organisation (that is why migration 045 introduced the organisation
+    -- predicate at all), so a tenant-only lookup would let a job card in
+    -- organisation A validate itself against a vehicle in organisation B and
+    -- pass. "A tenant predicate is not an org predicate" is a defect already
+    -- recorded in this repository, from migration 046's RLS.
     SELECT customer_id INTO keeper
       FROM core.vehicles
-     WHERE id = NEW.vehicle_id AND tenant_id = NEW.tenant_id;
+     WHERE id = NEW.vehicle_id
+       AND tenant_id = NEW.tenant_id
+       AND organization_id = NEW.organization_id;
 
     -- No row means the vehicle is not in this tenant. RLS would have hidden it
     -- anyway; saying so is clearer than a null-comparison that quietly passes.
     IF keeper IS NULL THEN
         RAISE EXCEPTION
-            'job card names vehicle % which is not a vehicle of this tenant',
+            'job card names vehicle % which is not a vehicle of this workshop',
             NEW.vehicle_id
             USING ERRCODE = 'foreign_key_violation';
     END IF;
@@ -116,6 +124,7 @@ UPDATE finance.invoices i
   FROM repair.job_cards j
  WHERE j.id = i.job_card_id
    AND j.tenant_id = i.tenant_id
+   AND j.organization_id = i.organization_id
    AND (i.customer_id IS DISTINCT FROM j.customer_id);
 
 -- ⚠️ NOT NULL is asserted AFTER the backfill, and it is the point of the
@@ -130,13 +139,16 @@ AS $$
 DECLARE
     owner_id uuid;
 BEGIN
+    -- Organisation as well as tenant — same reason as the job-card trigger.
     SELECT customer_id INTO owner_id
       FROM repair.job_cards
-     WHERE id = NEW.job_card_id AND tenant_id = NEW.tenant_id;
+     WHERE id = NEW.job_card_id
+       AND tenant_id = NEW.tenant_id
+       AND organization_id = NEW.organization_id;
 
     IF owner_id IS NULL THEN
         RAISE EXCEPTION
-            'invoice names job card % which is not a job card of this tenant',
+            'invoice names job card % which is not a job card of this workshop',
             NEW.job_card_id
             USING ERRCODE = 'foreign_key_violation';
     END IF;
