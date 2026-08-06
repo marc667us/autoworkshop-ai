@@ -30,6 +30,33 @@ Slice 12 landed; 13-16 did not. The session went deep on LIST A instead —
 A2 (the slice itself), A3 and A5 are closed — and turned up a severity-1
 finding. Said plainly rather than by redefining a slice as smaller.
 
+## 🔴 FIRST: FINISH THE SLICE 14 DEPLOY (migration 056 + the API)
+
+**Code is committed and pushed (`56876dc`). Migration 056 is NOT yet applied to
+production, and the API carrying `/plan-work/*` is NOT yet deployed.**
+
+GitHub Actions was badly degraded at session end — runs queued 13–18 minutes,
+two auto-cancelled, `gh workflow run` returning HTTP 500 intermittently. Nothing
+was wrong with the workflows.
+
+```bash
+# 1. apply 056 (already REHEARSED on live: verify/056 6/6, non-superuser)
+C:/Users/USER/bin/gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
+# 2. then the API
+C:/Users/USER/bin/gh.exe workflow run deploy-api.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
+# 3. THE PROOF — must be 401, NOT 404:
+curl -s -o /dev/null -w '%{http_code}
+' https://autoworkshop-api.onrender.com/api/v1/plan-work/find-parts
+```
+
+⚠️ **workshop-web rides `Release` (automatic on push); customer-web does NOT** —
+see the four-link table below. Slice 14/15 touched only workshop-web, so no
+`deploy-customer-web.yml` run is needed for them.
+
+⚠️ **`gh workflow run` can return HTTP 500 and start the run anyway, or return
+500 and do nothing.** Both happened today. **Check the run list before
+re-dispatching** — the loop in those commands' history does exactly that.
+
 ## ✅ LIST A IS CLOSED — every item fixed and deployed
 
 A1 organisation RLS (migration 054, 49 tables) · A2 the isolation suite ·
