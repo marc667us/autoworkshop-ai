@@ -58,12 +58,6 @@ const TECHNICIAN_PLANNED: Record<string, PlannedScreen> = {
     href: '/record-work/diagnostic-results',
     hrefLabel: 'Record a diagnosis',
   },
-  '/technical-tools/diagnostic-trees': {
-    does: 'Step-by-step decision trees that narrow a symptom down to a cause.',
-    now: 'Work through the inspection checklist, which covers the standard checks in order.',
-    href: '/record-work/inspection-results',
-    hrefLabel: 'Record an inspection',
-  },
   '/technical-tools/wiring-diagrams': {
     does: 'Circuit diagrams for the vehicle in front of you.',
     now: 'Wiring diagrams are licensed content and are not included yet. Use the workshop’s own manuals.',
@@ -97,24 +91,6 @@ const TECHNICIAN_PLANNED: Record<string, PlannedScreen> = {
     now: 'Training content arrives with the knowledge phase. Your completed work is the record that matters today.',
     href: '/home/my-assigned-work',
     hrefLabel: 'My assigned work',
-  },
-  '/learning/technical-videos': {
-    does: 'Short videos showing a procedure being carried out.',
-    now: 'Video content is not included yet. Ask a supervisor to walk a procedure through with you.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
-  },
-  '/learning/audio-guides': {
-    does: 'Audio walkthroughs for procedures you cannot read a screen during.',
-    now: 'Not included yet. Ask a supervisor.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
-  },
-  '/learning/assessments': {
-    does: 'Tests that confirm you are signed off on a procedure.',
-    now: 'Competency records are a later phase. Quality control on your finished work is the current check.',
-    href: '/testing/submit-to-quality-control',
-    hrefLabel: 'Submit to quality control',
   },
   '/learning/certifications': {
     does: 'The certifications you hold, and when they expire.',

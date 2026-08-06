@@ -1,20 +1,20 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { LearningMaterialsScreen } from '../../_screens/learning-materials-screen';
 
 /**
- * /learning/technical-videos — `07.txt` pt2 §49, the technician's tree.
+ * /learning/technical-videos — the technician's tree (`07.txt` pt2 §49).
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Slice 16. A signpost until migration 057 built the thing behind it — see
+ * that migration's header for the decision it records.
  *
  * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
- * ahead of the catch-all and so carries no route check unless it makes one
- * (T-0005 finding 4). A role whose tree lacks this entry still gets a 404.
+ * ahead of the catch-all and carries no route check unless it makes one
+ * (T-0005 finding 4). The authorization is `assertWorkshopStaff`, on the
+ * service.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
   await requireNavRoute('workshop', '/learning/technical-videos');
-  return <PlannedScreen route="/learning/technical-videos" title="Technical Videos" />;
+  return <LearningMaterialsScreen kind="video" />;
 }

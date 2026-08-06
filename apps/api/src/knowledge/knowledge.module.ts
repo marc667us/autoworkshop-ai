@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
 import { KnowledgeController } from './knowledge.controller';
+import { LearningController } from './learning.controller';
+import { LearningService } from './learning.service';
 import { KnowledgeService } from './knowledge.service';
 
 /**
@@ -14,8 +16,8 @@ import { KnowledgeService } from './knowledge.service';
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [KnowledgeController],
-  providers: [KnowledgeService],
-  exports: [KnowledgeService],
+  controllers: [KnowledgeController, LearningController],
+  providers: [KnowledgeService, LearningService],
+  exports: [KnowledgeService, LearningService],
 })
 export class KnowledgeModule {}
