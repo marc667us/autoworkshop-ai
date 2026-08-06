@@ -295,8 +295,19 @@ export class InspectionService {
 
       for (const item of validated) {
         const updated = await client.query(
+          // 🔴 `recorded_by` IS THE LAST EDITOR; `first_recorded_by` IS WHO
+          // FOUND IT. This UPDATE used to overwrite the only record of the
+          // second, so the technician who actually looked at the brake was
+          // replaced by whoever last touched the sheet — and "who found this?"
+          // is the first question asked when a finding turns out to be wrong.
+          //
+          // COALESCE, so the first recording sets it and no later edit can.
+          // Migration 052 enforces that with a trigger too, because this
+          // service is one caller and the next one will not remember.
           `UPDATE repair.inspection_items
-              SET result = $1, note = $2, recorded_by = $3, recorded_at = now()
+              SET result = $1, note = $2, recorded_by = $3, recorded_at = now(),
+                  first_recorded_by = COALESCE(first_recorded_by, $3),
+                  first_recorded_at = COALESCE(first_recorded_at, now())
             WHERE inspection_id = $4 AND checkpoint_code = $5 AND tenant_id = $6`,
           [item.result, item.note, ctx.userId, id, item.code, ctx.tenantId],
         );
