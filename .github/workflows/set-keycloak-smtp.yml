@@ -1,0 +1,244 @@
+# Wire SMTP into the autoworkshop Keycloak realm so password-reset and email
+# verification messages actually leave the building.
+#
+# ── 🔴 THE DEFECT THIS CLOSES ───────────────────────────────────────────────
+#
+# Measured on live 2026-08-06: the realm's "Forgot Password?" link is present,
+# the reset page renders, and it tells the visitor "we will send you
+# instructions on how to create a new password". It cannot. The realm has NO
+# `smtpServer` block at all, so Keycloak has no mail server and the reset dies
+# after the visitor has already committed to it. Owner reported this as
+# "reset page is hidden"; the page is not hidden, it is a dead end.
+#
+# ⚠️ KEYCLOAK TAKES SMTP FROM REALM CONFIG ONLY. There is no environment
+# variable for it, which is why this cannot be fixed in `deploy-keycloak.yml`
+# alongside KC_DB and friends. And the realm JSON cannot carry it either:
+# `--import-realm` runs on FIRST BOOT ONLY, so editing the file changes nothing
+# on a realm that already exists. It has to be an admin-API call, which is what
+# this workflow is.
+#
+# ── SOLAR IS THE REFERENCE (ADR-011) ────────────────────────────────────────
+#
+# Ported from Solar's `fix-kc-realm-smtp.yml`. Nothing is imported or shared —
+# separate repo, realm, secrets and deployment — but the shape and, more
+# valuably, Solar's operational scars come across:
+#
+# 🔴 RENDER'S FREE TIER BLOCKS OUTBOUND SMTP ON 25, 465 AND 587. This is the
+# one that costs a session to rediscover. Brevo's alternative port 2525 is NOT
+# blocked, and is STARTTLS. So the port Keycloak is given here defaults to 2525
+# regardless of what the app's own SMTP_PORT says — the app and Keycloak are
+# different network contexts and there is no reason for them to agree.
+# `SMTP_PORT_FOR_KC` overrides it if a provider needs something else.
+#
+# ── ⚠️ DRY RUN BY DEFAULT, AND THE DRY RUN PROVES SOMETHING ─────────────────
+#
+# This repo has a recorded defect for the opposite: "a step gated on
+# confirm == APPLY has never run", where a green dry run tested only the path
+# that changes nothing and three fatal bugs sat behind the gate. So the dry run
+# here does everything the real run does EXCEPT the PUT — it authenticates to
+# Keycloak as admin AND opens a real authenticated SMTP session against the
+# provider. If the credentials are wrong, the dry run fails, before a single
+# visitor has been promised an email.
+#
+# Re-runnable: each invocation overwrites the whole `smtpServer` block, which is
+# also how you rotate the provider password.
+
+name: Set Keycloak SMTP
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to actually write smtpServer onto the realm. Anything else is a dry run that still verifies both credentials.'
+        required: false
+        default: ''
+      realm:
+        description: 'Keycloak realm'
+        required: false
+        default: 'autoworkshop'
+      keycloak_url:
+        description: 'Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+      from_display_name:
+        description: 'Display name on outgoing mail'
+        required: false
+        default: 'AutoWorkshop AI'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: set-keycloak-smtp
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KEYCLOAK_URL: ${{ inputs.keycloak_url }}
+      REALM: ${{ inputs.realm }}
+      FROM_DISPLAY_NAME: ${{ inputs.from_display_name }}
+      CONFIRM: ${{ inputs.confirm }}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      SMTP_PORT_FOR_KC: ${{ secrets.SMTP_PORT_FOR_KC }}
+
+    steps:
+      - name: Refuse early if any required secret is absent
+        run: |
+          # Named individually rather than "some secret is missing", because the
+          # whole point of failing here is to save someone reading a Keycloak
+          # 401 and concluding the admin password is wrong.
+          missing=0
+          for v in KC_BOOTSTRAP_ADMIN_PASSWORD SMTP_HOST SMTP_USER SMTP_PASS SMTP_FROM; do
+            if [ -z "$(eval echo "\$$v")" ]; then
+              echo "::error::$v is not set as a repository secret"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Wake Keycloak before anything is timed against it
+        run: |
+          # Free tier: measured 125s and 128s cold on 2026-08-06. Every step
+          # below has a timeout, and without this wake the FIRST of them eats
+          # the cold start and fails for a reason that has nothing to do with
+          # what it was checking.
+          curl -sS -o /dev/null -w "keycloak %{http_code} in %{time_total}s\n" \
+            --max-time 240 \
+            "${KEYCLOAK_URL}/realms/${REALM}/.well-known/openid-configuration" || true
+
+      - name: Prove the SMTP credentials before promising anyone an email
+        run: |
+          python3 - <<'PY'
+          import os, smtplib, ssl, sys
+
+          host = os.environ['SMTP_HOST']
+          # 2525 unless told otherwise. See the header: Render blocks 25/465/587
+          # outbound on the free tier, and this port is what Keycloak will use,
+          # NOT what the app uses.
+          port = int(os.environ.get('SMTP_PORT_FOR_KC') or '2525')
+          user = os.environ['SMTP_USER']
+          password = os.environ['SMTP_PASS']
+
+          print(f"connecting to {host}:{port} as {user} ...")
+          try:
+              # This is a REAL authenticated session, not a socket open. A TCP
+              # connect proves the port is reachable and proves nothing about
+              # whether the password works — and a wrong password here is
+              # exactly the failure that would otherwise surface as a silently
+              # undelivered reset email.
+              with smtplib.SMTP(host, port, timeout=30) as s:
+                  s.ehlo()
+                  s.starttls(context=ssl.create_default_context())
+                  s.ehlo()
+                  s.login(user, password)
+                  print("SMTP login OK")
+          except Exception as exc:
+              # `exc` can echo the server's rejection text. It does not contain
+              # the password, and naming the failure is the whole value here.
+              sys.stderr.write(f"SMTP verification FAILED: {type(exc).__name__}: {exc}\n")
+              sys.exit(1)
+          PY
+
+      - name: Write smtpServer onto the realm
+        run: |
+          python3 - <<'PY'
+          # `urllib.parse` is imported explicitly: importing `urllib.request`
+          # does NOT bind `urllib.parse`, and the form-encoded token request
+          # below needs it. Relying on it being pulled in transitively works
+          # until it doesn't.
+          import os, sys, json, urllib.request, urllib.error, urllib.parse
+
+          BASE = os.environ['KEYCLOAK_URL'].rstrip('/')
+          REALM = os.environ['REALM']
+          APPLY = os.environ.get('CONFIRM') == 'APPLY'
+
+          def call(method, url, data=None, token=None, form=False):
+              body = None
+              headers = {}
+              if form:
+                  body = urllib.parse.urlencode(data).encode()
+                  headers['Content-Type'] = 'application/x-www-form-urlencoded'
+              elif data is not None:
+                  body = json.dumps(data).encode()
+                  headers['Content-Type'] = 'application/json'
+              if token:
+                  headers['Authorization'] = f'Bearer {token}'
+              req = urllib.request.Request(url, data=body, headers=headers, method=method)
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  raw = r.read().decode() or '{}'
+                  return r.status, (json.loads(raw) if raw.strip().startswith(('{', '[')) else raw)
+
+          try:
+              _, tok = call('POST',
+                  f"{BASE}/realms/master/protocol/openid-connect/token",
+                  {"client_id": "admin-cli", "grant_type": "password",
+                   "username": "admin",
+                   "password": os.environ['KC_BOOTSTRAP_ADMIN_PASSWORD']},
+                  form=True)
+          except urllib.error.HTTPError as e:
+              sys.stderr.write(
+                  f"admin token FAILED {e.code}. The bootstrap password is only "
+                  f"honoured on FIRST boot; if an admin already exists this must "
+                  f"be that admin's current password.\n")
+              sys.exit(1)
+          token = tok['access_token']
+
+          port = os.environ.get('SMTP_PORT_FOR_KC') or '2525'
+          smtp = {
+              "host":            os.environ['SMTP_HOST'],
+              "port":            port,
+              "from":            os.environ['SMTP_FROM'],
+              "fromDisplayName": os.environ['FROM_DISPLAY_NAME'],
+              "replyTo":         os.environ['SMTP_FROM'],
+              "envelopeFrom":    "",
+              "auth":            "true",
+              "user":            os.environ['SMTP_USER'],
+              "password":        os.environ['SMTP_PASS'],
+              # 2525 is STARTTLS, never implicit SSL. These two are independent
+              # flags in Keycloak and setting both is a configuration that never
+              # connects.
+              "starttls":        "true",
+              "ssl":             "false",
+          }
+
+          print("smtpServer to be written:")
+          for k, v in smtp.items():
+              print(f"  {k:16s} = " + (f"<{len(v)} chars>" if k == 'password' else str(v)))
+
+          if not APPLY:
+              print("\nDRY RUN — the realm was NOT modified.")
+              print("Both the Keycloak admin login and the SMTP login above SUCCEEDED,")
+              print("so re-running with confirm=APPLY is expected to work.")
+              sys.exit(0)
+
+          # A partial realm representation. Keycloak merges it, so this updates
+          # smtpServer and leaves every other realm setting alone — important,
+          # because a full representation round-trip is how realms silently lose
+          # settings that this workflow never intended to touch.
+          status, _ = call('PUT', f"{BASE}/admin/realms/{REALM}",
+                           {"smtpServer": smtp}, token=token)
+          if status not in (200, 204):
+              sys.stderr.write(f"PUT failed: {status}\n")
+              sys.exit(1)
+          print(f"PUT smtpServer -> {status}")
+
+          # 🔴 READ IT BACK. A 204 means the request was accepted, not that the
+          # realm now holds what was intended — and this repo has five recorded
+          # instances of "config reads correct while the mechanism is inert".
+          _, after = call('GET', f"{BASE}/admin/realms/{REALM}", token=token)
+          got = after.get('smtpServer') or {}
+          if got.get('host') != smtp['host'] or str(got.get('port')) != str(smtp['port']):
+              sys.stderr.write(f"read-back MISMATCH: {json.dumps({k: v for k, v in got.items() if k != 'password'})}\n")
+              sys.exit(1)
+          print("read-back OK — host and port match what was written")
+          print("\nNow verify for real: open the app, choose Forgot Password, and")
+          print("confirm the message ARRIVES. A written config is not a delivered email.")
+          PY
