@@ -1,20 +1,27 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { NotificationInboxScreen } from '../../_screens/notification-inbox-screen';
 
 /**
- * /home/notifications — `07.txt` pt2 §49, the technician's tree.
+ * `/home/notifications` - "Notifications". Technician tree (section 49).
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * 🔴 A RE-MOUNT, NOT A NEW SCREEN. The same inbox slice 7 mounted at /home/notification-inbox. Every row is a real count over a real table and a category with a count of zero is omitted, so an empty list means nothing is waiting.
+ *
+ * Section 49 gives the technician its own names and its own group for things
+ * the workshop trees already have. Building a second implementation per tree is
+ * how two screens start disagreeing about the same data; `navLabelFor` reads
+ * the heading back from whichever tree the viewer is in, so one screen can
+ * carry several names honestly.
  *
  * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
- * ahead of the catch-all and so carries no route check unless it makes one
- * (T-0005 finding 4). A role whose tree lacks this entry still gets a 404.
+ * ahead of the catch-all and so carries NO route check unless it makes one
+ * (T-0005 finding 4). Without it, mounting a screen here would make it
+ * reachable by a role whose tree does not contain it.
  */
 export const dynamic = 'force-dynamic';
 
+const ROUTE = '/home/notifications';
+
 export default async function Page() {
-  await requireNavRoute('workshop', '/home/notifications');
-  return <PlannedScreen route="/home/notifications" title="Notifications" />;
+  await requireNavRoute('workshop', ROUTE);
+  return <NotificationInboxScreen route={ROUTE} />;
 }
