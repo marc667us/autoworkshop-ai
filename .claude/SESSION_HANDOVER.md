@@ -1,5 +1,90 @@
 # Session handover
 
+## ═══ 2026-08-07 — slices 6-11, deployed, and three security findings ═══
+
+**Tip `db5e525`. PRODUCTION == BUILD.** local = origin = Release headSha,
+52 migrations applied on live, 0 pending, tree clean, no servers running.
+
+**▶ NEXT SESSION STARTS AT `.claude/NEXT_SESSION_SCHEDULE.md` — LIST A, then LIST B.**
+
+### What shipped
+
+All six remaining slices, then re-mounts: **157 -> 215 of 242**.
+
+| Slice | Routes | Total |
+|---|---:|---:|
+| 6 Settings & workshop admin | 10 | 153 |
+| 7 Messaging (text + files) | 9 | 162 |
+| 9 Customer self-service | 6 | 182 |
+| 10 Knowledge, tools, learning | 6 | 188 |
+| 8 Reports | 14 | 202 |
+| 11 In-app voice + video | 6 | 208 |
+| technician re-mounts | 7 | **215** |
+
+Manager 100% · Owner 98% · Default 98% · Reception 97% · Technician 50%->67% ·
+Customer 31%->60%. Migrations **045-052**, each with a verify.
+
+**In-app WebRTC shipped** (owner asked for in-app phone/video/text). Signalling
+rides our own API and Postgres; media flows browser-to-browser and never touches
+the platform. My first analysis said this could not ship on the free tier — that
+conflated signalling (a message channel, which we had), STUN (stateless, free)
+and TURN (the only piece needing a UDP relay, and a fallback).
+
+### 🔴 The three findings that matter most
+
+1. **ELEVEN UNGATED READS, LIVE ON PRODUCTION.** A signed-in *customer* could
+   read the workshop's whole invoice book, payment record, stock, supplier
+   orders and warranty decisions. `customer` is a real membership role in the
+   same organisation; RLS is org-scoped and cannot tell them apart; controllers
+   carry only `TenantGuard`; there is **no global guard**. Shipped in slices
+   3/4/5 in PREVIOUS sessions — newly found, now fixed and deployed
+   (`authz/workshop-roles.ts`). **Writes were gated everywhere, reads nowhere.**
+
+2. **TWO FEATURES HAD NEVER ONCE WORKED**, both found by the Supervisor, not by
+   any gate. Slice 11's proxy omitted the API's `/api/v1` prefix so every
+   signalling call 404'd and the client swallowed it; every slice-9 write
+   committed and then threw 403. Typecheck, lint, build and their verifies were
+   green throughout.
+
+3. **THE LIVE REHEARSAL CAUGHT ITS FIRST PRE-PRODUCTION DEFECT.** 048 seeded
+   `knowledge.fault_codes` *after* forcing RLS with only a SELECT policy — it
+   passed locally because the local role is superuser+bypassrls, and failed on
+   live. This is exactly what the workflow was built for after 036-039 cost
+   three sessions.
+
+### Also fixed
+Codex: the signalling sequence gap (identity values are visible at COMMIT, not
+INSERT — a poller could skip one for ever), `createCall`/`createThread`/
+`raiseCase` all accepting ids they never validated. A credential blacklist that
+let `key`, `access_key`, `passphrase`, `signing_key` and four more straight
+through (inverted to an allow-list). Two workflow defects found by RUNNING them:
+concurrent rehearsals clobber the database firewall, and a leftover ephemeral
+entry would have become permanent.
+
+**Part A closed: A1, A2, A3, A4, A5, A7, A8.** A4's T-0044 was measured at 0px
+(the ticket claimed 51px). A5's Playwright re-run found 5 regressions from the
+08-05/08-06 landing work — two `<main>` landmarks and 3.62:1 contrast — now 138
+passing, the exact 07-29 baseline with ~90 more pages.
+
+### Still open
+**A6** (systematic tenant-isolation suite) and **A9** (`RENDER_API_KEY`,
+unrotated since the 2026-07-27 leak, owner-only). Plus the customer-scoped reads
+that the security fix now requires — LIST A item A1.
+
+### Corrections to earlier claims
+- **Solution Studio is BUILT.** I reported it mid-session as the outstanding
+  Phase 5 item; it and its `[id]` route are working.
+- **I am NOT classifier-blocked** on `apply-migrations.yml`, `deploy-api.yml` or
+  `rehearse-migration.yml`. All three ran from here. Older notes saying only the
+  owner can run them are stale.
+- **Keycloak is not down.** Measured twice on owner report: 125-137s cold, then
+  0.5-0.7s. The real Auth.js flow reaches the IdP with no `error=Configuration`.
+  Render free-tier spin-down; `keep-warm.yml` cannot hold it because GitHub cron
+  delivers ~0.6 runs/h whatever is asked.
+
+---
+
+
 ## 2026-07-28 pt2 — PHASE 4 BUILT, PHASE 5 STARTED · 9 commits · tip `e4efc81`
 
 **Read `.claude/NEXT_SESSION_START_HERE.md` FIRST** — it carries the start-up

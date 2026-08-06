@@ -1,154 +1,198 @@
-# Commencement task — slices 6 to 11
+# Commencement task — the next session
 
-**Written 2026-08-06 at session close. Git tip `b00d90c` on `master`, pushed,
-tree clean. Release / CI / Security CI green. No dev servers running.**
+**Written 2026-08-07 at session close. Git tip `db5e525` on `master`, pushed,
+tree clean. PRODUCTION == BUILD. Release / CI green. No dev servers running.**
 
 Read `.claude/CURRENT_TASK.md` first, then this.
 
 ## 🔴 THE POLICY THIS SCHEDULE SERVES
 
 Owner: **five slices plus issue resolution every session. Never use the
-scheduler — the owner runs their own.** This document IS the schedule; nothing
-is queued anywhere.
+scheduler — the owner runs their own.** This document IS the schedule.
 
-Owner, 2026-08-06: **slices 6 to 11 are the next session.**
+**Run LIST A first, in order. Then LIST B.** List B is deliberately second: it
+is feature work, and List A contains a live authorization gap and two
+verification holes that should not sit behind new features.
 
 ---
 
 # WHERE THE PRODUCT IS
 
-**157 of 242 working** — workshop-web 143, customer-web 14. Slices 1–5 done and
-on production; migrations 040–044 applied live.
+**215 of 242 working** — workshop-web 191, customer-web 24.
+**27 routes remain signposted: 13 workshop (all technician §49), 14 customer.**
 
-**65 signposted routes remain: 41 in workshop-web, 24 in customer-web.**
+| Tree | Working | % |
+|---|---|---|
+| Manager §47 | 36/36 | **100%** |
+| Owner §46 | 63/64 | 98% |
+| Default §34 | 55/56 | 98% |
+| Reception §48 | 28/29 | 97% |
+| Technician §49 | 28/42 | **67%** |
+| Customer §33 | 21/35 | **60%** |
 
-⚠️ **RE-MEASURE BEFORE STARTING ANY SLICE.** Every slice size in
-`COMPLETION_PLAN.md` was wrong when checked this session — 17→9, 16→12, 20→17,
-5→2. The counts below were measured on 2026-08-06 with
-`audit-menu-coverage.mjs`; re-run it, because slice work shifts the boundaries.
-
----
-
-# PART A — ISSUE RESOLUTION (first, as always)
-
-Ranked by risk × cost. A1–A3 are cheap and de-risk the slices after them.
-
-| # | Issue | Why now | Size |
-|---|---|---|---|
-| **A1** | **Codex: the rehearsal's dollar-quote tracker can be fooled.** A migration containing `-- $$` in a comment, then `COMMIT;`, then `-- $$` leaves the COMMIT unstripped and the survivor scan ignores it — it could commit to production. | The rehearsal is now the gate every migration passes through. A hole in it is a hole in everything after it. | SMALL |
-| **A2** | **Codex: "left no trace" reads only `schema_migrations`.** If a COMMIT escapes before any ledger row, schema changes persist and the check still passes. | Same reason. The proof is weaker than it reads. | SMALL |
-| **A3** | **Codex: sequences are not rolled back.** Any rehearsal calling `nextval()` advances a live sequence despite the ROLLBACK. | Harmless today (no migration uses one) — document it or refuse them. | SMALL |
-| **A4** | **T-0044 — never measured this session.** The ticket records 51px of horizontal scroll at 768px; a 2026-08-05 sweep measured 0px after the shell design pass. | A stale 🔴 trains people to skip the register. Measure `/home/dashboard`, `/customers/customer-search`, `/workshop-floor/job-cards` — **wait past hydration** before believing the number. | SMALL |
-| **A5** | **Playwright baseline not re-run since 2026-07-29** (138 passed / 2 skipped). **~60 pages have landed since.** | **Read the COUNT, never the exit code** — this suite silently ran ZERO tests for two days. | SMALL |
-| **A6** | **T-0006 tenant-isolation suite.** RLS is proven as a non-superuser only inside `verify/037-044`. | Five new schemas landed this session, all under FORCE RLS. Nothing tests isolation systematically. | MED |
-| **A7** | **D5 — a finding's `recorded_by` is re-stamped on edit.** | Correctness; touches diagnosis records. | SMALL |
-| **A8** | **D6 — permission denials are not audited**, though CLAUDE.md §16 lists them. | Every slice below adds denial paths. Fix the mechanism before multiplying the gaps. | SMALL |
-| **A9** | `RENDER_API_KEY` unrotated since the 2026-07-27 leak. | Owner-only. | owner |
+⚠️ **RE-MEASURE BEFORE STARTING ANYTHING.** `node scripts/audit-menu-coverage.mjs`
+is the authority. Every slice size in `COMPLETION_PLAN.md` has been wrong every
+time it has been checked — the plan projected 242 after slice 11 and it landed
+at 208 before re-mounts.
 
 ---
 
-# PART B — SLICES 6 TO 11
+# ═══ LIST A — DO THIS FIRST ═══
 
-Order is dependency-driven, not preference.
+Ranked by risk × cost. A1–A3 are the ones that should not wait.
 
-| # | Slice | Routes | Depends on | Working after |
-|---|---|---:|---|---:|
-| 6 | **Settings & workshop admin** | ~10 | — | ~167 |
-| 7 | **Messaging (text + files)** | ~10 | slice 1 ✅ | ~177 |
-| 9 | **Customer self-service tail** | 6 | slice 7 | ~183 |
-| 10 | **Knowledge, tools & learning** | ~6 | — | ~189 |
-| 8 | **Reports** | ~14 | slices 2,3,4 ✅ | ~203 |
-| 11 | **Voice, video & consultations** | ~7 | slice 7 | ~210 |
+### 🔴 A1. A customer cannot see their OWN invoices, payments or warranty
+**This is the direct consequence of a security fix and is the highest-value item
+in either list.**
 
-⚠️ **8 IS SEQUENCED AFTER 6/7/9/10, NOT IN NUMBER ORDER.** Reports are read-only
-aggregates over other slices' data, and `05.txt` §2 forbids "disconnected mock
-pages". Slices 2–4 have only just filled those tables; building the reports last
-means they report on something.
+On 2026-08-07 eleven read methods were found ungated: a signed-in CUSTOMER could
+read the whole workshop's invoice book, payment record, stock, supplier orders
+and warranty decisions. That is now closed (`authz/workshop-roles.ts`).
 
-### Slice 6 — Settings & workshop admin (~10)
-`core.opening_hours`, `service_categories`, `approval_limits`, `templates`,
-`notification_prefs`, `workflow_rules`, plus branches. Independent of
-everything — this is what lets an owner configure the workshop instead of living
-with defaults.
-> **Check:** change opening hours; they appear on the public landing's workshop
-> profile.
+Closing the hole did **not** open the legitimate door. A customer still has no
+way to see their own records, and four of the fourteen customer signposts
+(`/payments/quotations|invoices|payments|receipts`) plus two warranty ones are
+exactly that.
 
-### Slice 7 — Messaging (~10)
-`comms.threads`, `messages`, `participants`, `read_receipts`. Text and files
-only; calls are slice 11.
-> 🔴 **`media.links` ALREADY CARRIES A `message` OWNER TYPE** — migration 040 was
-> written for this. Attachments need no new mechanism, and `MediaService`
-> currently answers *"attaching files to a message is not built yet"*, which is
-> the thing this slice makes untrue.
-> **Check:** a customer messages the workshop about their job; it lands on the
-> workshop side against the same job card, and the unread badge stops being the
-> hardcoded counter in the layout.
+**Do:** add customer-scoped reads carrying a session-derived customer predicate —
+`SelfServiceService.resolveCustomer` is the working pattern, and it already
+refuses an explicit id from a customer. Then build the six screens.
+**Never** relax `assertWorkshopStaff` to achieve it.
 
-### Slice 9 — Customer self-service tail (6)
-`core.vehicle_documents`, `maintenance_schedules`, `authorized_drivers`,
-`support.cases`.
-> 🔴 **THE ONLY SLICE THAT MOVES customer-web**, which has been stuck at **14 of
-> 38** all session and is the weakest tree in the product at 31%. Every other
-> slice this session moved workshop-web only.
+> **Check:** sign in as a customer and see only their own invoices; sign in as a
+> second customer in the same organisation and see none of the first's.
 
-### Slice 10 — Knowledge, technical tools & learning (~6)
-`knowledge.articles`, `fault_codes`, `procedures`, `diagrams`,
-`learning.courses`, `certifications`.
-> ⚠️ Licensed content (OEM wiring diagrams, vehicle-specific 3D) stays STAGED per
-> CLAUDE.md §4. The **library** is built; the corpus accumulates from real jobs.
+### 🔴 A2. Prove the staff gate from the OUTSIDE, as a customer
+`workshop-roles.spec.ts` tests the predicate. Nothing yet drives the real API
+with a customer bearer token against `/invoices`, `/stock`, `/purchase-orders`.
 
-### Slice 8 — Reports (~14)
-No new domain tables — read-only aggregates over slices 2/3/4 plus
-`reports.saved_views`.
-> **Check:** the job-progress report agrees with the staging board for the same
-> day. If they disagree, the report is wrong.
-> ⚠️ `/finance/workshop-revenue` already exists (slice 3) and counts payments
-> RECEIVED net of refunds, never invoices issued. Any financial report added here
-> must agree with it or explain why.
+**This matters because the fix was reasoned, not exercised.** The live suites
+drive staff paths only, so a workshop screen quietly relying on a customer-role
+session would now refuse and nothing would have caught it. I found no such
+caller; that is not the same as proving there is none.
 
-### Slice 11 — Voice, video & consultations (~7)
-`comms.calls`, `call_events`, WebRTC over the coturn already in the compose file.
-> ⚠️ **THE ONE SLICE THAT MAY NEED ANOTHER RENDER SERVICE.** Four free services
-> already share one 750h/month allowance. **No paid remedy is to be proposed**
-> (ADR-012). If it cannot fit, it stays local-only and that gets SAID — not
-> quietly skipped.
+### 🔴 A3. A6 — the systematic tenant-isolation suite (T-0006)
+Each of migrations 045–052 carries its own org-isolation checks, but there is no
+single suite over the whole schema. Five schemas landed in one session; the next
+five will land the same way.
+
+> **Build it to FAIL first** — inject a tenant-wide policy and watch it catch
+> that, the way verify/045 was proven.
+
+### A4. Audit every other service for the SAME ungated-read pattern
+Three instances found in two passes: settings, knowledge, then finance/warranty/
+parts. `repair/`, `reception/`, `operations/`, `catalogue/`, `identity/` and
+`media/` have **not** been swept. Ask of every `list*`/`get*`: *who may call
+this?*
+
+### A5. The `security-posture.integration.spec.ts` flake
+Failed once during a full `pnpm test`, passed on three subsequent runs including
+the identical command. Nothing was changed, so nothing is claimed fixed. Run the
+full suite a few times; if it recurs, it is real.
+
+### A6. `RENDER_API_KEY` — owner only
+Leaked in a transcript 2026-07-27, still unrotated. Treat as compromised.
+
+### A7. Two deliberate honesty debts
+Approval limits, workflow rules and procedure certification requirements all
+render **"recorded, not enforced"**. That is honest, not finished. Wiring any of
+them into the path that would apply it is real work with real value.
 
 ---
 
-# EVERY SLICE MUST DELIVER
+# ═══ LIST B — REMAINING FEATURE WORK (after List A) ═══
+
+## ⚠️ FIRST, A CORRECTION TO CARRY FORWARD
+
+I reported mid-session that **Solution Studio was the outstanding Phase 5 item.
+That was wrong** — `/solution-and-approval/solution-studio` and its `[id]` route
+are built and working. Every named Phase 5 subject (reception, job cards,
+staging board, diagnosis, Solution Studio, approval, QC) has working screens.
+
+**So "the rest of Phase 5" is not a missing module.** It is the technician's own
+tree — §49 names things the other trees do not have at all — plus the customer
+tail. Those are listed below by what they actually are.
+
+### B1. Customer tail — 8 routes (after A1 delivers the API work)
+`/home/my-tasks` · `/service-and-repairs/appointments` ·
+`/parts-and-warranty/installed-parts` · `/parts-and-warranty/product-recommendations` ·
+`/support/towing` · `/support/knowledge` · `/support/help-center` ·
+`/settings/security`
+
+🔴 **customer-web is the weakest tree at 60%** and only customer work moves it.
+Several have working APIs already: appointments (reception, slice 2), installed
+parts (`repair.execution_parts_used`, slice 4), knowledge (slice 10 — but it is
+STAFF-gated, so a customer-facing view needs its own published subset).
+
+### B2. Technician planning — 5 routes, Phase 5 surface
+`/plan-work/find-parts` · `/plan-work/parts-compatibility` ·
+`/plan-work/tool-reservation` · `/plan-work/equipment-reservation` ·
+`/plan-work/request-specialist`
+
+Backends largely exist: `parts.stock_on_hand`, `catalogue.part_fitments`,
+`parts.tools`, `core.service_bays`, and `comms.threads` with a
+`specialist_support` kind (slice 7). Mostly screens over live data.
+
+### B3. `/home/calendar` — 1 route
+`reception.appointments` and `job_cards.expected_completion_on` both exist. The
+owner tree already has a working calendar; check before rebuilding.
+
+### B4. Technician learning — 3 routes
+`/learning/assessments` · `/learning/audio-guides` · `/learning/technical-videos`
+⚠️ `learning.courses` exists as a REGISTER, not a player. This platform hosts no
+training media, and shipping an empty player is the "disconnected mock page"
+`05.txt` §2 forbids. Decide what these honestly are before building.
+
+### B5. Technical tools — 5 routes, and NOT all Phase 5
+`/technical-tools/component-locations` · `/diagnostic-trees` ·
+`/technical-tools/technical-service-information` — Phase 9 (knowledge ops).
+`/technical-tools/fault-simulation` · `/repair-solution-simulation` —
+🔴 **Phase 12 in `PLAN_EXTENSION_v1` §3.2, described there as "a module the size
+of Phase 5"**, sequenced after 1.0 because it consumes confirmed diagnostic data.
+**Do not start these as if they were screens.** Signpost them honestly or raise
+the sequencing with the owner.
+
+---
+
+# EVERY SLICE MUST STILL DELIVER
 
 `COMPLETION_PLAN.md` §4, 14 items. The five most often skipped:
 
-1. RLS `ENABLE` **and** `FORCE`, policies **per command**.
-2. A **tenant-isolation negative test**.
-3. A verify that **builds its own tenant** (copy `verify/042` or `verify/044`) and
-   **asserts the EFFECT, not the mechanism**.
+1. RLS `ENABLE` **and** `FORCE`, policies **per command**, and **both** a tenant
+   and an organisation predicate — tenant alone is not isolation here.
+2. A tenant-isolation negative test.
+3. A verify that **builds its own tenant** and asserts the **EFFECT, not the
+   mechanism** — and that **refuses to make an RLS claim under a bypassing
+   role** (copy verify/045's `SET LOCAL ROLE` guard).
 4. **Rehearse on live before applying** — `rehearse-migration.yml`.
-5. The signpost **deleted** from `planned-workshop.ts`, `planned-workshop.spec.ts`
-   still green.
+5. The signpost **deleted**, `planned-workshop.spec.ts` still green.
+
+**And now a sixth:** every new `list*`/`get*` gets `assertWorkshopStaff` or an
+explicit customer predicate. Never neither.
 
 # HOW TO REPORT AT CLOSE
 
-State for each slice whether it **landed**, and if one did not, say so and why.
-Report the `audit-menu-coverage.mjs` figure, never a claim about it. Do not
-redefine a slice as smaller so the count comes out right — the plan's item 12
-makes that mechanically detectable.
+State for each item whether it **landed**, and if not, say so and why. Report the
+`audit-menu-coverage.mjs` figure, never a claim about it.
 
 # THINGS THAT WILL COST A SESSION IF FORGOTTEN
 
-1. **THE DEPLOY CHAIN HAS THREE LINKS**: schema (`apply-migrations.yml`), API
-   (`deploy-api.yml`), web (`Release`). **Green CI proves none of them.** Slice 2
-   shipped green and every endpoint 404'd for an hour.
-2. **A fixture cannot discover a tenant** — `identity.tenants` is
-   `USING (id = current_tenant_id())`.
-3. **Assert the effect, not the mechanism** — a forbidden DELETE raises locally
-   and silently matches zero rows live.
-4. **Check what a commit CONTAINED**, not that it exited 0. An unanchored
-   `media/` in `.gitignore` ate a whole NestJS module.
-5. **Check the working directory** — a `cd` from an earlier command wrote 12
-   pages into `apps/api/apps/workshop-web/`.
-6. **Grep the controller before believing an endpoint exists.**
-7. **Warm Keycloak (115–147s)** before any live sign-in check.
-8. **Cookies ignore the PORT** — a wrong workspace id works locally, fails live.
-9. **Codex needs its prompt on STDIN** and dumps ~160KB of a model-list decode
-   error to stderr before answering. Filter; do not read silence as failure.
+1. **A GREEN BUILD PROVES THE CODE COMPILES, NOT THAT THE FEATURE RAN.** Slice
+   11 shipped 404ing on every call and the client swallowed it; every slice-9
+   write committed then threw 403. Both passed typecheck, lint, build and their
+   verifies. **Drive the running thing.**
+2. **THE DEPLOY CHAIN HAS THREE LINKS**: `apply-migrations.yml`,
+   `deploy-api.yml`, `Release`. Green CI proves none of them.
+   ⚠️ **You are NOT classifier-blocked on these — all three ran on 2026-08-07.**
+3. **Rehearse on live before applying.** It caught its first pre-production
+   defect on 2026-08-07 (048 seeded a table after forcing RLS — passed locally
+   because the local role is superuser).
+4. **One rehearsal at a time** — concurrent runs clobber the database firewall.
+5. **Local is superuser; Render is not.** A verify that passes locally can be
+   proving nothing.
+6. **404 from a page is often the nav gate, not a missing screen.** Drive each
+   route AS THE ROLE that owns it.
+7. **Grep the controller before believing an endpoint exists** (`/members` does
+   not; it is `/memberships`).
+8. **Keycloak cold start is 125–137s**, then 0.5s. Warm it before any live
+   sign-in check. It is not down.
