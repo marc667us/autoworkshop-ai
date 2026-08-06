@@ -30,32 +30,45 @@ Slice 12 landed; 13-16 did not. The session went deep on LIST A instead —
 A2 (the slice itself), A3 and A5 are closed — and turned up a severity-1
 finding. Said plainly rather than by redefining a slice as smaller.
 
-## 🔴 FIRST: FINISH THE SLICE 14 DEPLOY (migration 056 + the API)
+## 🔴 FIRST: FINISH THE DEPLOY — TWO MIGRATIONS AND THE API
 
-**Code is committed and pushed (`56876dc`). Migration 056 is NOT yet applied to
-production, and the API carrying `/plan-work/*` is NOT yet deployed.**
+**All code is committed and pushed (`bf71104`). Migrations 056 and 057 are NOT
+applied to production, and the API carrying `/plan-work/*` and `/learning/*` is
+NOT deployed.** Nothing is broken — this is unshipped, not failing.
 
-GitHub Actions was badly degraded at session end — runs queued 13–18 minutes,
-two auto-cancelled, `gh workflow run` returning HTTP 500 intermittently. Nothing
-was wrong with the workflows.
+GitHub Actions was badly degraded at session end: runs queued 40+ minutes, some
+auto-cancelled, `gh workflow run` and `gh run cancel` intermittently HTTP 500.
+Nothing was wrong with the workflows or the code.
+
+**RUN THEM IN THIS ORDER.** 056 is already rehearsed (verify 6/6 on live); 057
+was dispatched to rehearse at session close — check it finished before applying.
 
 ```bash
-# 1. apply 056 (already REHEARSED on live: verify/056 6/6, non-superuser)
+# 0. confirm the 057 rehearsal passed (verify/057 must read 8 of 8)
+C:/Users/USER/bin/gh.exe run list --workflow=rehearse-migration.yml --limit 2 --repo marc667us/autoworkshop-ai
+# 1. apply BOTH pending migrations (one run applies all pending)
 C:/Users/USER/bin/gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
-# 2. then the API
+# 2. the API
 C:/Users/USER/bin/gh.exe workflow run deploy-api.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
-# 3. THE PROOF — must be 401, NOT 404:
-curl -s -o /dev/null -w '%{http_code}
-' https://autoworkshop-api.onrender.com/api/v1/plan-work/find-parts
+# 3. THE PROOF — each must be 401, NOT 404:
+for p in plan-work/find-parts learning/materials learning/diagnostic-trees; do
+  curl -s -o /dev/null -w "$p %{http_code}
+" https://autoworkshop-api.onrender.com/api/v1/$p
+done
 ```
 
-⚠️ **workshop-web rides `Release` (automatic on push); customer-web does NOT** —
-see the four-link table below. Slice 14/15 touched only workshop-web, so no
-`deploy-customer-web.yml` run is needed for them.
+⚠️ **A QUEUED `apply-migrations` RUN CHECKS OUT MASTER AT RUN TIME, NOT AT
+DISPATCH TIME.** A run dispatched when only 056 existed would have applied 057
+too — unrehearsed. That run was cancelled at session close for exactly this
+reason (it had not started, so nothing was applied). **If you dispatch an apply
+and then land another migration, cancel and re-dispatch.**
+
+⚠️ workshop-web rides `Release` (automatic on push). customer-web does NOT —
+see the four-link table below. Slices 14–16 touched only workshop-web.
 
 ⚠️ **`gh workflow run` can return HTTP 500 and start the run anyway, or return
-500 and do nothing.** Both happened today. **Check the run list before
-re-dispatching** — the loop in those commands' history does exactly that.
+500 and do nothing.** Both happened today. Check the run list before
+re-dispatching.
 
 ## ✅ LIST A IS CLOSED — every item fixed and deployed
 
