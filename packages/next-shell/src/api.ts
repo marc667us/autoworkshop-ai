@@ -120,6 +120,65 @@ async function refusedForWorkspace(
   return isCustomer ? null : { ok: false, reason: 'forbidden', status: 403 };
 }
 
+/**
+ * A READ that survives a cold container.
+ *
+ * ── 🔴 THE PROBLEM THIS SOLVES ─────────────────────────────────────────────
+ *
+ * Render's free tier spins a service down after ~15 minutes idle. Measured on
+ * 2026-08-06: the API answers in 21.6s COLD and 0.91s WARM; Keycloak 136s cold
+ * and 0.68s warm. Both return 200 — nothing is broken.
+ *
+ * But this read path was a ONE-SHOT. The first request after idle hit a waking
+ * container, something in the chain gave up, and the user got "This information
+ * is temporarily unavailable". The owner reported exactly that, and was right
+ * about the framing: IF IT DOES NOT WORK FOR THE USER, IT IS DOWN TO THE USER.
+ * A cold start is an explanation, not a defence.
+ *
+ * The second request is always fast, because THE FIRST ONE WOKE THE CONTAINER.
+ * So one retry turns a 22-second error into a ~23-second page load, and costs
+ * nothing — no extra instance-hours, which matters because the 750-hour Render
+ * allowance is spent on other things the owner needs (ADR-012: no paid remedy).
+ *
+ * ── ⚠️ ONE RETRY, NOT A LOOP ───────────────────────────────────────────────
+ *
+ * A cold start is a single event. A loop would turn a REAL outage into a slow
+ * one, holding the request open and making the page feel broken instead of
+ * showing an honest error state quickly.
+ *
+ * ── 🔴 READS ONLY — A RETRIED WRITE IS A DOUBLE WRITE ──────────────────────
+ *
+ * `apiPost`/`apiPatch`/`apiDelete` are deliberately NOT changed. This
+ * application records payments, raises invoices and books resources; a retry
+ * that duplicated any of those would be far worse than the error it fixed.
+ * Cold-start-safe writes need idempotency keys — a different piece of work.
+ *
+ * ⚠️ IT DOES NOT MATTER WHICH LAYER GIVES UP — undici, Render's edge, or
+ * Next's fetch. Both observable signatures are handled: a THROWN fetch
+ * (refused/reset while waking) and a 502/503/504 from the edge while it waits
+ * for the container. The fix is agnostic to the cause, which is why it is safe
+ * to ship without isolating it.
+ */
+const COLD_START_STATUSES = new Set([502, 503, 504]);
+const COLD_START_RETRY_MS = 1500;
+
+async function fetchRead(url: string, init: RequestInit): Promise<Response> {
+  try {
+    const first = await fetch(url, init);
+    if (!COLD_START_STATUSES.has(first.status)) return first;
+    // The edge answered for a container that is not up yet. It is waking now.
+    await new Promise((r) => setTimeout(r, COLD_START_RETRY_MS));
+    return await fetch(url, init);
+  } catch {
+    // Thrown: refused, reset, or given up on while the container wakes. That
+    // attempt itself started the wake, so the retry usually lands on a live
+    // service. If it throws again the caller degrades to `unavailable` exactly
+    // as before — this never makes the failure path worse.
+    await new Promise((r) => setTimeout(r, COLD_START_RETRY_MS));
+    return await fetch(url, init);
+  }
+}
+
 export async function apiGet<T>(
   workspaceId: WorkspaceId | string,
   path: string,
@@ -137,7 +196,7 @@ export async function apiGet<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl()}/api/v1${path}`, {
+    response = await fetchRead(`${apiBaseUrl()}/api/v1${path}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         // The viewer's chosen organization (T-0016). Absent until they pick

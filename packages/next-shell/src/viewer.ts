@@ -60,8 +60,41 @@ const fetchViewer = cache(async (workspaceId: string): Promise<ViewerDescription
   // the header lets them back in on the API's own default. The role selection
   // can go stale the same way — a role revoked mid-session — so it is dropped
   // by the same retry.
+  // 🔴 A COLD API MUST NOT READ AS "YOU HAVE NO MENU".
+  //
+  // Render's free tier spins a service down after ~15 min idle; the API answers
+  // in 21.6s COLD and 0.91s warm (measured 2026-08-06). This call was a
+  // ONE-SHOT raw fetch, and when it failed `currentViewer` returned null,
+  // `grantsFor` fell back to NO_GRANTS, `visibleGroups` returned nothing gated
+  // and `requireNavRoute` called `notFound()` — so the OWNER saw
+  // "That screen is not in your menu" ON EVERY ROUTE. Reported by the owner.
+  //
+  // 🔴 FOURTH INSTANCE OF "A TRUTH ABOUT A USED AS EVIDENCE FOR B": here,
+  // "/me did not answer" became "you hold no grants" became "this screen is not
+  // in your menu". Three facts, one of them true, and the user was told the
+  // third. The retry does not make that inference safe — it makes it RARE — so
+  // the real lesson stays: a TRANSPORT failure is not an authorization fact.
+  //
+  // ONE retry, and only on the cold-start signatures. A loop would turn a real
+  // outage into a hung shell. `/me` is a READ, so retrying it duplicates
+  // nothing.
+  const COLD = new Set([502, 503, 504]);
+  const once = async (init: RequestInit): Promise<Response> => {
+    try {
+      const first = await fetch(`${apiBaseUrl()}/api/v1/me`, init);
+      if (!COLD.has(first.status)) return first;
+      await new Promise((r) => setTimeout(r, 1500));
+      return await fetch(`${apiBaseUrl()}/api/v1/me`, init);
+    } catch {
+      // That attempt started the wake; the retry usually lands on a live
+      // service. If it throws again the caller degrades exactly as before.
+      await new Promise((r) => setTimeout(r, 1500));
+      return await fetch(`${apiBaseUrl()}/api/v1/me`, init);
+    }
+  };
+
   const attempt = async (withSelection: boolean): Promise<Response> =>
-    fetch(`${apiBaseUrl()}/api/v1/me`, {
+    once({
       headers: {
         Authorization: `Bearer ${accessToken}`,
         // MUST carry the same organization header the pages send (T-0016).
