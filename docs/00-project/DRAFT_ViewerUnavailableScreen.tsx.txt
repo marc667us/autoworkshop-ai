@@ -1,0 +1,115 @@
+'use client';
+
+import { primitive, themeVar } from '@autoworkshop/design-tokens';
+
+/**
+ * What a signed-in person is told when the gate could not find out who they are.
+ *
+ * ── 🔴 THE SENTENCE THIS REPLACES ───────────────────────────────────────────
+ *
+ * "That screen is not in your menu." Shown to the OWNER, on EVERY route, because
+ * the API was cold and `/me` returned nothing. `grantsFor(null)` cannot tell "no
+ * grants" from "could not ask", so a transport failure was rendered as an
+ * authorization verdict. The owner reported it as three separate bugs — nothing
+ * in their menu, no dashboard button, information unavailable — and all three
+ * were this one inference.
+ *
+ * The difference matters because of what each sentence makes someone DO. "Not in
+ * your menu" is a verdict: it says the product has considered you and refused,
+ * so the reasonable response is to give up. "We could not reach the workshop" is
+ * a condition: it says try again. One of those was true and it was never the one
+ * being shown.
+ *
+ * ⚠️ THIS SCREEN IS NOT A PERMISSION FAILURE AND MUST NEVER SAY IT IS. If the
+ * viewer is genuinely refused, `requireNavRoute` calls `notFound()` and this
+ * component is never reached. Reaching it means exactly one thing: a session
+ * exists and the API did not answer.
+ *
+ * ⚠️ AND IT SHOWS NO PAGE CONTENT. The gate throws BEFORE the page renders, so
+ * failing to reach the API can never become a way to see a screen. What changed
+ * is the message, never the access.
+ */
+export function ViewerUnavailableScreen({ retry }: { retry?: () => void }) {
+  return (
+    <main
+      style={{
+        maxWidth: '38rem',
+        margin: '0 auto',
+        padding: primitive.space[8],
+        display: 'flex',
+        flexDirection: 'column',
+        gap: primitive.space[4],
+      }}
+    >
+      <div
+        style={{
+          border: `1px solid ${themeVar.borderDefault}`,
+          borderRadius: primitive.radius.xl,
+          background: themeVar.surfaceRaised,
+          padding: primitive.space[6],
+          display: 'flex',
+          flexDirection: 'column',
+          gap: primitive.space[3],
+        }}
+      >
+        <h1 style={{ margin: 0, fontSize: primitive.fontSize['2xl'] }}>
+          We could not reach the workshop
+        </h1>
+        <p style={{ margin: 0, lineHeight: 1.7 }}>
+          You are signed in — this is not a permissions problem. The service that
+          holds your account did not answer in time, so we could not work out what
+          you are allowed to see, and we would rather say so than guess.
+        </p>
+        <p style={{ margin: 0, lineHeight: 1.7 }}>
+          This site runs on free hosting that powers down when nobody is using it.
+          Waking it takes up to two minutes, and the first request after a quiet
+          spell is the one that pays for it. Trying again usually works.
+        </p>
+
+        {/*
+          A real button, not just "refresh the page". `reset()` from the error
+          boundary re-runs the failed segment, and by the time anyone reads this
+          far the request that failed has already started the wake — so the retry
+          typically lands on a service that is now awake.
+        */}
+        {retry ? (
+          <p style={{ margin: 0 }}>
+            <button
+              type="button"
+              onClick={retry}
+              style={{
+                height: '2.25rem',
+                padding: `0 ${primitive.space[3]}`,
+                border: `1px solid ${themeVar.borderDefault}`,
+                borderRadius: primitive.radius.md,
+                background: themeVar.backgroundPrimary,
+                color: themeVar.textPrimary,
+                fontSize: primitive.fontSize.sm,
+                cursor: 'pointer',
+              }}
+            >
+              Try again
+            </button>
+          </p>
+        ) : null}
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Whether an error thrown into a boundary is the "cannot decide" case.
+ *
+ * ⚠️ STRUCTURAL, NOT `instanceof`. Next.js serialises errors across the
+ * server/client boundary and re-creates them, so the prototype chain does not
+ * survive and `instanceof ViewerUnavailableError` is FALSE in the very boundary
+ * that needs to recognise it. The class carries a plain boolean field for this
+ * reason. In production Next also strips `message` from server errors, so the
+ * name is checked too — a boundary that recognises this only in development is
+ * a boundary that never runs where it matters.
+ */
+export function isViewerUnavailable(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const e = error as { viewerUnavailable?: unknown; name?: unknown };
+  return e.viewerUnavailable === true || e.name === 'ViewerUnavailableError';
+}
