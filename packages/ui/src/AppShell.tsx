@@ -15,7 +15,7 @@ import { Breadcrumbs } from './Breadcrumbs';
 import { ThemeToggle } from './ThemeProvider';
 import { Drawer, overlayKeyframes } from './Drawer';
 import { AiAssistantPanel, ASSISTANT_ACTIONS, assistantActionsFor } from './AiAssistantPanel';
-import { useIsMobile } from './useMediaQuery';
+import { useIsTabletOrBelow } from './useMediaQuery';
 
 /**
  * The application shell — `autoworkshop 01 (1).txt` §2.
@@ -92,7 +92,7 @@ export interface AppShellProps {
 /**
  * 🔴 THE SHELL MUST BE RIGHT BEFORE JAVASCRIPT RUNS.
  *
- * `useIsMobile()` is deliberately `false` on the server and on the first client
+ * `useIsTabletOrBelow()` is deliberately `false` on the server and on the first client
  * render, to avoid a hydration mismatch — see `useMediaQuery.ts`, which states
  * the trade honestly: "the first paint is always the desktop layout, corrected
  * within a frame."
@@ -112,13 +112,34 @@ export interface AppShellProps {
  * The JS branch stays — the drawer genuinely needs a focus trap and aria-modal,
  * which CSS cannot express — but layout no longer depends on it.
  *
- * ⚠️ THE BREAKPOINT MATCHES `useIsMobile()`. If these two disagree there is a
- * band of widths where CSS hides the column and JS still renders it inline, or
- * the reverse — which is the nav/router divergence this shell has paid for
- * before, one layer down.
+ * ⚠️ THE BREAKPOINT MATCHES `useIsTabletOrBelow()`. If these two disagree there
+ * is a band of widths where CSS hides the column and JS still renders it
+ * inline, or the reverse — which is the nav/router divergence this shell has
+ * paid for before, one layer down. They are kept in step by BOTH deriving from
+ * `breakpoint.tabletLandscape`; change one and you must change the other.
+ *
+ * 🔴 1024, NOT 768 — AND THAT BOUNDARY WAS ITSELF A DEFECT.
+ *
+ * This block used to key off `breakpoint.tabletPortrait`, i.e. `max-width:
+ * 767px`. At EXACTLY 768px — iPad portrait, and the single most common tablet
+ * width there is — the mobile branch therefore did not apply, and the desktop
+ * branch rendered the side nav as a persistent 16rem column. MEASURED on the
+ * deployed site: `main` was 511px of 768px, 66.5%. 768 − 256 = 512, so the
+ * arithmetic names the cause exactly.
+ *
+ * That is the same "half the page is missing" failure the phone had, one
+ * breakpoint up, and it survived the phone fix because the phone fix only moved
+ * the boundary's IMPLEMENTATION from JS to CSS — it never questioned where the
+ * boundary was. Giving a third of a tablet to navigation is not a layout, so
+ * the drawer now covers everything below 1024px and the persistent column
+ * starts where there is room for it.
+ *
+ * Found by `apps/e2e/verify/measure-mobile-width.mjs`, which measures the
+ * deployed site. It was written to CONFIRM the phone fix, and the tablet
+ * regression is the thing it caught that nobody was looking for.
  */
 const SHELL_RESPONSIVE_CSS = `
-@media (max-width: ${parseInt(breakpoint.tabletPortrait, 10) - 1}px) {
+@media (max-width: ${parseInt(breakpoint.tabletLandscape, 10) - 1}px) {
   [data-aw-shell-nav] { display: none !important; }
   [data-aw-shell-panel] {
     width: 100% !important;
@@ -162,10 +183,20 @@ export function AppShell({
   // that opens it and the panel it opens are on opposite sides of the shell.
   const [assistantOpen, setAssistantOpen] = React.useState(false);
 
-  // Below the tablet breakpoint the side nav stops being a column and becomes
-  // an overlay drawer — on a 360px phone a persistent 16rem nav leaves nothing
-  // for the page. See useMediaQuery for why this is JS and not a media query.
-  const isMobile = useIsMobile();
+  // Below 1024px the side nav stops being a column and becomes an overlay
+  // drawer — a persistent 16rem nav leaves nothing for the page on a 360px
+  // phone, and only 511px of 768px on an iPad in portrait (measured).
+  //
+  // ⚠️ MUST STAY THE SAME BOUNDARY AS `SHELL_RESPONSIVE_CSS` ABOVE — both derive
+  // from `breakpoint.tabletLandscape`. This was `useIsMobile()` (max-width
+  // 767px) while the CSS is now 1023px; leaving it would have opened a 768–1023
+  // band where CSS hid the column and JS still rendered it inline, which is
+  // precisely the divergence the CSS block's header warns about.
+  //
+  // See useMediaQuery for why the JS branch exists at all: the drawer needs a
+  // focus trap and aria-modal, which CSS cannot express. Layout no longer
+  // depends on it.
+  const isMobile = useIsTabletOrBelow();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
 
   // Close the mobile nav on navigation. Without this the drawer stays open over
@@ -309,8 +340,8 @@ export function AppShell({
           // 🔴 WRAPPED, so the CSS above can hide this column on a narrow
           // viewport BEFORE any JavaScript runs. Without the wrapper there is
           // no element to select: `sideNav` is a component, and the server
-          // renders this branch on every device because `useIsMobile()` is
-          // false until hydration.
+          // renders this branch on every device because `useIsTabletOrBelow()`
+          // is false until hydration.
           <div data-aw-shell-nav>{sideNav}</div>
         )}
 

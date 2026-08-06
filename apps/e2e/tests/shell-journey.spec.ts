@@ -451,8 +451,13 @@ test.describe('responsive — defect 7: the top bar overflowed at 360px', () => 
     test(`no horizontal overflow at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
       await page.goto(base(WORKSHOP.port), { waitUntil: 'networkidle' });
-      // The responsive layout is decided by `useIsMobile()`, which resolves
-      // AFTER hydration — the server render is the desktop layout. Measuring
+      // The responsive layout is decided by `useIsTabletOrBelow()`, which
+      // resolves AFTER hydration — the server render is the desktop layout.
+      // ⚠️ THIS LOOP ONLY PROVES THERE IS NO HORIZONTAL OVERFLOW. It does NOT
+      // measure how much of the viewport `main` actually gets, which is why it
+      // stayed green while 768px was giving `main` 511px of 768px and a third
+      // of the page to navigation. `apps/e2e/verify/measure-mobile-width.mjs`
+      // is the check that catches that, against the DEPLOYED site. Measuring
       // before hydration measures the wrong tree and reports an overflow that a
       // user would only ever see as a brief flash.
       await waitForHydration(page);

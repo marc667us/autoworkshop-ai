@@ -39,10 +39,23 @@ export function useMediaQuery(query: string): boolean {
 }
 
 /**
- * Below tablet-portrait (768px) the side navigation becomes an overlay drawer.
+ * Phone-width viewports — below tablet-portrait, i.e. `max-width: 767px`.
+ *
+ * 🔴 THIS IS NOT THE SHELL'S NAVIGATION BOUNDARY. It used to be, and this
+ * comment used to say "below tablet-portrait (768px) the side navigation
+ * becomes an overlay drawer". That sentence became FALSE on 2026-08-06: at
+ * exactly 768px the desktop branch still rendered a persistent 16rem column and
+ * left `main` 511px of 768px, measured on the deployed site. `AppShell` now
+ * uses `useIsTabletOrBelow()` (1023px) for the nav, in step with its own CSS.
+ *
+ * It is kept, unused by the shell, as the generic phone-width helper — but a
+ * comment asserting a rule that no longer holds is how the next reader stops
+ * checking, so it says plainly what it is not. If you reach for this to decide
+ * layout, ask first whether you mean the NAV boundary; that is
+ * `useIsTabletOrBelow`.
  *
  * The threshold is `breakpoint.tabletPortrait` from the design tokens rather
- * than a literal, so the shell and the stylesheets cannot drift apart.
+ * than a literal, so it and the stylesheets cannot drift apart.
  */
 export function useIsMobile(): boolean {
   return useMediaQuery(`(max-width: ${parseInt(breakpoint.tabletPortrait, 10) - 1}px)`);
