@@ -38,7 +38,7 @@ when the call site exists.
 
 # ═══ LIST B — REMAINING FEATURE WORK ═══
 
-**22 signposted routes. Measure first: `node scripts/audit-menu-coverage.mjs`.**
+**14 signposted routes, ALL technician §49. Measure first: `node scripts/audit-menu-coverage.mjs`.**
 
 | Tree | Working | % |
 |---|---|---|
@@ -46,31 +46,13 @@ when the call site exists.
 | Owner §46 | 63/64 | 98% |
 | Default §34 | 55/56 | 98% |
 | Reception §48 | 28/29 | 97% |
-| **Customer §33** | **27/35** | **77%** |
-| Technician §49 | 28/42 | 67% |
+| **Customer §33** | **35/35** | **100%** ✅ |
+| **Technician §49** | **28/42** | **67%** ← the only tree left |
 
-### B1. Customer tail — 8 routes (only this moves customer-web)
-`/home/my-tasks` · `/service-and-repairs/appointments` ·
-`/parts-and-warranty/installed-parts` · `/parts-and-warranty/product-recommendations` ·
-`/support/towing` · `/support/knowledge` · `/support/help-center` ·
-`/settings/security`
-
-🔴 **`/my/*` IS THE TEMPLATE FOR ALL OF THESE.** Slice 12 built the pattern:
-`selfservice/customer-scope.ts` derives the customer from the SESSION, and the
-route lives under `/my/*` so it can never be reached by loosening a filter on
-the workshop's own endpoint. **Never relax a staff gate to serve a customer.**
-
-Notes on specific ones:
-- **appointments** — `reception.appointments` is now STAFF-GATED (A5). A
-  customer view needs its own customer-predicated read, exactly like `/my/*`.
-- **installed-parts** — `repair.execution_parts_used` exists; reach the customer
-  through `repair.job_cards.customer_id`, as slice 12 does.
-- **knowledge** — `knowledge.listArticles` already filters `is_published`, but
-  is staff-gated. A customer view needs its own published subset.
-- **towing** — 🔴 **there is NO towing backend at all.** `towing-web` is a
-  workspace shell; no service, no table. This is a build, not a screen.
-- **my-tasks** — `/self-service/notifications` already returns exactly this
-  (real counts over real tables, zero-count categories omitted). Mostly a screen.
+### ✅ B1 — CUSTOMER TAIL: DONE (slice 13)
+All 8 routes built. **CUSTOMER §33 is 35/35, 100%, 0 signposted.**
+`/my/*` + `selfservice/customer-scope.ts` is the established pattern — copy it
+for anything customer-facing, and never relax a staff gate to serve a customer.
 
 ### B2. Technician planning — 5 routes
 `/plan-work/find-parts` · `/plan-work/parts-compatibility` ·
