@@ -97,6 +97,21 @@ as if they were screens.**
 
 1. **A GREEN BUILD PROVES THE CODE COMPILES, NOT THAT THE FEATURE RAN.**
    `/my/invoices` answering **401 and not 404** is what proved slice 12 live.
+
+0. 🔴 **THE DEPLOY CHAIN HAS *FOUR* LINKS, NOT THREE.** This cost most of a
+   session's confidence on 2026-08-06:
+
+   | What | How | Notes |
+   |---|---|---|
+   | migrations | `apply-migrations.yml -f confirm=APPLY` | rehearse first |
+   | the API | `deploy-api.yml -f confirm=APPLY` | dispatch only |
+   | the apex (**workshop-web**) | `Release`, on push to master | automatic |
+   | **customer-web** | **`deploy-customer-web.yml -f confirm=APPLY`** | **DISPATCH ONLY — nothing triggers it** |
+
+   **`Release` does NOT deploy customer-web.** It had not run since 2026-08-04,
+   so slices 12 AND 13 had live API routes (401, correct) and **screens nobody
+   could see**. Every probe was green and the feature was still not reachable.
+   ⚠️ **If a slice touches `apps/customer-web`, dispatch that workflow.**
 2. **POSTGRES OR-COMBINES PERMISSIVE POLICIES.** Adding an org-scoped permissive
    policy beside a tenant-only one enforces NOTHING and looks perfect in a diff.
    054 uses a RESTRICTIVE policy because those are AND-ed.
