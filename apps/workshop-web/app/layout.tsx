@@ -12,6 +12,7 @@ import {
   ActingAsControl,
 } from '@autoworkshop/next-shell';
 import { themeBootScript } from '@autoworkshop/ui';
+import { prewarmKeycloak } from '@autoworkshop/auth';
 import { signOutAction, switchUserAction } from './sign-out-action';
 import { liveCounters } from './_screens/live-counters';
 
@@ -36,6 +37,15 @@ export const metadata: Metadata = {
  * The API's tenant guard and Postgres RLS deny independently (CLAUDE.md §8).
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Start Keycloak waking NOW, not when somebody presses "Sign in".
+  //
+  // Deliberately NOT awaited and deliberately BEFORE the two calls below: the
+  // wake takes up to 136s and there is nothing to wait for, so it runs in the
+  // background while this render does its real work. Throttled to one ping per
+  // five minutes per process — see `prewarm.ts` for why that throttle is the
+  // cost control and not a tuning knob.
+  prewarmKeycloak();
+
   // Resolved together: the viewer DESCRIBES the person, the session says whether
   // there is one. They are separate calls because `/me` can fail while the
   // session is live, and sign-out must survive that (Codex finding M2).

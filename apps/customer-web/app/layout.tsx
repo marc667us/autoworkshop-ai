@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { ThemeProvider, themeBootScript } from '@autoworkshop/ui';
+import { prewarmKeycloak } from '@autoworkshop/auth';
 
 export const metadata: Metadata = {
   title: 'Abossey Okai Auto Parts Marketplace — AutoWorkshop AI',
@@ -39,6 +40,16 @@ export const metadata: Metadata = {
  * 404 route.
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Start Keycloak waking NOW, not when somebody presses "Sign in".
+  //
+  // A CUSTOMER is the visitor most exposed to the cold start: they arrive from a
+  // link, sign in once, and never see the product again that day — so they are
+  // almost always the first request after a quiet period. Fire-and-forget and
+  // throttled to one ping per five minutes per process; see `prewarm.ts`.
+  //
+  // Safe in a synchronous component precisely because nothing is awaited.
+  prewarmKeycloak();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>

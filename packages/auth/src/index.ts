@@ -12,6 +12,13 @@ export {
 export type { KeycloakTokenSet } from './tokens';
 export { performSignOut } from './sign-out';
 export { postLogoutOrigin } from './origin';
+export {
+  prewarmKeycloak,
+  resetPrewarmThrottle,
+  PREWARM_INTERVAL_MS,
+  PREWARM_TIMEOUT_MS,
+} from './prewarm';
+export type { PrewarmOptions } from './prewarm';
 
 /**
  * Which requests the auth middleware must see.
