@@ -39,20 +39,28 @@ Suites at close: live site **9/9**, live spine **7/7**, Playwright
 
 ## ▶ THE FIRST THING TO DO
 
-**LIST A, item A1**: a customer still cannot see their own invoices, payments
-or warranty claims.
+**LIST A, item A1 — the owner is blocked on this right now.**
 
-Eleven read methods were found ungated on 2026-08-07 — a signed-in customer
-could read the workshop's whole invoice book, payment record, stock, supplier
-orders and warranty decisions. That is closed. Closing it did **not** open the
-legitimate door, and six of the fourteen customer signposts are exactly that
-door.
+`admin@` on production gets *"your session has ended, you were logged out"* on
+every screen. **The owner account works fine.** The account holds NO active
+membership, `resolveTenantContext` requires one, and `TenantGuard` answers 401 —
+the same status as an expired token. `/me` sits behind that guard too, so the
+whole shell reads as signed out.
 
-Add customer-scoped reads with a session-derived customer predicate
-(`SelfServiceService.resolveCustomer` is the pattern). **Never** relax
-`assertWorkshopStaff` to achieve it.
+The MESSAGE is fixed and deployed (`noMembership` is now distinct and offers no
+sign-in link, because offering one created the loop). **The design question is
+NOT settled:** `identity.is_platform_admin()` is an RLS escape hatch throughout
+the schema, yet a platform admin without a per-org membership cannot use the
+application at all. Settle it explicitly — bypassing membership would let one
+account reach every tenant, so it needs a decision and a negative test.
 
----
+> **Workaround that works today, verified on production:** sign in as the owner
+> → `/workshop-management/staff` → add by email + role. The account must have
+> signed up first.
+
+**Then A2**: closing the eleven ungated reads did not open the legitimate door —
+a customer still cannot see their own invoices, payments or warranty claims, and
+six of the fourteen customer signposts are exactly that door.
 
 ## ⚠️ A CORRECTION TO CARRY FORWARD
 

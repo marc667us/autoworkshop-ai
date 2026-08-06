@@ -39,30 +39,11 @@ at 208 before re-mounts.
 
 # ═══ LIST A — DO THIS FIRST ═══
 
-Ranked by risk × cost. A1–A3 are the ones that should not wait.
+Ranked by risk × cost. **A1 is blocking the owner RIGHT NOW** — it was reported
+live at the end of 2026-08-07 and the workaround below is the only way in until
+it is settled. A1–A3 should not wait.
 
-### 🔴 A1. A customer cannot see their OWN invoices, payments or warranty
-**This is the direct consequence of a security fix and is the highest-value item
-in either list.**
-
-On 2026-08-07 eleven read methods were found ungated: a signed-in CUSTOMER could
-read the whole workshop's invoice book, payment record, stock, supplier orders
-and warranty decisions. That is now closed (`authz/workshop-roles.ts`).
-
-Closing the hole did **not** open the legitimate door. A customer still has no
-way to see their own records, and four of the fourteen customer signposts
-(`/payments/quotations|invoices|payments|receipts`) plus two warranty ones are
-exactly that.
-
-**Do:** add customer-scoped reads carrying a session-derived customer predicate —
-`SelfServiceService.resolveCustomer` is the working pattern, and it already
-refuses an explicit id from a customer. Then build the six screens.
-**Never** relax `assertWorkshopStaff` to achieve it.
-
-> **Check:** sign in as a customer and see only their own invoices; sign in as a
-> second customer in the same organisation and see none of the first's.
-
-### 🔴 A2. A platform administrator with no membership cannot use the app AT ALL
+### 🔴 A1. ADMIN IS BLOCKED TODAY — a platform admin with no membership cannot use the app
 Reported 2026-08-07: `admin@` on production got *"your session has ended, you
 were logged out"* on every screen. **The owner worked fine.**
 
@@ -90,6 +71,27 @@ Either:
 **Immediate workaround that works today:** owner → `/workshop-management/staff`
 → add by email + role. Verified on production (200, email field, role field).
 The account must have signed up first.
+
+### 🔴 A2. A customer cannot see their OWN invoices, payments or warranty
+**This is the direct consequence of a security fix and is the highest-value item
+in either list.**
+
+On 2026-08-07 eleven read methods were found ungated: a signed-in CUSTOMER could
+read the whole workshop's invoice book, payment record, stock, supplier orders
+and warranty decisions. That is now closed (`authz/workshop-roles.ts`).
+
+Closing the hole did **not** open the legitimate door. A customer still has no
+way to see their own records, and four of the fourteen customer signposts
+(`/payments/quotations|invoices|payments|receipts`) plus two warranty ones are
+exactly that.
+
+**Do:** add customer-scoped reads carrying a session-derived customer predicate —
+`SelfServiceService.resolveCustomer` is the working pattern, and it already
+refuses an explicit id from a customer. Then build the six screens.
+**Never** relax `assertWorkshopStaff` to achieve it.
+
+> **Check:** sign in as a customer and see only their own invoices; sign in as a
+> second customer in the same organisation and see none of the first's.
 
 ### 🔴 A3. Prove the staff gate from the OUTSIDE, as a customer
 `workshop-roles.spec.ts` tests the predicate. Nothing yet drives the real API
@@ -142,7 +144,7 @@ staging board, diagnosis, Solution Studio, approval, QC) has working screens.
 tree — §49 names things the other trees do not have at all — plus the customer
 tail. Those are listed below by what they actually are.
 
-### B1. Customer tail — 8 routes (after A1 delivers the API work)
+### B1. Customer tail — 8 routes (after A2 delivers the API work)
 `/home/my-tasks` · `/service-and-repairs/appointments` ·
 `/parts-and-warranty/installed-parts` · `/parts-and-warranty/product-recommendations` ·
 `/support/towing` · `/support/knowledge` · `/support/help-center` ·
