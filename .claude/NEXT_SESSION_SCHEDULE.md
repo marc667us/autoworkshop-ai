@@ -38,7 +38,7 @@ when the call site exists.
 
 # ═══ LIST B — REMAINING FEATURE WORK ═══
 
-**14 signposted routes, ALL technician §49. Measure first: `node scripts/audit-menu-coverage.mjs`.**
+**6 signposted routes, all technician §49, each argued. Measure first: `node scripts/audit-menu-coverage.mjs`.**
 
 | Tree | Working | % |
 |---|---|---|
@@ -47,32 +47,46 @@ when the call site exists.
 | Default §34 | 55/56 | 98% |
 | Reception §48 | 28/29 | 97% |
 | **Customer §33** | **35/35** | **100%** ✅ |
-| **Technician §49** | **28/42** | **67%** ← the only tree left |
+| **Technician §49** | **36/42** | **86%** — 6 left, all argued below |
 
 ### ✅ B1 — CUSTOMER TAIL: DONE (slice 13)
 All 8 routes built. **CUSTOMER §33 is 35/35, 100%, 0 signposted.**
 `/my/*` + `selfservice/customer-scope.ts` is the established pattern — copy it
 for anything customer-facing, and never relax a staff gate to serve a customer.
 
-### B2. Technician planning — 5 routes
-`/plan-work/find-parts` · `/plan-work/parts-compatibility` ·
-`/plan-work/tool-reservation` · `/plan-work/equipment-reservation` ·
-`/plan-work/request-specialist`
-Backends largely exist: `parts.stock_on_hand`, `catalogue.part_fitments`,
-`parts.tools`, `core.service_bays`, `comms.threads` (`specialist_support`).
+### ✅ B2 / B3 / part of B5 — DONE (slices 14 + 15)
+Technician §49 **28/42 → 36/42 (86%)**. Planning built (migration 056,
+`parts.resource_bookings`); calendar, component-locations and
+technical-service-information RE-MOUNTED onto screens that already existed.
 
-### B3. `/home/calendar` — 1 route. The owner tree already has a working
-calendar; check before rebuilding.
+### 🔴 THE SIX THAT REMAIN — AND WHY THEY ARE NOT SCREENS
 
-### B4. Technician learning — 3 routes
-⚠️ `learning.courses` is a REGISTER, not a player. This platform hosts no
-training media. Decide what these honestly are before building one.
+**Do not "finish" these by mounting something plausible.** Each is signposted
+because the thing behind it does not exist, and a re-mount would be a lie about
+what the workshop has.
 
-### B5. Technical tools — 5 routes, NOT all Phase 5
-`component-locations` · `diagnostic-trees` · `technical-service-information`
-— Phase 9. `fault-simulation` · `repair-solution-simulation` — 🔴 **Phase 12**,
-"a module the size of Phase 5" (`PLAN_EXTENSION_v1` §3.2). **Do not start those
-as if they were screens.**
+**`/technical-tools/diagnostic-trees` — the artefact does not exist.**
+There is no `knowledge.diagnostic_trees` table and nothing shaped like a
+decision tree. `knowledge.procedures` is a linear step list; `fault_codes` is
+an index. Mounting either under this name would rename a thing rather than
+build one. It is Phase 9 CONTENT work: design the artefact (nodes, branches,
+outcomes), then a screen.
+
+**`/learning/{assessments,audio-guides,technical-videos}` — no media is hosted.**
+`learning.courses` is a REGISTER — title, provider, duration, whether it grants
+a certification. There is no player, no upload, no asset link, and no
+assessment concept anywhere in the schema. Three menu entries promising three
+different media types cannot honestly be served by one register, and an empty
+player is the disconnected mock page `05.txt` §2 forbids.
+▶ **The real decision to make first:** is this platform hosting training media
+(needs storage, an asset per course, a player), or is it RECORDING training done
+elsewhere (needs a link and a completion date)? The second is a small honest
+slice. The first is a module. Ask the owner which.
+
+**`/technical-tools/fault-simulation` + `/repair-solution-simulation` —
+🔴 PHASE 12.** `PLAN_EXTENSION_v1` §3.2 calls this "a module the size of Phase
+5", sequenced after 1.0 because it consumes confirmed diagnostic data.
+**Do not start these as if they were screens.**
 
 ---
 
