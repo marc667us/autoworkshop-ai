@@ -78,6 +78,36 @@ needs no extra instance-hours.
 ⚠️ Verify by DRIVING IT: let the API idle >15 min, load a page, and watch what
 the user gets. A unit test cannot reproduce a cold start.
 
+# ═══ 1c. 🔴 ALL THREE OWNER REPORTS ON 2026-08-06 WERE ONE BUG ═══
+
+The owner reported three separate things. They are ONE root cause: a cold API
+makes `currentViewer` return null, and THREE different screens each drew a
+confident wrong conclusion from that.
+
+| What the owner saw | What actually happened |
+|---|---|
+| "information is temporarily unavailable" | API cold (21.6s); one-shot read gave up |
+| "screen not in your menu EVERYWHERE" | /me null -> `grantsFor` -> NO_GRANTS -> `visibleGroups` empty -> `requireNavRoute` notFound() on every route |
+| "no button to go to the dashboard" | /me null -> landing renders the SIGNED-OUT variant ("Create a free account" / "Sign in") to a signed-in owner. The "Go to your dashboard" button is only rendered when `viewer` is non-null. |
+
+🔴 **THIS IS THE SAME DEFECT CLASS, FOUR TIMES NOW:** *a truth about A used as
+evidence for B.* "/me did not answer" is a TRANSPORT fact. It was rendered as
+"you hold no grants", "this screen is not in your menu", and "you are not
+signed in". Previous instances: "no grants ⟹ signed out" told a signed-in
+technician nobody was signed in, and "Not signed in" beside a working "Sign
+out", twice.
+
+**Fixed in `14642ac`** — one retry on the cold-start signatures for `/me` and
+every read. ⚠️ **NOT DEPLOYED YET.** Until it ships, the owner will keep seeing
+all three whenever the API has been idle >15 min.
+
+▶ **The deeper fix, NOT done, worth a slice:** a failed `/me` should be a THIRD
+STATE, not "signed out". `grantsFor(null)` cannot tell "no grants" from "could
+not ask". Give the viewer contract an explicit `unknown` and have the shell say
+"we could not reach the workshop" instead of silently rendering the
+stranger's version of every page. The retry makes this rare; it does not make
+the inference correct.
+
 # ═══ 2. THE PRODUCT IS AT 241 of 243 ═══
 
 Re-measure first — `node scripts/audit-menu-coverage.mjs` is the authority.
