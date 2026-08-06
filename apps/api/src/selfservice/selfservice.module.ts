@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
+import { CustomerRecordsController } from './customer-records.controller';
+import { CustomerRecordsService } from './customer-records.service';
 import { SelfServiceController } from './selfservice.controller';
 import { SelfServiceService } from './selfservice.service';
 
@@ -14,8 +16,8 @@ import { SelfServiceService } from './selfservice.service';
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [SelfServiceController],
-  providers: [SelfServiceService],
-  exports: [SelfServiceService],
+  controllers: [SelfServiceController, CustomerRecordsController],
+  providers: [SelfServiceService, CustomerRecordsService],
+  exports: [SelfServiceService, CustomerRecordsService],
 })
 export class SelfServiceModule {}

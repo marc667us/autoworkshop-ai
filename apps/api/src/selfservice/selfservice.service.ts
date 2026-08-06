@@ -1,7 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { resolveCustomerId, staffEcho } from './customer-scope';
 
 /**
  * Customer self-service — slice 9 of `COMPLETION_PLAN.md`.
@@ -13,12 +14,14 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * because both customers belong to the same organisation — there is no
  * `app.customer_id` setting and inventing one would let a client name it.
  *
- * So the customer predicate lives HERE, on every read and every write, derived
- * from the signed-in user's own customer record. `myCustomerId` is the single
- * place that derivation happens, and it never accepts a customer id from the
- * caller. That is the same shape `CommsService` uses for thread participation
- * and for the same reason: a policy that cannot state the rule must not be
- * trusted to enforce it.
+ * So the customer predicate is applied on every read and every write, derived
+ * from the signed-in user's own customer record. That derivation lives in
+ * `./customer-scope.ts` — ONE implementation, shared with slice 12's invoices,
+ * payments, receipts, quotations and warranty, because a rule re-typed per
+ * service is a rule that will be typed differently in one of them. It never
+ * accepts a customer id from the caller. Same shape `CommsService` uses for
+ * thread participation and for the same reason: a policy that cannot state the
+ * rule must not be trusted to enforce it.
  *
  * ── ⚠️ STAFF SEE THESE SCREENS TOO ─────────────────────────────────────────
  *
@@ -27,11 +30,6 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * only their own — two different questions, and conflating them is how a
  * customer ends up seeing the whole customer book.
  */
-
-const WORKSHOP_ROLES = [
-  'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
-  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
-] as const;
 
 export interface VehicleDocumentRow {
   id: string;
@@ -92,77 +90,11 @@ export class SelfServiceService {
     private readonly audit: AuditService,
   ) {}
 
-  /**
-   * The caller's own customer record.
-   *
-   * 🔴 DERIVED FROM THE SESSION, NEVER ACCEPTED FROM THE CALLER. A customer id
-   * in a request body is a customer id an attacker can change; `core.customers`
-   * carries `user_id`, which is the server's own link between the signed-in
-   * person and their record.
-   *
-   * Returns null for a workshop user, who is not a customer of their own
-   * workshop — that is not an error, it is a different question, and the
-   * callers branch on it.
-   */
-  private async myCustomerId(
-    client: import('pg').PoolClient,
-    ctx: TenantContext,
-  ): Promise<string | null> {
-    const r = await client.query<{ id: string }>(
-      `SELECT id FROM core.customers
-        WHERE tenant_id = $1 AND organization_id = $2 AND user_id = $3
-        LIMIT 1`,
-      [ctx.tenantId, ctx.organizationId, ctx.userId],
-    );
-    return r.rows[0]?.id ?? null;
-  }
-
-  /**
-   * Which customer's records this request may see.
-   *
-   * ⚠️ A WORKSHOP ROLE MAY NAME ONE; A CUSTOMER MAY NOT. Passing a customer id
-   * as a customer is refused outright rather than ignored — silently
-   * substituting their own id would mask an authorization probe (`1.txt` §9,
-   * the same reasoning `TenantGuard` uses for organisations).
-   */
-  private async resolveCustomer(
-    client: import('pg').PoolClient,
-    ctx: TenantContext,
-    requested?: string,
-  ): Promise<string> {
-    const isStaff = WORKSHOP_ROLES.includes(ctx.activeRole as (typeof WORKSHOP_ROLES)[number]);
-
-    if (requested) {
-      if (!isStaff) {
-        throw new ForbiddenException(
-          'You can only see your own records. Leave the customer out of the request and you will get yours.',
-        );
-      }
-      const exists = await client.query(
-        `SELECT 1 FROM core.customers
-          WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
-        [requested, ctx.tenantId, ctx.organizationId],
-      );
-      if (!exists.rowCount) throw new NotFoundException('That customer is not in this workshop.');
-      return requested;
-    }
-
-    const mine = await this.myCustomerId(client, ctx);
-    if (!mine) {
-      throw new NotFoundException(
-        isStaff
-          ? 'You are staff here, not a customer, so there are no records of your own to show. Open a customer from the customer list to see theirs.'
-          : 'This workshop has no customer record for your account yet. Reception can create one when you next bring a vehicle in.',
-      );
-    }
-    return mine;
-  }
-
   // ── documents ─────────────────────────────────────────────────────────────
 
   async listDocuments(ctx: TenantContext, customerId?: string): Promise<VehicleDocumentRow[]> {
     return this.db.withTenant(ctx, async (client) => {
-      const cid = await this.resolveCustomer(client, ctx, customerId);
+      const cid = await resolveCustomerId(client, ctx, customerId);
       const r = await client.query(
         `SELECT d.id, d.vehicle_id, v.registration_number, d.document_kind, d.title,
                 d.reference, d.expires_on,
@@ -200,7 +132,7 @@ export class SelfServiceService {
     },
   ): Promise<VehicleDocumentRow[]> {
     const staffCustomerId = await this.db.withTenant(ctx, async (client) => {
-      const customerId = await this.resolveCustomer(client, ctx);
+      const customerId = await resolveCustomerId(client, ctx);
 
       // The vehicle must be one of THIS customer's. The trigger in 047 refuses
       // a mismatch too; this exists so the refusal is a sentence rather than a
@@ -233,14 +165,11 @@ export class SelfServiceService {
         resourceType: 'vehicle_document',
         detail: { documentKind: input.documentKind },
       });
-      // Only a STAFF caller may name a customer on the read-back. A customer
-      // must pass undefined so the list re-derives from their session — which
-      // is the whole rule `resolveCustomer` enforces.
-      return WORKSHOP_ROLES.includes(ctx.activeRole as (typeof WORKSHOP_ROLES)[number])
-        ? customerId
-        : undefined;
+      // Staff may name the customer again on the read-back; a customer must
+      // not — see `staffEcho`, which is where that branch now lives.
+      return staffEcho(ctx, customerId);
     });
-    // 🔴 NO `cid`. Passing the resolved id back in made `resolveCustomer`
+    // 🔴 NO `cid`. Passing the resolved id back in made `resolveCustomerId`
     // refuse it — a CUSTOMER may not name a customer — so every write in this
     // service COMMITTED and then threw 403, and staff got NotFound instead.
     // Slice 9's forms could never have worked for either audience. Found by the
@@ -252,7 +181,7 @@ export class SelfServiceService {
 
   async listMaintenance(ctx: TenantContext, customerId?: string): Promise<MaintenanceRow[]> {
     return this.db.withTenant(ctx, async (client) => {
-      const cid = await this.resolveCustomer(client, ctx, customerId);
+      const cid = await resolveCustomerId(client, ctx, customerId);
       const r = await client.query(
         `SELECT s.id, s.vehicle_id, v.registration_number, v.current_mileage_km,
                 s.item, s.due_at_km, s.due_on, s.last_done_km, s.last_done_on, s.notes,
@@ -291,7 +220,7 @@ export class SelfServiceService {
     input: { vehicleId: string; item: string; dueAtKm?: number; dueOn?: string; notes?: string },
   ): Promise<MaintenanceRow[]> {
     const staffCustomerId = await this.db.withTenant(ctx, async (client) => {
-      const customerId = await this.resolveCustomer(client, ctx);
+      const customerId = await resolveCustomerId(client, ctx);
       const owned = await client.query(
         `SELECT 1 FROM core.vehicles
           WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 AND customer_id = $4 LIMIT 1`,
@@ -315,12 +244,9 @@ export class SelfServiceService {
         resourceType: 'maintenance_schedule',
         detail: { item: input.item.trim() },
       });
-      // Only a STAFF caller may name a customer on the read-back. A customer
-      // must pass undefined so the list re-derives from their session — which
-      // is the whole rule `resolveCustomer` enforces.
-      return WORKSHOP_ROLES.includes(ctx.activeRole as (typeof WORKSHOP_ROLES)[number])
-        ? customerId
-        : undefined;
+      // Staff may name the customer again on the read-back; a customer must
+      // not — see `staffEcho`, which is where that branch now lives.
+      return staffEcho(ctx, customerId);
     });
     return this.listMaintenance(ctx, staffCustomerId);
   }
@@ -329,7 +255,7 @@ export class SelfServiceService {
 
   async listDrivers(ctx: TenantContext, customerId?: string): Promise<DriverRow[]> {
     return this.db.withTenant(ctx, async (client) => {
-      const cid = await this.resolveCustomer(client, ctx, customerId);
+      const cid = await resolveCustomerId(client, ctx, customerId);
       const r = await client.query(
         `SELECT d.id, d.full_name, d.phone, d.relationship, v.registration_number,
                 d.may_drop_off, d.may_collect, d.may_approve_work, d.is_active
@@ -361,7 +287,7 @@ export class SelfServiceService {
     },
   ): Promise<DriverRow[]> {
     const staffCustomerId = await this.db.withTenant(ctx, async (client) => {
-      const customerId = await this.resolveCustomer(client, ctx);
+      const customerId = await resolveCustomerId(client, ctx);
       if (input.vehicleId) {
         const owned = await client.query(
           `SELECT 1 FROM core.vehicles
@@ -391,12 +317,9 @@ export class SelfServiceService {
           mayApproveWork: input.mayApproveWork,
         },
       });
-      // Only a STAFF caller may name a customer on the read-back. A customer
-      // must pass undefined so the list re-derives from their session — which
-      // is the whole rule `resolveCustomer` enforces.
-      return WORKSHOP_ROLES.includes(ctx.activeRole as (typeof WORKSHOP_ROLES)[number])
-        ? customerId
-        : undefined;
+      // Staff may name the customer again on the read-back; a customer must
+      // not — see `staffEcho`, which is where that branch now lives.
+      return staffEcho(ctx, customerId);
     });
     return this.listDrivers(ctx, staffCustomerId);
   }
@@ -404,7 +327,7 @@ export class SelfServiceService {
   /** Withdrawn, never deleted: a collection under an old authorisation must stay explicable. */
   async withdrawDriver(ctx: TenantContext, id: string): Promise<DriverRow[]> {
     const staffCustomerId = await this.db.withTenant(ctx, async (client) => {
-      const customerId = await this.resolveCustomer(client, ctx);
+      const customerId = await resolveCustomerId(client, ctx);
       const r = await client.query(
         `UPDATE core.authorized_drivers
             SET is_active = false, withdrawn_at = now(), updated_by = $4, updated_at = now()
@@ -419,12 +342,9 @@ export class SelfServiceService {
         resourceType: 'authorized_driver',
         resourceId: id,
       });
-      // Only a STAFF caller may name a customer on the read-back. A customer
-      // must pass undefined so the list re-derives from their session — which
-      // is the whole rule `resolveCustomer` enforces.
-      return WORKSHOP_ROLES.includes(ctx.activeRole as (typeof WORKSHOP_ROLES)[number])
-        ? customerId
-        : undefined;
+      // Staff may name the customer again on the read-back; a customer must
+      // not — see `staffEcho`, which is where that branch now lives.
+      return staffEcho(ctx, customerId);
     });
     return this.listDrivers(ctx, staffCustomerId);
   }
@@ -433,7 +353,7 @@ export class SelfServiceService {
 
   async listCases(ctx: TenantContext, customerId?: string): Promise<CaseRow[]> {
     return this.db.withTenant(ctx, async (client) => {
-      const cid = await this.resolveCustomer(client, ctx, customerId);
+      const cid = await resolveCustomerId(client, ctx, customerId);
       const r = await client.query(
         `SELECT c.id, c.reference, c.subject, c.description, c.category, c.priority,
                 c.status, c.resolution, c.created_at, c.resolved_at, jc.job_number
@@ -464,7 +384,7 @@ export class SelfServiceService {
     input: { subject: string; description: string; category: string; jobCardId?: string },
   ): Promise<CaseRow[]> {
     const staffCustomerId = await this.db.withTenant(ctx, async (client) => {
-      const customerId = await this.resolveCustomer(client, ctx);
+      const customerId = await resolveCustomerId(client, ctx);
 
       // 🔴 FINDING 3 (Codex): THE JOB CARD MUST BE THIS CUSTOMER'S.
       //
@@ -518,12 +438,9 @@ export class SelfServiceService {
         resourceId: created.rows[0]!.id,
         detail: { category: input.category },
       });
-      // Only a STAFF caller may name a customer on the read-back. A customer
-      // must pass undefined so the list re-derives from their session — which
-      // is the whole rule `resolveCustomer` enforces.
-      return WORKSHOP_ROLES.includes(ctx.activeRole as (typeof WORKSHOP_ROLES)[number])
-        ? customerId
-        : undefined;
+      // Staff may name the customer again on the read-back; a customer must
+      // not — see `staffEcho`, which is where that branch now lives.
+      return staffEcho(ctx, customerId);
     });
     return this.listCases(ctx, staffCustomerId);
   }
@@ -545,7 +462,7 @@ export class SelfServiceService {
     { kind: string; title: string; detail: string; href: string; count: number }[]
   > {
     return this.db.withTenant(ctx, async (client) => {
-      const cid = await this.resolveCustomer(client, ctx);
+      const cid = await resolveCustomerId(client, ctx);
       const out: { kind: string; title: string; detail: string; href: string; count: number }[] = [];
 
       const unread = await client.query<{ n: string }>(

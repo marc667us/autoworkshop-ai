@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { nextWarrantyNumber } from './warranty-numbers';
 import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface WarrantyPolicy {
@@ -161,7 +162,7 @@ export class WarrantyService {
       );
       if (!job.rowCount) throw new NotFoundException('no such job card');
 
-      const number = await this.nextNumber(client, ctx, 'WTY', 'warranty.policies', 'policy_number');
+      const number = await nextWarrantyNumber(client, ctx, 'WTY', 'warranty.policies', 'policy_number');
 
       try {
         const created = await client.query<{ id: string }>(
@@ -266,7 +267,7 @@ export class WarrantyService {
       // the ASSESSMENT's job, and refusing at the counter would mean a customer
       // in dispute has no record that they ever asked. Recording it and
       // rejecting it with a reason is honest; turning them away silently is not.
-      const number = await this.nextNumber(client, ctx, 'WCL', 'warranty.claims', 'claim_number');
+      const number = await nextWarrantyNumber(client, ctx, 'WCL', 'warranty.claims', 'claim_number');
 
       const created = await client.query<{ id: string }>(
         `INSERT INTO warranty.claims
@@ -404,24 +405,4 @@ export class WarrantyService {
     };
   }
 
-  /** Locks the organisation row so two desks cannot allocate the same number. */
-  private async nextNumber(
-    client: { query: <T>(text: string, values?: unknown[]) => Promise<{ rows: T[] }> },
-    ctx: TenantContext,
-    prefix: string,
-    table: 'warranty.policies' | 'warranty.claims',
-    column: 'policy_number' | 'claim_number',
-  ): Promise<string> {
-    // Table and column come from a closed set at the call sites and are never
-    // caller text — the same rule `MediaService.OWNER_TABLES` follows.
-    await client.query(`SELECT 1 FROM identity.organizations WHERE id = $1 FOR UPDATE`, [
-      ctx.organizationId,
-    ]);
-    const rows = await client.query<{ next: string }>(
-      `SELECT COALESCE(max(substring(${column} from '[0-9]+$')::bigint), 0) + 1 AS next
-         FROM ${table} WHERE organization_id = $1 AND ${column} LIKE $2`,
-      [ctx.organizationId, `${prefix}-%`],
-    );
-    return `${prefix}-${String(rows.rows[0]!.next).padStart(6, '0')}`;
-  }
 }

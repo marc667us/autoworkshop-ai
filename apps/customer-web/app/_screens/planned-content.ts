@@ -61,42 +61,6 @@ export const CUSTOMER_PLANNED: Record<string, PlannedScreen> = {
     href: '/marketplace',
     hrefLabel: 'Browse parts',
   },
-  '/parts-and-warranty/warranty': {
-    does: 'Shows the warranty covering each completed repair, and when it expires.',
-    now: 'Warranty terms are stated on the repair proposal you approved. Ask the workshop for a copy of a past one.',
-    href: '/service-and-repairs/completed-repairs',
-    hrefLabel: 'See completed repairs',
-  },
-  '/parts-and-warranty/warranty-claims': {
-    does: 'Raises a claim when something covered by warranty fails again, and tracks the workshop’s response.',
-    now: 'Report the problem as a new request and say it is a repeat of an earlier repair — the workshop can see the history.',
-    href: '/service-and-repairs/report-a-problem',
-    hrefLabel: 'Report a problem',
-  },
-  '/payments/quotations': {
-    does: 'Every price the workshop has quoted you, including ones you have not answered yet.',
-    now: 'A quotation reaches you as a repair proposal, with the price and the options to choose between.',
-    href: '/service-and-repairs/repair-proposals',
-    hrefLabel: 'See your proposals',
-  },
-  '/payments/invoices': {
-    does: 'Your invoices, what they cover and what is still outstanding.',
-    now: 'Invoicing is not connected yet — ask the workshop for an invoice for a completed repair.',
-    href: '/service-and-repairs/completed-repairs',
-    hrefLabel: 'See completed repairs',
-  },
-  '/payments/payments': {
-    does: 'Pays the workshop from inside the app and records what you have paid.',
-    now: 'Payments are not connected yet. Pay the workshop directly, however you normally do.',
-    href: '/service-and-repairs/repair-tracking',
-    hrefLabel: 'Track your repairs',
-  },
-  '/payments/receipts': {
-    does: 'A receipt for every payment, downloadable.',
-    now: 'Ask the workshop for a receipt. Keep it with the job number from your request list.',
-    href: '/service-and-repairs/service-requests',
-    hrefLabel: 'Find your job number',
-  },
   '/support/towing': {
     does: 'Requests recovery when a vehicle cannot be driven, and tracks the truck.',
     now: 'Towing partners are not connected yet. Call the workshop — they can arrange recovery for you.',

@@ -1,19 +1,23 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../../_screens/planned-screen';
+import { MyWarrantyScreen } from '../../../_screens/my-warranty-screen';
 
 /**
  * /parts-and-warranty/warranty — `01 (1).txt` §33, the customer workspace.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Slice 12: this was a signpost until the customer could reach their own
+ * records. It is a real screen now — see `my-warranty-screen.tsx`.
  *
- * `requireNavRoute` resolves against the viewer's VISIBLE NAVIGATION and is not
- * authentication — same reasoning as `/my-vehicles/garage`.
+ * `requireNavRoute` RESOLVES THE PATH AGAINST THE VIEWER'S VISIBLE NAVIGATION.
+ * It is not authentication: the §33 tree has no per-role variants, so a
+ * signed-out visitor reaches the page, `apiGet` finds no token and the screen
+ * renders its unauthenticated state. The refusal that matters is in the API —
+ * `resolveCustomerId` derives the customer from the SESSION and never accepts
+ * one from the caller.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
+  // FIRST STATEMENT, BEFORE ANY DATA ACCESS.
   await requireNavRoute('customer', '/parts-and-warranty/warranty');
-  return <PlannedScreen route="/parts-and-warranty/warranty" title="Warranty" />;
+  return <MyWarrantyScreen />;
 }
