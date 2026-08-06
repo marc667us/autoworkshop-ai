@@ -30,31 +30,34 @@ Slice 12 landed; 13-16 did not. The session went deep on LIST A instead —
 A2 (the slice itself), A3 and A5 are closed — and turned up a severity-1
 finding. Said plainly rather than by redefining a slice as smaller.
 
-## 🔴 THE VERY FIRST THING — THE API DEPLOY DID NOT LAND
+## ✅ FULLY DEPLOYED AND VERIFIED ON PRODUCTION
 
-Measured at session close on `https://autoworkshop-api.onrender.com/api/v1`:
+All three links ran. Measured on `https://autoworkshop-api.onrender.com/api/v1`:
 
-    health         200
-    invoices       401    (old build, staff gate present)
-    my/invoices    404    <-- SLICE 12 IS NOT SERVING YET
+    my/invoices  my/payments  my/receipts
+    my/quotations  my/warranty  my/warranty-claims     ALL 401   <- slice 12 IS SERVING
+    users  memberships  appointments
+    walk-ins  customer-feedback                        ALL 401   <- A5 gates live
+    my/nope                                                 404   <- control
 
-`apply-migrations` SUCCEEDED — 053 is live, 53 applied / 0 pending — and the
-code is on master. But **`Deploy API` sat QUEUED on a GitHub runner for 15+
-minutes and never started**, so the running API is still the previous build.
+apex 200 · 53 migrations applied / 0 pending · Release green · `Deploy API`
+green (`31110193262`).
 
-```bash
-C:/Users/USER/bin/gh.exe run list --workflow=deploy-api.yml --limit 3 --repo marc667us/autoworkshop-ai
-# if it never ran:
-C:/Users/USER/bin/gh.exe workflow run deploy-api.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
-# the proof — must be 401, NOT 404:
-curl -s -o /dev/null -w '%{http_code}
-' https://autoworkshop-api.onrender.com/api/v1/my/invoices
-```
+🔴 **401, NOT 404, IS THE PROOF.** A route that 404s while typecheck, lint,
+build and CI are all green is the exact shape of the slice-11 defect. Probe the
+running thing after every deploy.
 
-⚠️ `gh workflow run deploy-api.yml` returned **HTTP 500 and the run started
-anyway**. Check the run list before re-dispatching, or you deploy twice.
+⚠️ **RUNNER SATURATION LOOKS LIKE A BROKEN WORKFLOW.** The first `Deploy API`
+dispatch sat QUEUED for 15+ minutes and `gh run cancel` returned HTTP 500 on
+every attempt. Nothing was wrong with the workflow — CI, Security CI, Release,
+rehearse and apply-migrations had been dispatched at once and used up the
+runner concurrency. A fresh dispatch once they drained picked up a runner in
+21 seconds. **Run `31108990642` is still wedged in `queued` and can be ignored.**
 
-## ▶ THE FIRST THING TO DO AFTER THAT
+⚠️ **`gh workflow run` returned HTTP 500 AND THE RUN STARTED ANYWAY.** Check
+the run list before re-dispatching, or you deploy twice.
+
+## ▶ THE FIRST THING TO DO
 
 **LIST A · A2 — the tenant-isolation suite.** It is listed second in the file
 and should be done FIRST, because it is the thing that would have caught A1 and
