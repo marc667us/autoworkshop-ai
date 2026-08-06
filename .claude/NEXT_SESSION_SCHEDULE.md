@@ -38,6 +38,46 @@ it is applied.**
 
 ---
 
+# ═══ 1b. 🔴 "This information is temporarily unavailable" — REPORTED BY THE OWNER ═══
+
+**Owner saw this on 2026-08-06 evening. It is the `unavailable` branch of
+`ApiFailure` — meaning the API DID NOT RESPOND.** Measured at 19:13 UTC, which
+is OUTSIDE the keep-warm window (08:00–18:00 UTC, Mon–Fri):
+
+```
+API   cold 21.6s -> warm 0.91s
+KC    cold 136s  -> warm 0.68s     (both answered 200)
+```
+
+Nothing is broken. The first request after idle waits for a cold container, and
+something in the chain gives up before it answers.
+
+🔴 **THE OWNER'S FRAMING IS THE RIGHT ONE: if it does not work for the user, it
+is DOWN to the user.** "It is only a cold start" is an explanation, not a
+defence. Stop reporting it as a non-issue.
+
+⚠️ **DO NOT PROPOSE MORE INSTANCE-HOURS.** Owner, 2026-08-06: *"i use the time
+for other thing here not just kc."* The 750-hour allowance is spent on things
+they need. Widening the warm window is NOT the lever, and no paid remedy is to
+be proposed (ADR-012).
+
+▶ **THE ZERO-COST FIX TO INVESTIGATE FIRST — retry once.**
+`packages/next-shell/src/api.ts` sets **no explicit fetch timeout**, and the
+cold path is a ONE-SHOT: it fails, and the user sees the error. But the second
+request is always ~0.9s, because the first one woke the container. So:
+
+  · find what actually gives up (undici `headersTimeout`? Render's edge? Next's
+    own fetch?) — MEASURE it, do not assume;
+  · on `unavailable` ONLY, retry once after a short delay;
+  · the retry must be bounded and must NOT apply to writes (`apiPost`) without
+    thought — a retried write is a double write. READS first.
+
+That turns a 22-second error into a 23-second page load, costs nothing, and
+needs no extra instance-hours.
+
+⚠️ Verify by DRIVING IT: let the API idle >15 min, load a page, and watch what
+the user gets. A unit test cannot reproduce a cold start.
+
 # ═══ 2. THE PRODUCT IS AT 241 of 243 ═══
 
 Re-measure first — `node scripts/audit-menu-coverage.mjs` is the authority.
