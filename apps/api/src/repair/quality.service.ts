@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import {
   QualityInputError,
   mayInspect,
@@ -94,6 +95,11 @@ export class QualityService {
    * being asked, and would be reduced to guessing from the repair notes.
    */
   async queue(ctx: TenantContext) {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role in this same
+    // organisation and the controller carries only TenantGuard. This returns
+    // the WORKSHOP'S queue — added work, costs and internal review notes —
+    // which is not a customer's to browse.
+    assertWorkshopStaff(ctx, 'The workshop quality-control queue');
     return this.db.withTenant(ctx, async (client) => {
       const { rows } = await client.query(
         `SELECT s.id            AS test_session_id,
@@ -167,6 +173,11 @@ export class QualityService {
 
   /** Inspections on a job card, newest attempt first. */
   async listForCard(ctx: TenantContext, jobCardId: string): Promise<QualityInspection[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role in this same
+    // organisation and the controller carries only TenantGuard. This returns
+    // the WORKSHOP'S queue — added work, costs and internal review notes —
+    // which is not a customer's to browse.
+    assertWorkshopStaff(ctx, 'The quality inspections on this repair');
     return this.db.withTenant(ctx, async (client) => {
       const { rows } = await client.query(
         `SELECT q.id, q.job_card_id, j.job_number, q.test_session_id, q.attempt_no,

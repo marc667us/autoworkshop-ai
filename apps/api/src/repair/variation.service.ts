@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import {
   CAN_RAISE_VARIATION,
   CAN_REVIEW_VARIATION,
@@ -82,6 +83,11 @@ export class VariationService {
    * TENANT.
    */
   async list(ctx: TenantContext, jobCardId?: string) {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role in this same
+    // organisation and the controller carries only TenantGuard. This returns
+    // the WORKSHOP'S queue — added work, costs and internal review notes —
+    // which is not a customer's to browse.
+    assertWorkshopStaff(ctx, 'The workshop variations queue');
     return this.db.withTenant(ctx, async (client) => {
       const { rows } = await client.query(
         `SELECT v.*, j.job_number,

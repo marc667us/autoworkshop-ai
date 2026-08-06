@@ -4,6 +4,8 @@ import { FinanceService } from '../finance/finance.service';
 import { MembershipService } from '../identity/membership.service';
 import { UserService } from '../identity/user.service';
 import { ReceptionService } from '../reception/reception.service';
+import { QualityService } from '../repair/quality.service';
+import { VariationService } from '../repair/variation.service';
 import { WarrantyService } from '../warranty/warranty.service';
 import { tenantSessionStatements, type TenantContext } from '../tenancy/tenant-context';
 import { CustomerRecordsService } from './customer-records.service';
@@ -151,6 +153,8 @@ let warranty: WarrantyService;
 let users: UserService;
 let memberships: MembershipService;
 let reception: ReceptionService;
+let quality: QualityService;
+let variations: VariationService;
 
 beforeAll(async () => {
   try {
@@ -284,6 +288,8 @@ beforeAll(async () => {
   users = new UserService(db);
   memberships = new MembershipService(db, noAudit);
   reception = new ReceptionService(db);
+  quality = new QualityService(db);
+  variations = new VariationService(db);
 });
 
 afterAll(async () => {
@@ -432,6 +438,17 @@ describe('slice 12 — a customer reaches their own records and nothing else', (
     );
   });
 
+  dbIt('A5 — a customer is REFUSED the variations and quality-control queues', async () => {
+    // Added work, its cost, and the workshop's internal review notes. Both
+    // controllers carried only TenantGuard.
+    await expect(variations.list(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+    await expect(quality.queue(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+  });
+
   dbIt('A5 — staff still read all of it', async () => {
     // The other half of every gate. A refusal that also refuses the people who
     // need the data is not a fix, it is an outage.
@@ -441,6 +458,8 @@ describe('slice 12 — a customer reaches their own records and nothing else', (
       reception.listAppointments(ctxFor(userA, 'reception_staff')),
     ).resolves.toBeDefined();
     await expect(reception.listFeedback(ctxFor(userA, 'reception_staff'))).resolves.toBeDefined();
+    await expect(variations.list(ctxFor(userA, 'workshop_owner'))).resolves.toBeDefined();
+    await expect(quality.queue(ctxFor(userA, 'quality_controller'))).resolves.toBeDefined();
   });
 
   // ── and staff are not locked out of either question ─────────────────────
