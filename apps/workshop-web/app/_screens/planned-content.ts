@@ -115,36 +115,6 @@ const TECHNICIAN_PLANNED: Record<string, PlannedScreen> = {
   },
 
   // ── §49 Plan Work ─────────────────────────────────────────────────────────
-  '/plan-work/find-parts': {
-    does: 'Searches suppliers for a part that fits the vehicle you are working on.',
-    now: 'The parts marketplace is live and searchable by make, model and year.',
-    href: '/',
-    hrefLabel: 'Search the parts marketplace',
-  },
-  '/plan-work/parts-compatibility': {
-    does: 'Confirms a specific part fits a specific vehicle before it is ordered.',
-    now: 'Marketplace listings carry their own fitment data — filter by make, model and year when you search.',
-    href: '/',
-    hrefLabel: 'Search the parts marketplace',
-  },
-  '/plan-work/tool-reservation': {
-    does: 'Books a shared tool so two technicians do not need it at once.',
-    now: 'Tool booking is not built yet. Agree it with your supervisor.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
-  },
-  '/plan-work/equipment-reservation': {
-    does: 'Books a ramp, a bay or a diagnostic machine for a job.',
-    now: 'Bay and equipment booking is not built yet. Agree it with your supervisor.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
-  },
-  '/plan-work/request-specialist': {
-    does: 'Asks for a specialist — auto electrician, injection, transmission — to look at a job with you.',
-    now: 'Raise a variation on the job explaining what is needed; that reaches the people who can approve it.',
-    href: '/record-work/variation-requests',
-    hrefLabel: 'Raise a variation',
-  },
 
   // ── §49 Learning ──────────────────────────────────────────────────────────
   '/learning/training-courses': {

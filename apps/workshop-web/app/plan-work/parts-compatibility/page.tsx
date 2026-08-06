@@ -1,20 +1,21 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../_screens/planned-screen';
+import { PartsCompatibilityScreen } from '../../_screens/parts-compatibility-screen';
 
 /**
  * /plan-work/parts-compatibility — `07.txt` pt2 §49, the technician's tree.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Slice 14: a signpost until now. Real screen — see `parts-compatibility-screen.tsx`.
  *
  * `requireNavRoute` FIRST, before any data access: a concrete page.tsx resolves
  * ahead of the catch-all and so carries no route check unless it makes one
  * (T-0005 finding 4). A role whose tree lacks this entry still gets a 404.
+ *
+ * NOT the authorization control either way — `PlanningService` calls
+ * `assertWorkshopStaff` on every method.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
   await requireNavRoute('workshop', '/plan-work/parts-compatibility');
-  return <PlannedScreen route="/plan-work/parts-compatibility" title="Parts Compatibility" />;
+  return <PartsCompatibilityScreen />;
 }

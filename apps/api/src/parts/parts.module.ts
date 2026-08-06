@@ -9,6 +9,8 @@ import {
   ToolController,
 } from './parts.controller';
 import { PartsService } from './parts.service';
+import { PlanningController } from './planning.controller';
+import { PlanningService } from './planning.service';
 
 /**
  * The `parts` domain — the workshop's own stock, reservations, requisitions,
@@ -34,8 +36,9 @@ import { PartsService } from './parts.service';
     PurchaseOrderController,
     GoodsReceiptController,
     ToolController,
+    PlanningController,
   ],
-  providers: [PartsService],
-  exports: [PartsService],
+  providers: [PartsService, PlanningService],
+  exports: [PartsService, PlanningService],
 })
 export class PartsModule {}
