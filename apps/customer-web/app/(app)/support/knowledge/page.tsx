@@ -1,19 +1,27 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../../_screens/planned-screen';
+import { MyKnowledgeScreen } from '../../../_screens/my-knowledge-screen';
 
 /**
  * /support/knowledge — `01 (1).txt` §33, the customer workspace.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Slice 13. The screen is shared with the Help Centre's advice section but the
+ * COPY differs, so the wording is passed in rather than branched on the route
+ * inside the component — a screen that inspects its own URL to decide what to
+ * say is a screen with two behaviours and one test.
  *
- * `requireNavRoute` resolves against the viewer's VISIBLE NAVIGATION and is not
- * authentication — same reasoning as `/my-vehicles/garage`.
+ * 🔴 It reads only articles that are BOTH published AND shared. `is_published`
+ * alone is the workshop's technician-facing library.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
   await requireNavRoute('customer', '/support/knowledge');
-  return <PlannedScreen route="/support/knowledge" title="Knowledge and Maintenance Tips" />;
+  return (
+    <MyKnowledgeScreen
+      title="Knowledge"
+      description="Advice your workshop has written for its customers — servicing, common faults and what to do about them."
+      emptyTitle="Nothing published yet"
+      emptyBody="Your workshop has not shared any articles. Message them with a question and they can answer directly."
+    />
+  );
 }

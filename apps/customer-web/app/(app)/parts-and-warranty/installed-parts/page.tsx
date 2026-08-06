@@ -1,19 +1,21 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
-import { PlannedScreen } from '../../../_screens/planned-screen';
+import { MyInstalledPartsScreen } from '../../../_screens/my-installed-parts-screen';
 
 /**
  * /parts-and-warranty/installed-parts — `01 (1).txt` §33, the customer workspace.
  *
- * A CONCRETE page rather than the catch-all, so this route says what it is for
- * and what to do TODAY instead of rendering a generic "not built yet". The
- * wording lives in `planned-content.ts`; see the header there for why.
+ * Slice 13: a signpost until the customer could reach this. Real screen now —
+ * see `my-installed-parts-screen.tsx`.
  *
- * `requireNavRoute` resolves against the viewer's VISIBLE NAVIGATION and is not
- * authentication — same reasoning as `/my-vehicles/garage`.
+ * `requireNavRoute` RESOLVES THE PATH AGAINST THE VIEWER'S VISIBLE NAVIGATION
+ * and is NOT authentication. The refusal that matters is in the API, where the
+ * customer predicate is derived from the SESSION and never accepted from the
+ * caller.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
+  // FIRST STATEMENT, BEFORE ANY DATA ACCESS.
   await requireNavRoute('customer', '/parts-and-warranty/installed-parts');
-  return <PlannedScreen route="/parts-and-warranty/installed-parts" title="Installed Parts" />;
+  return <MyInstalledPartsScreen />;
 }

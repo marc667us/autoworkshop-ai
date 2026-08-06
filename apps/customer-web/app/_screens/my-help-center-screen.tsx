@@ -1,0 +1,131 @@
+import Link from 'next/link';
+import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+import { DataTable, PageHeader } from '@autoworkshop/ui';
+import { primitive, themeVar } from '@autoworkshop/design-tokens';
+
+/**
+ * HELP CENTRE — slice 13.
+ *
+ * ── 🔴 A HELP CENTRE THAT IS NOT A PILE OF INVENTED FAQs ───────────────────
+ *
+ * The tempting build is a dozen hardcoded question-and-answer pairs. Every one
+ * would be a claim about how THIS workshop operates, written by a developer who
+ * has never met them — "we accept card payments", "collection is before 5pm" —
+ * and it would be wrong for most workshops on the platform.
+ *
+ * So this page carries only things that are TRUE BECAUSE THE DATABASE SAYS SO:
+ * the workshop's own published opening hours, and the routes that genuinely
+ * exist for getting help. The workshop's own advice lives on Knowledge, which
+ * they write themselves.
+ *
+ * ⚠️ THE OPENING HOURS ARE THE PUBLISHED ONES. `settings.listOpeningHours`
+ * returns only `is_published` rows and is deliberately readable without a
+ * workshop role — verify/045 check 9 asserts exactly that.
+ */
+
+interface OpeningHourRow {
+  weekday: number;
+  isClosed: boolean;
+  opensAt: string | null;
+  closesAt: string | null;
+  isPublished: boolean;
+}
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** Where a customer can actually get help. Every one of these routes is built. */
+const ROUTES = [
+  {
+    title: 'Something is wrong with my vehicle',
+    detail: 'Report it and the workshop will come back to you with a time.',
+    href: '/service-and-repairs/report-a-problem',
+  },
+  {
+    title: 'My vehicle cannot be driven',
+    detail: 'Request recovery. The workshop sees it immediately.',
+    href: '/support/towing',
+  },
+  {
+    title: 'I want to ask the workshop something',
+    detail: 'Message them directly, or start a voice or video call.',
+    href: '/communication/messages',
+  },
+  {
+    title: 'Something has gone wrong with my service',
+    detail: 'Raise a case — billing, a delay, quality, or anything else.',
+    href: '/support/support-cases',
+  },
+  {
+    title: 'A repair has failed again',
+    detail: 'Claim on the warranty covering it and track the response.',
+    href: '/parts-and-warranty/warranty-claims',
+  },
+  {
+    title: 'What do I owe?',
+    detail: 'Your invoices, what has been paid, and what is outstanding.',
+    href: '/payments/invoices',
+  },
+];
+
+export async function MyHelpCenterScreen() {
+  const hours = await apiGet<OpeningHourRow[]>('customer', '/settings/opening-hours');
+
+  return (
+    <>
+      <PageHeader
+        title="Help Centre"
+        description="How to reach your workshop, and what to do about the thing that brought you here."
+      />
+
+      <div style={{ display: 'grid', gap: '0.75rem', margin: '1rem 0 2rem' }}>
+        {ROUTES.map((r) => (
+          <Link
+            key={r.href}
+            href={r.href}
+            style={{
+              display: 'block',
+              border: `1px solid ${themeVar.borderDefault}`,
+              borderRadius: primitive.radius.md,
+              padding: '0.85rem 1rem',
+              textDecoration: 'none',
+            }}
+          >
+            <strong style={{ display: 'block' }}>{r.title}</strong>
+            <span style={{ color: themeVar.textSecondary, fontSize: '0.9rem' }}>{r.detail}</span>
+          </Link>
+        ))}
+      </div>
+
+      <h2 style={{ fontSize: '1.05rem', margin: '0 0 0.5rem' }}>When the workshop is open</h2>
+      {!hours.ok ? (
+        <ApiFailure reason={hours.reason} workspaceId="customer" />
+      ) : hours.data.filter((h) => h.isPublished).length === 0 ? (
+        // 🔴 SAID PLAINLY. "No hours published" is a fact about this workshop;
+        // inventing 9-to-5 would be a claim about a business we know nothing
+        // about, and a customer would drive there on it.
+        <p style={{ color: themeVar.textSecondary, maxWidth: '60ch' }}>
+          This workshop has not published its opening hours. Message them to ask, or ring the
+          number on your invoice.
+        </p>
+      ) : (
+        <DataTable
+          caption="Published opening hours"
+          rows={hours.data.filter((h) => h.isPublished).sort((a, b) => a.weekday - b.weekday)}
+          rowKey={(r) => String(r.weekday)}
+          columns={[
+            { key: 'day', header: 'Day', nowrap: true, cell: (r) => DAYS[r.weekday] ?? '—' },
+            {
+              key: 'hours',
+              header: 'Hours',
+              nowrap: true,
+              cell: (r) =>
+                r.isClosed || !r.opensAt || !r.closesAt
+                  ? 'Closed'
+                  : `${r.opensAt.slice(0, 5)} – ${r.closesAt.slice(0, 5)}`,
+            },
+          ]}
+        />
+      )}
+    </>
+  );
+}
