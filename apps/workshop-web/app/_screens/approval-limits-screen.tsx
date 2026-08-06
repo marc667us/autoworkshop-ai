@@ -142,17 +142,21 @@ export async function ApprovalLimitsScreen({ route }: { route: string }) {
         />
       )}
 
-      {/* 🔴 THE HONEST NOTE. Deliberately not a footnote in small grey text —
-          it is the single most important thing on this page. */}
+      {/* 🔴 THE HONEST NOTE — still the most important thing on this page,
+          and it now says something different because the code changed. */}
       <div style={{ margin: '1.5rem 0' }}>
-        <StatusBadge kind="attention" label="These limits are recorded, not yet enforced" />
+        <StatusBadge kind="complete" label="Repair approvals are enforced" />
         <p style={{ margin: '0.5rem 0 0', maxWidth: '60ch' }}>
-          The approval path does not read these rows yet, so a decision above a
-          limit is <strong>not</strong> currently blocked. What is written here is the
-          workshop&apos;s stated policy and an audit record of who set it. Until the
-          &ldquo;Applied?&rdquo; column reads <em>Enforced</em>, treat approvals as
-          governed by people rather than by the system — and keep using
-          Tasks and Approvals to see what is waiting.
+          A <strong>repair approval</strong> limit is now applied by the system: when a
+          variation&apos;s extra cost is above the reviewing role&apos;s limit, the internal
+          review is refused and the message names who can approve it instead. The
+          workshop owner is never limited, and a role with <em>no</em> row here is not
+          limited either &mdash; setting a limit is what turns it on.
+        </p>
+        <p style={{ margin: '0.5rem 0 0', maxWidth: '60ch' }}>
+          The other scopes &mdash; quotations, purchase orders and the rest &mdash; are still
+          <strong> recorded only</strong>. The &ldquo;Applied?&rdquo; column tells you which is
+          which, per row, and it reads from the code rather than from a promise.
         </p>
       </div>
 

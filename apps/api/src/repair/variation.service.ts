@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWithinApprovalLimit } from '../authz/approval-limits';
 import { assertWorkshopStaff } from '../authz/workshop-roles';
 import {
   CAN_RAISE_VARIATION,
@@ -224,12 +225,14 @@ export class VariationService {
 
     return this.db.withTenant(ctx, async (client) => {
       const current = await client.query(
-        `SELECT id, status, created_by FROM repair.repair_variations
+        `SELECT id, status, created_by, additional_cost FROM repair.repair_variations
           WHERE id = $1 AND tenant_id = $2 AND organization_id = $3
           FOR UPDATE`,
         [variationId, ctx.tenantId, ctx.organizationId],
       );
-      const row = current.rows[0] as { status: string; created_by: string | null } | undefined;
+      const row = current.rows[0] as
+        | { status: string; created_by: string | null; additional_cost: string }
+        | undefined;
       if (!row) throw new NotFoundException('variation not found');
 
       if (row.created_by !== null && row.created_by === ctx.userId) {
@@ -238,6 +241,16 @@ export class VariationService {
             'internal review by somebody else before the customer is asked',
         );
       }
+
+      // 🔴 THE APPROVAL LIMIT, ENFORCED (A6). This is the moment a workshop
+      // role commits money on a customer's behalf, and `core.approval_limits`
+      // has named a ceiling for it since migration 045 while nothing checked it.
+      // Checked BEFORE the status guard so the answer to "may I approve this?"
+      // does not depend on what state the row happens to be in.
+      await assertWithinApprovalLimit(client, ctx, {
+        amount: Number(row.additional_cost),
+        what: 'This variation',
+      });
 
       if (row.status !== 'draft' && !(send && row.status === 'internally_reviewed')) {
         throw new ConflictException(

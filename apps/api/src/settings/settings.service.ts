@@ -9,6 +9,15 @@ import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
 
 /**
+ * Which approval scopes are actually applied by code today.
+ *
+ * ⚠️ ADD TO THIS ONLY WHEN THE CALL SITE EXISTS. The whole point of the
+ * `isEnforced` flag is that a workshop can tell the difference between a policy
+ * the system applies and a policy it merely stores.
+ */
+const ENFORCED_SCOPES = new Set(['repair_approval']);
+
+/**
  * Settings and workshop admin — slice 6 of `COMPLETION_PLAN.md`.
  *
  * ── 🔴 THESE TABLES STATE POLICY; THEY DO NOT ENFORCE IT ───────────────────
@@ -400,10 +409,14 @@ export class SettingsService {
         scope: x.scope as string,
         maxAmount: String(x.max_amount),
         currency: x.currency as string,
-        // 🔴 HONEST, NOT ASPIRATIONAL. Nothing reads these rows yet. The day the
-        // approval path does, this becomes a lookup — and until then the screen
-        // says so in as many words.
-        isEnforced: false,
+        // 🔴 THAT DAY CAME. `repair_approval` is now read and applied by
+        // `assertWithinApprovalLimit`, at the internal review of a repair
+        // variation — the moment a workshop role commits money on a customer's
+        // behalf. The other scopes are still recorded only, and this stays a
+        // PER-SCOPE lookup rather than a blanket `true`, because a row that
+        // claims enforcement it does not have is the precise failure this
+        // file's header was written to prevent.
+        isEnforced: ENFORCED_SCOPES.has(x.scope as string),
       }));
     });
   }
