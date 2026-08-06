@@ -62,7 +62,36 @@ refuses an explicit id from a customer. Then build the six screens.
 > **Check:** sign in as a customer and see only their own invoices; sign in as a
 > second customer in the same organisation and see none of the first's.
 
-### 🔴 A2. Prove the staff gate from the OUTSIDE, as a customer
+### 🔴 A2. A platform administrator with no membership cannot use the app AT ALL
+Reported 2026-08-07: `admin@` on production got *"your session has ended, you
+were logged out"* on every screen. **The owner worked fine.**
+
+Cause: `resolveTenantContext` requires an ACTIVE MEMBERSHIP, full stop. The
+owner holds `workshop_owner`; `admin@` held none, so `TenantResolutionError` →
+401 → and the product called a perfectly good session dead. `/me` itself uses
+`TenantGuard`, so the whole shell read as signed out.
+
+**The message is fixed and deployed** (`noMembership` is now distinct from
+`unauthenticated`, names the real remedy, and deliberately offers NO sign-in
+link — offering one is what created the loop).
+
+**The DESIGN QUESTION is not fixed, deliberately.** `identity.is_platform_admin()`
+is an escape hatch in every RLS policy in the schema, and the permission matrix
+carries `platform_administrator` — yet a platform admin holding no per-org
+membership cannot resolve a tenant context and so cannot use the application.
+Either:
+  · platform admins bypass membership in `resolveTenantContext` (a real
+    authorization change — it would let one account reach every tenant, so it
+    needs an explicit decision and a negative test), **or**
+  · they are simply expected to hold a membership like anyone else, in which
+    case the onboarding path must SAY so instead of leaving a signed-in account
+    with nowhere to go.
+
+**Immediate workaround that works today:** owner → `/workshop-management/staff`
+→ add by email + role. Verified on production (200, email field, role field).
+The account must have signed up first.
+
+### 🔴 A3. Prove the staff gate from the OUTSIDE, as a customer
 `workshop-roles.spec.ts` tests the predicate. Nothing yet drives the real API
 with a customer bearer token against `/invoices`, `/stock`, `/purchase-orders`.
 
@@ -71,7 +100,7 @@ drive staff paths only, so a workshop screen quietly relying on a customer-role
 session would now refuse and nothing would have caught it. I found no such
 caller; that is not the same as proving there is none.
 
-### 🔴 A3. A6 — the systematic tenant-isolation suite (T-0006)
+### 🔴 A4. A6 — the systematic tenant-isolation suite (T-0006)
 Each of migrations 045–052 carries its own org-isolation checks, but there is no
 single suite over the whole schema. Five schemas landed in one session; the next
 five will land the same way.
@@ -79,21 +108,21 @@ five will land the same way.
 > **Build it to FAIL first** — inject a tenant-wide policy and watch it catch
 > that, the way verify/045 was proven.
 
-### A4. Audit every other service for the SAME ungated-read pattern
+### A5. Audit every other service for the SAME ungated-read pattern
 Three instances found in two passes: settings, knowledge, then finance/warranty/
 parts. `repair/`, `reception/`, `operations/`, `catalogue/`, `identity/` and
 `media/` have **not** been swept. Ask of every `list*`/`get*`: *who may call
 this?*
 
-### A5. The `security-posture.integration.spec.ts` flake
+### A6. The `security-posture.integration.spec.ts` flake
 Failed once during a full `pnpm test`, passed on three subsequent runs including
 the identical command. Nothing was changed, so nothing is claimed fixed. Run the
 full suite a few times; if it recurs, it is real.
 
-### A6. `RENDER_API_KEY` — owner only
+### A7. `RENDER_API_KEY` — owner only
 Leaked in a transcript 2026-07-27, still unrotated. Treat as compromised.
 
-### A7. Two deliberate honesty debts
+### A8. Two deliberate honesty debts
 Approval limits, workflow rules and procedure certification requirements all
 render **"recorded, not enforced"**. That is honest, not finished. Wiring any of
 them into the path that would apply it is real work with real value.
