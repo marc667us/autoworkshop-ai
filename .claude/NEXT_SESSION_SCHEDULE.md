@@ -1,144 +1,130 @@
-# Commencement task — the next session
+# Next session — the to-do list
 
-**Written 2026-08-06 at session close.** Read `.claude/CURRENT_TASK.md` first.
+**Written 2026-08-06 at session close. Tip `f568c35`, tree clean, all pushed.**
 
-## 🔴 THE POLICY THIS SCHEDULE SERVES
-
-Owner: **five slices plus issue resolution every session. Never use the
-scheduler — the owner runs their own. Codex and the Supervisor only; no Google
-ADK, no Stitch.**
+Owner policy: **five slices + issue resolution every session. Never the
+scheduler. Codex and the Supervisor only — no Google ADK, no Stitch.**
 
 ---
 
-# ═══ LIST A IS CLOSED ═══
+# ═══ 1. FIRST THING: FINISH THE DEPLOY ═══
 
-Every item is either fixed and deployed, or is an owner-only action.
+**Migrations 056 + 057 and the API are BUILT, TESTED and PUSHED but NOT
+DEPLOYED.** Nothing is broken — this is unshipped, not failing. GitHub Actions
+was degraded at session close (40–55 min queues, intermittent HTTP 500).
 
-| # | Item | State |
-|---|---|---|
-| A1 | RLS: no organisation predicate on 001–044 | ✅ **migration 054**, 49 tables, restrictive policy. Rehearsed on live, applied. |
-| A2 | Systematic tenant/organisation isolation suite | ✅ `organisation-isolation.integration.spec.ts`, runs in `pnpm test`. Built to FAIL first — it did. |
-| A3 | Prove the staff gate from OUTSIDE, as a customer | ✅ `customer-records.integration.spec.ts` 19/19, proven non-inert. |
-| A4 | `security-posture` flake | ✅ Not seen again across many full runs this session. |
-| A5 | Sweep every service for ungated reads | ✅ All 37 argued: 14 gated, the rest justified **in writing** in the commit. |
-| A6 | "Recorded, not enforced" honesty debts | ✅ Repair approvals now ENFORCED; `isEnforced` is a per-scope lookup. |
-| A7 | `RENDER_API_KEY` unrotated since 2026-07-27 | 🔴 **OWNER ONLY — the one thing left in LIST A.** |
+A chained script was left running and may have completed it. **CHECK FIRST:**
 
-### 🔴 A7 — the only open item, and only the owner can do it
-Leaked in a transcript on 2026-07-27. Treat as compromised until rotated, then
-update the GitHub secret on the repo.
+```bash
+# did it land?  each must be 401, NOT 404
+for p in plan-work/find-parts learning/materials learning/diagnostic-trees; do
+  curl -s -o /dev/null -w "$p %{http_code}\n" https://autoworkshop-api.onrender.com/api/v1/$p
+done
+```
 
-### ⚠️ Still recorded-only, deliberately (not defects)
-`quotation` and `purchase_order` approval scopes are stored but not applied —
-the "Applied?" column on the limits screen says so per row, and the flag reads
-from code (`ENFORCED_SCOPES`) rather than from a promise. Add to that set only
-when the call site exists.
+If they 404, run this IN ORDER:
+
+```bash
+# 0. the 057 rehearsal must show "verify/057: 8 of 8" before applying
+C:/Users/USER/bin/gh.exe run list --workflow=rehearse-migration.yml --limit 2 --repo marc667us/autoworkshop-ai
+# 1. apply BOTH pending migrations (one run applies all pending)
+C:/Users/USER/bin/gh.exe workflow run apply-migrations.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
+# 2. the API
+C:/Users/USER/bin/gh.exe workflow run deploy-api.yml -f confirm=APPLY --repo marc667us/autoworkshop-ai
+```
+
+⚠️ 056 is already rehearsed on live (verify 6/6). **057 must be rehearsed before
+it is applied.**
 
 ---
 
-# ═══ LIST B — REMAINING FEATURE WORK ═══
+# ═══ 2. THE PRODUCT IS AT 241 of 243 ═══
 
-**6 signposted routes, all technician §49, each argued. Measure first: `node scripts/audit-menu-coverage.mjs`.**
+Re-measure first — `node scripts/audit-menu-coverage.mjs` is the authority.
 
-| Tree | Working | % |
+| Tree | Working | |
 |---|---|---|
-| Manager §47 | 36/36 | **100%** |
+| Manager §47 | 36/36 | 100% |
+| **Customer §33** | **35/35** | **100%** |
 | Owner §46 | 63/64 | 98% |
 | Default §34 | 55/56 | 98% |
 | Reception §48 | 28/29 | 97% |
-| **Customer §33** | **35/35** | **100%** ✅ |
-| **Technician §49** | **36/42** | **86%** — 6 left, all argued below |
+| **Technician §49** | **40/42** | **95%** |
 
-### ✅ B1 — CUSTOMER TAIL: DONE (slice 13)
-All 8 routes built. **CUSTOMER §33 is 35/35, 100%, 0 signposted.**
-`/my/*` + `selfservice/customer-scope.ts` is the established pattern — copy it
-for anything customer-facing, and never relax a staff gate to serve a customer.
-
-### ✅ B2 / B3 / part of B5 — DONE (slices 14 + 15)
-Technician §49 **28/42 → 36/42 (86%)**. Planning built (migration 056,
-`parts.resource_bookings`); calendar, component-locations and
-technical-service-information RE-MOUNTED onto screens that already existed.
-
-### 🔴 THE SIX THAT REMAIN — AND WHY THEY ARE NOT SCREENS
-
-**Do not "finish" these by mounting something plausible.** Each is signposted
-because the thing behind it does not exist, and a re-mount would be a lie about
-what the workshop has.
-
-**`/technical-tools/diagnostic-trees` — the artefact does not exist.**
-There is no `knowledge.diagnostic_trees` table and nothing shaped like a
-decision tree. `knowledge.procedures` is a linear step list; `fault_codes` is
-an index. Mounting either under this name would rename a thing rather than
-build one. It is Phase 9 CONTENT work: design the artefact (nodes, branches,
-outcomes), then a screen.
-
-**`/learning/{assessments,audio-guides,technical-videos}` — no media is hosted.**
-`learning.courses` is a REGISTER — title, provider, duration, whether it grants
-a certification. There is no player, no upload, no asset link, and no
-assessment concept anywhere in the schema. Three menu entries promising three
-different media types cannot honestly be served by one register, and an empty
-player is the disconnected mock page `05.txt` §2 forbids.
-▶ **The real decision to make first:** is this platform hosting training media
-(needs storage, an asset per course, a player), or is it RECORDING training done
-elsewhere (needs a link and a completion date)? The second is a small honest
-slice. The first is a module. Ask the owner which.
-
-**`/technical-tools/fault-simulation` + `/repair-solution-simulation` —
-🔴 PHASE 12.** `PLAN_EXTENSION_v1` §3.2 calls this "a module the size of Phase
-5", sequenced after 1.0 because it consumes confirmed diagnostic data.
-**Do not start these as if they were screens.**
+**ONLY TWO SIGNPOSTS REMAIN IN THE WHOLE PRODUCT**, and both are deliberate:
+`/technical-tools/fault-simulation` and `/technical-tools/repair-solution-simulation`.
 
 ---
 
-# EVERY SLICE MUST STILL DELIVER
+# ═══ 3. THE WORK ITSELF — RANKED ═══
 
-`COMPLETION_PLAN.md` §4. The six most often skipped:
+### 🔴 A. `RENDER_API_KEY` — OWNER ONLY, still unrotated since 2026-07-27
+Leaked in a transcript. Treat as compromised. Rotate, then update the GitHub
+secret on the repo. **Nothing else in either list is blocked on the owner.**
 
-1. RLS `ENABLE` **and** `FORCE`, **both** a tenant and an organisation
-   predicate. 🔴 **A new table gets this automatically checked now** — the
-   isolation suite asks the question of EVERY table, so a new one missing the
-   organisation predicate fails `pnpm test`. Add it to
-   `NO_ORG_PREDICATE_EXPECTED` only with a written reason.
-2. A tenant-isolation negative test.
-3. A verify that builds its own tenant, asserts the EFFECT not the mechanism,
-   and refuses to make an RLS claim under a bypassing role.
-4. **Rehearse on live before applying.** One at a time.
-5. The signpost **deleted**, `planned-workshop.spec.ts` still green.
-6. Every new `list*`/`get*` gets `assertWorkshopStaff` **or** an explicit
-   customer predicate. Never neither.
+### B. PHASE 12 — the two simulations (the only unbuilt routes)
+`PLAN_EXTENSION_v1` §3.2: **"a module the size of Phase 5"**, sequenced after
+1.0 because it consumes confirmed diagnostic data. **This is a phase, not a
+slice — do not start it as two screens.**
+▶ First step is a PLAN, not code: what does a fault simulation consume
+(confirmed diagnoses? measurement data the product does not yet capture?), what
+does it produce, and is the diagnostic data rich enough yet? Bring that to the
+owner before building.
 
-# THINGS THAT WILL COST A SESSION IF FORGOTTEN
+### C. THE HONESTY DEBTS THAT REMAIN — real work, real value
+- `quotation` and `purchase_order` approval scopes are **recorded, not
+  enforced**. `repair_approval` now IS enforced — copy that pattern:
+  `authz/approval-limits.ts` + add the scope to `ENFORCED_SCOPES` **only when
+  the call site exists**.
+- Procedure **certification requirements** still render "recorded, not
+  enforced": `knowledge.procedures.requires_certification` and
+  `learning.certifications` both exist, so the join is there to make.
+- **Workflow rules** render "recorded, not yet running".
+
+### D. CONTENT, NOT CODE — the new tables are empty
+057 built the artefacts; nobody has filled them.
+- `knowledge.diagnostic_trees` — worth writing for faults that come back.
+- `learning.course_materials` — the workshop's existing videos/assessments as links.
+These need an AUTHORING screen (workshop-web, admin side) or a seed. Ask the
+owner which they want first.
+
+### E. The tail nobody has looked at
+- Owner §46 63/64, Default §34 55/56, Reception §48 28/29 — one route each.
+  Find them: `node scripts/audit-menu-coverage.mjs --all`.
+- **Playwright has not been re-run since 2026-07-29** and ~120 pages have landed
+  since. That is the largest unmeasured surface in the product.
+
+---
+
+# ═══ 4. TRAPS THAT WILL COST A SESSION ═══
 
 1. **A GREEN BUILD PROVES THE CODE COMPILES, NOT THAT THE FEATURE RAN.**
-   `/my/invoices` answering **401 and not 404** is what proved slice 12 live.
+   **401, not 404**, on the running API is the proof.
+2. 🔴 **THE DEPLOY CHAIN HAS FOUR LINKS.** `Release` deploys the apex
+   (workshop-web) ONLY. **customer-web is `deploy-customer-web.yml`, dispatch-
+   only, nothing triggers it** — it had not run for two days while two slices
+   sat live-on-the-API and invisible.
+3. 🔴 **A QUEUED `apply-migrations` RUN CHECKS OUT MASTER AT RUN TIME.** Land a
+   new migration after dispatching and it applies UNREHEARSED. Cancel and
+   re-dispatch.
+4. **POSTGRES OR-COMBINES PERMISSIVE POLICIES.** An org-scoped permissive policy
+   beside a tenant-only one enforces NOTHING and looks perfect in review. 054
+   uses RESTRICTIVE because those are AND-ed.
+5. **A test needing infrastructure has THREE outcomes** — passed, failed,
+   SKIPPED. Collapsing skip either way turned Release red this session.
+6. **Local is superuser; Render is not.** `SET LOCAL ROLE autoworkshop_app`.
+7. **`gh workflow run` can 500 AND START THE RUN, or 500 and do nothing.** Both
+   happened. Check the run list before re-dispatching.
+8. **A customer is a car owner who brings a vehicle in — NEVER staff.**
+9. **Grep the schema before believing a column or function exists.** Four
+   defects caught that way this session.
+10. **Keycloak cold start is 125–137s**, then 0.5s. It is not down.
 
-0. 🔴 **THE DEPLOY CHAIN HAS *FOUR* LINKS, NOT THREE.** This cost most of a
-   session's confidence on 2026-08-06:
+# ═══ 5. EVERY NEW SLICE STILL OWES ═══
 
-   | What | How | Notes |
-   |---|---|---|
-   | migrations | `apply-migrations.yml -f confirm=APPLY` | rehearse first |
-   | the API | `deploy-api.yml -f confirm=APPLY` | dispatch only |
-   | the apex (**workshop-web**) | `Release`, on push to master | automatic |
-   | **customer-web** | **`deploy-customer-web.yml -f confirm=APPLY`** | **DISPATCH ONLY — nothing triggers it** |
-
-   **`Release` does NOT deploy customer-web.** It had not run since 2026-08-04,
-   so slices 12 AND 13 had live API routes (401, correct) and **screens nobody
-   could see**. Every probe was green and the feature was still not reachable.
-   ⚠️ **If a slice touches `apps/customer-web`, dispatch that workflow.**
-2. **POSTGRES OR-COMBINES PERMISSIVE POLICIES.** Adding an org-scoped permissive
-   policy beside a tenant-only one enforces NOTHING and looks perfect in a diff.
-   054 uses a RESTRICTIVE policy because those are AND-ed.
-3. **A test needing infrastructure has THREE outcomes** — passed, failed,
-   SKIPPED. Collapsing skip into either turned Release red this session. Use
-   `ctx.skip()` and prove both directions.
-4. **Local is superuser; Render is not.** `SET LOCAL ROLE autoworkshop_app` is
-   how an RLS assertion is made to mean something.
-5. **Runner saturation looks exactly like a broken workflow.** A queued run that
-   never starts, plus `gh run cancel` returning HTTP 500, meant five workflows
-   were dispatched at once — not a broken deploy.
-6. **`gh workflow run` can return HTTP 500 AND START THE RUN.** Check the run
-   list before re-dispatching.
-7. **A customer is a car owner who brings a vehicle in — NEVER staff.**
-8. **Grep the schema before believing a column or function exists.**
-9. **Keycloak cold start is 125–137s**, then 0.5s. It is not down.
+RLS `ENABLE`+`FORCE`, **both** predicates (the whole-schema isolation suite now
+checks this automatically) · a tenant-isolation negative test · a verify that
+builds its own tenant and asserts the EFFECT under a non-bypassing role ·
+**rehearse on live** · signpost deleted, `planned-workshop.spec` green · every
+new `list*`/`get*` gets `assertWorkshopStaff` **or** a customer predicate,
+never neither.
