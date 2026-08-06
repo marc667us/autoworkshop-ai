@@ -41,13 +41,19 @@ export async function nextWarrantyNumber(
   // Table and column come from a closed set at the call sites and are never
   // caller text — the same rule `MediaService.OWNER_TABLES` follows. The types
   // above make that a compile-time fact rather than a comment.
-  await client.query(`SELECT 1 FROM identity.organizations WHERE id = $1 FOR UPDATE`, [
-    ctx.organizationId,
-  ]);
+  // ⚠️ TENANT PREDICATE ON BOTH STATEMENTS (Codex). Organisation ids are
+  // globally unique so this is defence in depth rather than a live hole — but
+  // CLAUDE.md §6 asks every tenant-owned query to carry it, and an allocator
+  // that silently locked another tenant's row would be a very quiet bug.
+  await client.query(
+    `SELECT 1 FROM identity.organizations WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+    [ctx.organizationId, ctx.tenantId],
+  );
   const rows = await client.query<{ next: string }>(
     `SELECT COALESCE(max(substring(${column} from '[0-9]+$')::bigint), 0) + 1 AS next
-       FROM ${table} WHERE organization_id = $1 AND ${column} LIKE $2`,
-    [ctx.organizationId, `${prefix}-%`],
+       FROM ${table}
+      WHERE organization_id = $1 AND tenant_id = $3 AND ${column} LIKE $2`,
+    [ctx.organizationId, `${prefix}-%`, ctx.tenantId],
   );
   return `${prefix}-${String(rows.rows[0]!.next).padStart(6, '0')}`;
 }

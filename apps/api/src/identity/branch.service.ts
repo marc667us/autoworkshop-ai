@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface Branch {
   id: string;
@@ -51,6 +52,10 @@ export class BranchService {
 
   /** Branches in the active tenant, optionally narrowed to one organization. */
   async list(ctx: TenantContext, organizationId?: string): Promise<Branch[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The workshop branch list');
     return this.db.withTenant(ctx, async (client) => {
       const res = organizationId
         ? await client.query(
@@ -72,6 +77,10 @@ export class BranchService {
   }
 
   async findById(ctx: TenantContext, id: string): Promise<Branch> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'This branch');
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT id, organization_id, name, location, operating_hours, status, created_at

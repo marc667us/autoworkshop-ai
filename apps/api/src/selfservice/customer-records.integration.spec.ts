@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool, type PoolClient } from 'pg';
 import { FinanceService } from '../finance/finance.service';
+import { MembershipService } from '../identity/membership.service';
+import { UserService } from '../identity/user.service';
+import { ReceptionService } from '../reception/reception.service';
 import { WarrantyService } from '../warranty/warranty.service';
 import { tenantSessionStatements, type TenantContext } from '../tenancy/tenant-context';
 import { CustomerRecordsService } from './customer-records.service';
@@ -128,6 +131,9 @@ let client: PoolClient | null = null;
 let records: CustomerRecordsService;
 let finance: FinanceService;
 let warranty: WarrantyService;
+let users: UserService;
+let memberships: MembershipService;
+let reception: ReceptionService;
 
 beforeAll(async () => {
   try {
@@ -247,10 +253,17 @@ beforeAll(async () => {
     )
   ).rows[0]!.id;
 
+  // ⚠️ FinanceService and WarrantyService take the DB ONLY — they do not audit
+  // reads. Passing a second argument ran fine under vitest (JavaScript ignores
+  // it) and was caught only by `tsc`. Worth the note: "the test passed" and
+  // "the call was correct" are different statements.
   const db = new OneTransactionDb(client) as never;
   records = new CustomerRecordsService(db, noAudit);
-  finance = new FinanceService(db, noAudit);
-  warranty = new WarrantyService(db, noAudit);
+  finance = new FinanceService(db);
+  warranty = new WarrantyService(db);
+  users = new UserService(db);
+  memberships = new MembershipService(db, noAudit);
+  reception = new ReceptionService(db);
 });
 
 afterAll(async () => {
@@ -350,6 +363,60 @@ describe('slice 12 — a customer reaches their own records and nothing else', (
     await expect(finance.listInvoices(ctxFor(userA, 'customer'))).rejects.toThrow(
       /your own pages/i,
     );
+  });
+
+  // ── A5: THE SAME PATTERN, FOUND IN FIVE MORE SERVICES ───────────────────
+  //
+  // 🔴 A CUSTOMER IS A CAR OWNER WHO BRINGS A VEHICLE IN. They are not staff,
+  // and the workshop's own registers are not theirs to read. Sweeping the
+  // services LIST A item A5 named turned up eleven more ungated reads behind
+  // controllers carrying only `TenantGuard`:
+  //
+  //   · `/users` and `/memberships` — THE STAFF ROSTER, WITH EMAILS. The same
+  //     data the security-posture leak exposed on 2026-08-07, still open by a
+  //     different door.
+  //   · `/appointments`, `/walk-ins`, `/customer-feedback` — OTHER CUSTOMERS'
+  //     names, vehicles, times and complaints. Customer-to-customer PII.
+  //   · `/service-bays`, `/branches`, `/organizations` — workshop internals.
+  //
+  // Every consumer of these is workshop-web or admin-web, both staff
+  // workspaces, so gating them breaks no customer screen — checked before
+  // changing anything, because a gate that walls a real caller is the defect
+  // class this repository has paid the most for.
+
+  it('A5 — a customer is REFUSED the staff roster', async () => {
+    await expect(users.list(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+    await expect(memberships.list(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+  });
+
+  it('A5 — a customer is REFUSED the appointment book and walk-in register', async () => {
+    await expect(reception.listAppointments(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+    await expect(reception.listWalkIns(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+  });
+
+  it('A5 — a customer is REFUSED other customers feedback', async () => {
+    await expect(reception.listFeedback(ctxFor(userA, 'customer'))).rejects.toThrow(
+      /belongs to the workshop/i,
+    );
+  });
+
+  it('A5 — staff still read all of it', async () => {
+    // The other half of every gate. A refusal that also refuses the people who
+    // need the data is not a fix, it is an outage.
+    await expect(users.list(ctxFor(userA, 'workshop_owner'))).resolves.toBeDefined();
+    await expect(memberships.list(ctxFor(userA, 'workshop_owner'))).resolves.toBeDefined();
+    await expect(
+      reception.listAppointments(ctxFor(userA, 'reception_staff')),
+    ).resolves.toBeDefined();
+    await expect(reception.listFeedback(ctxFor(userA, 'reception_staff'))).resolves.toBeDefined();
   });
 
   // ── and staff are not locked out of either question ─────────────────────

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface TenantUser {
   id: string;
@@ -51,6 +52,10 @@ export class UserService {
    * screen lists people, not role assignments.
    */
   async list(ctx: TenantContext): Promise<TenantUser[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The workshop staff directory');
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT u.id,
@@ -81,6 +86,10 @@ export class UserService {
    * services, arrived at through the join instead of through a policy.
    */
   async findById(ctx: TenantContext, id: string): Promise<TenantUser> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'This staff record');
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT u.id,

@@ -187,11 +187,15 @@ export class CustomerRecordsService {
            LEFT JOIN core.vehicles    v ON v.id = j.vehicle_id
            LEFT JOIN LATERAL (
              SELECT COALESCE(sum(amount), 0) AS paid_total
-               FROM finance.payments WHERE invoice_id = i.id
+               FROM finance.payments
+              WHERE invoice_id = i.id
+                AND tenant_id = i.tenant_id AND organization_id = i.organization_id
            ) p ON true
            LEFT JOIN LATERAL (
              SELECT COALESCE(sum(amount), 0) AS credited_total
-               FROM finance.credit_notes WHERE invoice_id = i.id
+               FROM finance.credit_notes
+              WHERE invoice_id = i.id
+                AND tenant_id = i.tenant_id AND organization_id = i.organization_id
            ) cr ON true
           WHERE i.tenant_id = $1 AND i.organization_id = $2 AND i.customer_id = $3
             AND i.status <> 'draft'
@@ -220,11 +224,15 @@ export class CustomerRecordsService {
            LEFT JOIN core.vehicles    v ON v.id = j.vehicle_id
            LEFT JOIN LATERAL (
              SELECT COALESCE(sum(amount), 0) AS paid_total
-               FROM finance.payments WHERE invoice_id = i.id
+               FROM finance.payments
+              WHERE invoice_id = i.id
+                AND tenant_id = i.tenant_id AND organization_id = i.organization_id
            ) p ON true
            LEFT JOIN LATERAL (
              SELECT COALESCE(sum(amount), 0) AS credited_total
-               FROM finance.credit_notes WHERE invoice_id = i.id
+               FROM finance.credit_notes
+              WHERE invoice_id = i.id
+                AND tenant_id = i.tenant_id AND organization_id = i.organization_id
            ) cr ON true
           WHERE i.id = $4 AND i.tenant_id = $1 AND i.organization_id = $2
             AND i.customer_id = $3 AND i.status <> 'draft'`,
@@ -312,9 +320,13 @@ export class CustomerRecordsService {
            FROM finance.payments p
            JOIN finance.invoices i ON i.id = p.invoice_id AND i.tenant_id = p.tenant_id
            LEFT JOIN finance.receipts rc ON rc.payment_id = p.id
+                                        AND rc.tenant_id = p.tenant_id
+                                        AND rc.organization_id = p.organization_id
            LEFT JOIN LATERAL (
              SELECT COALESCE(sum(amount), 0) AS refunded_total
-               FROM finance.refunds WHERE payment_id = p.id
+               FROM finance.refunds
+              WHERE payment_id = p.id
+                AND tenant_id = p.tenant_id AND organization_id = p.organization_id
            ) rf ON true
           WHERE p.tenant_id = $1 AND p.organization_id = $2 AND i.customer_id = $3
           ORDER BY p.received_at DESC`,
@@ -404,6 +416,7 @@ export class CustomerRecordsService {
              SELECT COALESCE(sum(line_total), 0) AS total
                FROM repair.quotation_lines
               WHERE quotation_id = q.id AND NOT is_optional
+                AND tenant_id = q.tenant_id AND organization_id = q.organization_id
            ) t ON true
           WHERE rp.tenant_id = $1 AND rp.organization_id = $2
             AND j.customer_id = $3
@@ -457,7 +470,10 @@ export class CustomerRecordsService {
         `SELECT p.id, p.policy_number, p.cover_summary, p.starts_on, p.expires_on,
                 p.expires_at_odometer, p.status,
                 j.job_number, v.registration_number,
-                (SELECT count(*) FROM warranty.claims cl WHERE cl.policy_id = p.id) AS claim_count,
+                (SELECT count(*) FROM warranty.claims cl
+                  WHERE cl.policy_id = p.id
+                    AND cl.tenant_id = p.tenant_id
+                    AND cl.organization_id = p.organization_id) AS claim_count,
                 CASE WHEN p.expires_on IS NULL THEN NULL
                      ELSE (p.expires_on - current_date) END AS days_remaining
            FROM warranty.policies p

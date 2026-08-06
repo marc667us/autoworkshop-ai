@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface Organization {
   id: string;
@@ -30,6 +31,10 @@ export class OrganizationService {
   ) {}
 
   async list(ctx: TenantContext): Promise<Organization[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The organisations in this tenant');
     return this.db.withTenant(ctx, async (client) => {
       // CLAUDE.md §6 requires BOTH layers: the application filters, and RLS is
       // the backstop. This query used to be left bare with a comment claiming
@@ -53,6 +58,10 @@ export class OrganizationService {
   }
 
   async findById(ctx: TenantContext, id: string): Promise<Organization> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'This organisation');
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT id, name, org_type, status, created_at

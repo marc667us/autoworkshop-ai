@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 
 export interface Membership {
   id: string;
@@ -83,6 +84,10 @@ export class MembershipService {
   ) {}
 
   async list(ctx: TenantContext, filter: { userId?: string; organizationId?: string } = {}) {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The workshop membership roster');
     return this.db.withTenant(ctx, async (client) => {
       // CLAUDE.md §6: the application filters AND RLS backstops it. Seeded
       // rather than appended, so the tenant predicate cannot go missing when

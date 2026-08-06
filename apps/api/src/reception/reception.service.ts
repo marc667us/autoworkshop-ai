@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import {
   ReceptionInputError,
   mayConfigureBays,
@@ -117,6 +118,10 @@ export class ReceptionService {
   // ── service bays ──────────────────────────────────────────────────────────
 
   async listBays(ctx: TenantContext, opts: { includeRetired?: boolean } = {}): Promise<ServiceBay[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The workshop service bays');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<{
         id: string; name: string; bay_type: string; notes: string | null; is_active: boolean;
@@ -202,6 +207,10 @@ export class ReceptionService {
     ctx: TenantContext,
     opts: { from?: string; to?: string; status?: string } = {},
   ): Promise<Appointment[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The workshop appointment book');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT a.id, a.customer_id, c.display_name AS customer_name,
@@ -386,6 +395,10 @@ export class ReceptionService {
   // ── walk-ins ──────────────────────────────────────────────────────────────
 
   async listWalkIns(ctx: TenantContext, opts: { status?: string } = {}): Promise<WalkIn[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'The workshop walk-in register');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT w.id, w.contact_name, w.contact_phone, w.vehicle_description,
@@ -486,6 +499,10 @@ export class ReceptionService {
   // ── customer feedback ─────────────────────────────────────────────────────
 
   async listFeedback(ctx: TenantContext): Promise<CustomerFeedback[]> {
+    // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
+    // this same organisation and the controller carries only TenantGuard —
+    // who you are, not what you may do. See `authz/workshop-roles.ts`.
+    assertWorkshopStaff(ctx, 'Customer feedback given to the workshop');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `SELECT f.id, f.job_card_id, f.customer_id, c.display_name AS customer_name,

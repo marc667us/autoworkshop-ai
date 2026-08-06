@@ -329,10 +329,14 @@ export class SelfServiceService {
     const staffCustomerId = await this.db.withTenant(ctx, async (client) => {
       const customerId = await resolveCustomerId(client, ctx);
       const r = await client.query(
+        // ⚠️ `tenant_id` TOO (Codex). Organisation + customer alone leaves the
+        // statement relying entirely on RLS for tenant isolation, and CLAUDE.md
+        // §6 requires BOTH layers — the application filters, RLS backstops it.
         `UPDATE core.authorized_drivers
             SET is_active = false, withdrawn_at = now(), updated_by = $4, updated_at = now()
-          WHERE id = $1 AND organization_id = $2 AND customer_id = $3 AND is_active`,
-        [id, ctx.organizationId, customerId, ctx.userId],
+          WHERE id = $1 AND organization_id = $2 AND customer_id = $3
+            AND tenant_id = $5 AND is_active`,
+        [id, ctx.organizationId, customerId, ctx.userId, ctx.tenantId],
       );
       if (r.rowCount === 0) {
         throw new NotFoundException('That authorisation is not one of yours, or is already withdrawn.');
