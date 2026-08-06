@@ -7,7 +7,7 @@ import {
   fetchStats,
   fetchVin,
 } from '@autoworkshop/marketplace-ui';
-import { currentViewer } from '@autoworkshop/next-shell';
+import { currentViewer, viewerHasSession } from '@autoworkshop/next-shell';
 
 /**
  * `/` — THE PUBLIC FRONT DOOR, ON THE APP THAT OWNS THE APEX.
@@ -92,10 +92,49 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
   // read a cookie that CANNOT EXIST on this host — and would pass every local
   // test, because localhost:3000 and :3001 share one jar. That exact mistake has
   // been made three times in this repository.
-  const viewerDescription = await currentViewer('workshop');
-  const viewer = viewerDescription
+  // 🔴 THE SESSION DECIDES WHETHER THEY ARE SIGNED IN. `/me` ONLY SUPPLIES THE
+  // NAME. This is Solar's pattern, and it is here because the obvious version
+  // produced the owner's "there is no button to the dashboard" report.
+  //
+  // What this line used to be:
+  //
+  //     const viewerDescription = await currentViewer('workshop');
+  //     const viewer = viewerDescription ? { ... } : null;
+  //
+  // `currentViewer()` fetches `GET /api/v1/me`. The API sleeps on Render's free
+  // tier and answers in 21.6s cold, so that call returns null whenever the
+  // owner is the first visitor after a quiet period — which, with no other
+  // users, is EVERY TIME. `viewer: null` is the STRANGER variant, so a signed-in
+  // owner was shown the signed-out landing with no way through to their own
+  // dashboard. The comment here used to claim "a null here costs nothing but
+  // the personalised copy"; it cost the dashboard button.
+  //
+  // Solar has never had this failure because it never asks a remote service who
+  // is looking (`web_app.py:1074`):
+  //
+  //     def current_user():
+  //         if "user_id" not in session:
+  //             return None          # ← the SESSION, read locally
+  //         ...load the row...
+  //
+  //     {% if user %} Go to Dashboard {% else %} Start Free {% endif %}
+  //
+  // `viewerHasSession()` is the exact analogue: it reads this workspace's
+  // session cookie and makes NO network call, so it cannot fail because a
+  // container is asleep. `/me` is still asked, still in parallel, and still
+  // supplies the display name — but it is no longer allowed to decide identity.
+  //
+  // ⚠️ THE DEGRADED STATE IS "SIGNED IN, NAME UNKNOWN", NEVER "STRANGER". A
+  // transport failure is not an authorization fact. This is the fourth time in
+  // this repository that a failed read has been rendered as a confident claim
+  // about who somebody is.
+  const [viewerDescription, signedIn] = await Promise.all([
+    currentViewer('workshop'),
+    viewerHasSession('workshop'),
+  ]);
+  const viewer = signedIn
     ? {
-        displayName: viewerDescription.displayName ?? null,
+        displayName: viewerDescription?.displayName ?? null,
         dashboardHref: '/home/dashboard',
       }
     : null;
