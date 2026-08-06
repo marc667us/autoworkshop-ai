@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { themeVar, primitive } from '@autoworkshop/design-tokens';
+import { breakpoint, themeVar, primitive } from '@autoworkshop/design-tokens';
 import {
   breadcrumbsFor,
   defaultExpanded,
@@ -84,9 +84,53 @@ export interface AppShellProps {
     title?: string;
   }) => React.ReactNode;
   children: React.ReactNode;
-  /** §2 "Contextual Drawers or Panels" — e.g. the AI assistant (§13). */
+  
+/** §2 "Contextual Drawers or Panels" — e.g. the AI assistant (§13). */
   drawer?: React.ReactNode;
 }
+
+/**
+ * 🔴 THE SHELL MUST BE RIGHT BEFORE JAVASCRIPT RUNS.
+ *
+ * `useIsMobile()` is deliberately `false` on the server and on the first client
+ * render, to avoid a hydration mismatch — see `useMediaQuery.ts`, which states
+ * the trade honestly: "the first paint is always the desktop layout, corrected
+ * within a frame."
+ *
+ * On a PHONE that trade is not one frame of cosmetic difference. The desktop
+ * branch renders the side navigation as a persistent ~16rem FLEX CHILD, so on a
+ * 390px screen `main` is left with about 130px and the page looks cut in half.
+ * Owner, 2026-08-06: "app interfaces do[n't a]lign with phone screen, half of
+ * page is missing." If hydration is slow — a cold API, a bad connection — or
+ * fails, it NEVER corrects.
+ *
+ * 🔴 AND THE CONTEXTUAL PANEL WAS WORSE: `width: 20rem; flex-shrink: 0` with NO
+ * mobile branch at all. That stole 320px of a 390px screen permanently,
+ * hydrated or not. No amount of JavaScript was ever going to fix it.
+ *
+ * CSS fixes both because it applies at PARSE time, with no JavaScript at all.
+ * The JS branch stays — the drawer genuinely needs a focus trap and aria-modal,
+ * which CSS cannot express — but layout no longer depends on it.
+ *
+ * ⚠️ THE BREAKPOINT MATCHES `useIsMobile()`. If these two disagree there is a
+ * band of widths where CSS hides the column and JS still renders it inline, or
+ * the reverse — which is the nav/router divergence this shell has paid for
+ * before, one layer down.
+ */
+const SHELL_RESPONSIVE_CSS = `
+@media (max-width: ${parseInt(breakpoint.tabletPortrait, 10) - 1}px) {
+  [data-aw-shell-nav] { display: none !important; }
+  [data-aw-shell-panel] {
+    width: 100% !important;
+    flex-shrink: 1 !important;
+    border-left: 0 !important;
+    position: static !important;
+    height: auto !important;
+  }
+  [data-aw-shell-row] { flex-wrap: wrap !important; }
+  [data-aw-shell-main] { flex-basis: 100% !important; }
+}
+`;
 
 export function AppShell({
   workspace,
@@ -192,7 +236,7 @@ export function AppShell({
     <div style={{ minHeight: '100vh', background: themeVar.backgroundPrimary, color: themeVar.textPrimary }}>
       {/* Keyframes for the drawer/dialog animations. Rendered once, here, so
           every overlay in the app shares one definition. */}
-      <style dangerouslySetInnerHTML={{ __html: overlayKeyframes }} />
+      <style dangerouslySetInnerHTML={{ __html: overlayKeyframes + SHELL_RESPONSIVE_CSS }} />
 
       {/* Skip link — a 14-group side nav is a long tab detour before the
           content on every single page. WCAG 2.4.1. */}
@@ -247,7 +291,7 @@ export function AppShell({
         organizationSwitcher={organizationSwitcher}
       />
 
-      <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+      <div data-aw-shell-row style={{ display: 'flex', alignItems: 'flex-start' }}>
         {hideSideNav ? null : isMobile ? (
           <Drawer
             open={mobileNavOpen}
@@ -262,11 +306,17 @@ export function AppShell({
             {sideNav}
           </Drawer>
         ) : (
-          sideNav
+          // 🔴 WRAPPED, so the CSS above can hide this column on a narrow
+          // viewport BEFORE any JavaScript runs. Without the wrapper there is
+          // no element to select: `sideNav` is a component, and the server
+          // renders this branch on every device because `useIsMobile()` is
+          // false until hydration.
+          <div data-aw-shell-nav>{sideNav}</div>
         )}
 
         <main
           id="main-content"
+          data-aw-shell-main
           style={{
             flex: 1,
             minWidth: 0,
@@ -283,6 +333,7 @@ export function AppShell({
         {drawer ? (
           <aside
             aria-label="Contextual panel"
+            data-aw-shell-panel
             style={{
               width: '20rem',
               flexShrink: 0,
