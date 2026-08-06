@@ -44,19 +44,6 @@ const TECHNICIAN_PLANNED: Record<string, PlannedScreen> = {
     href: '/home/my-assigned-work',
     hrefLabel: 'My assigned work',
   },
-  '/home/calendar': {
-    does: 'Your day and week: the jobs booked in, and when each is expected out.',
-    // 🔴 POINTED AT `/home/my-assigned-work` UNTIL 2026-08-05, AND THAT WAS A WALL.
-    // `/home/calendar` is in FOUR trees (default, owner, reception, technician);
-    // `/home/my-assigned-work` is in the TECHNICIAN tree only. So an owner, a
-    // manager or a receptionist was told to go somewhere that 404s for them —
-    // the exact defect class this repo calls its most expensive, shipped on a
-    // screen written to avoid it. Found by `planned-workshop.spec.ts` on its
-    // first run, which is the argument for having written that test.
-    now: 'Scheduling is a later phase. Each job card carries its own expected completion date, and the dashboard shows what is live right now.',
-    href: '/home/dashboard',
-    hrefLabel: 'Dashboard',
-  },
 
   // ── §49 Technical Tools — the Phase 9 knowledge libraries ────────────────
   '/technical-tools/fault-and-repair-knowledge-base': {
@@ -83,23 +70,11 @@ const TECHNICIAN_PLANNED: Record<string, PlannedScreen> = {
     href: '/home/my-assigned-work',
     hrefLabel: 'My assigned work',
   },
-  '/technical-tools/component-locations': {
-    does: 'Where each component physically sits on this make and model.',
-    now: 'Licensed content, not included yet. Use the workshop’s own manuals.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
-  },
   '/technical-tools/repair-procedures-library': {
     does: 'The approved procedure for a given repair, with torque figures and the order of work.',
     now: 'The repair plan on each job lists the tasks agreed for it, which is the procedure for that vehicle.',
     href: '/plan-work/repair-planning',
     hrefLabel: 'Repair planning',
-  },
-  '/technical-tools/technical-service-information': {
-    does: 'Manufacturer bulletins and recalls affecting the vehicle.',
-    now: 'Licensed content, not included yet. Check the manufacturer’s own portal.',
-    href: '/home/my-assigned-work',
-    hrefLabel: 'My assigned work',
   },
   '/technical-tools/fault-simulation': {
     does: 'Simulates a fault on a model of the vehicle so you can see what it would do before dismantling anything.',
