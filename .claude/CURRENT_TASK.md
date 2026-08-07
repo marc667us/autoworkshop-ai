@@ -1,7 +1,6 @@
 # Current task — resume here
 
-**Written 2026-08-06 at session close. Tip `72bae51` on `master`, pushed, tree
-clean.** (A later commit adds this file; the tip moves, master stays clean.)
+**Written 2026-08-07 (pt2), after the deploy chain was driven end to end.**
 
 ## ▶ FIRST COMMAND OF THE SESSION
 
@@ -11,141 +10,108 @@ bash scripts/start-session.sh
 
 ### 🔴 HARD POLICY — owner
 **Five slices plus issue resolution every session. Never use the scheduler.**
-**Codex and the Supervisor only — NO Google ADK, NO Stitch.** The no-ADK rule
-covers BUILDING, not just opening it as a tool; see
-`docs/00-project/CUSTOMER_VALUE_CHAIN.md`.
+**Codex and the Supervisor only — NO Stitch.** Google ADK is permitted for
+Phase 8 only (owner, 2026-08-07 — see the amendment in ADR-018); it is NOT to
+be used for the customer value chain, which is deterministic services.
 
 ---
 
-## ▶ THE ONE THING TO DO FIRST — THE 45-SCREEN LEAK
+## ✅ WHAT IS ACTUALLY LIVE NOW (measured, not assumed)
 
-🔴 **A signed-in `customer` on workshop-web sees 45 of 45 workshop staff
-screens.** Measured 2026-08-06, not theorised. Permission filtering removes
-NOTHING, because every item in the workshop default tree is ungated. The list
-includes **Customers** (the whole customer book), **Vehicles**, Job Cards,
-Technicians, Quotations, Customer Proposals, Parts Depot, Procurement,
-Suppliers, Warranty Claims and four Reports screens.
+The whole chain built on 2026-08-06/07 is **deployed**:
 
-**Everything you need is already scoped in
-`docs/00-project/CUSTOMER_VALUE_CHAIN.md` — read it before touching code.** It
-names the four call sites, the trap, and the proof.
+| Link | State |
+|---|---|
+| `apply-migrations` | **056, 057, 058, 059 applied.** 59 total, 0 pending |
+| `deploy-api` | deployed; every new endpoint family answers **401, not 404** |
+| `deploy-customer-web` | deployed; `/service-and-repairs/request-service` → **200** |
+| `Release` (apex) | deployed; the landing carries the owner's button |
 
-Reproduce in four lines. It returns **45 today**, so it fails for the right
-reason and cannot pass vacuously:
-
-```ts
-import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
-const ws = workspaceForRole(getWorkspace('workshop')!, undefined);
-let n = 0;
-for (const g of visibleGroups(ws, [])) n += g.items.length;   // 45 before, 0 after
-```
-(Run it as a temporary `*.test.ts` inside `packages/navigation/src/` — imports
-resolve there. A script at the repo root does NOT resolve `@autoworkshop/*`.)
-
-### Why it is a slice and not a patch
-`ROLE_TO_NAV` (`viewer-contract.ts:76`) maps only the **8 workshop staff roles**.
-The other six — `customer`, `supplier_owner`, `fleet_administrator`,
-`insurance_assessor`, `towing_operator`, `platform_administrator` — return
-`undefined` from `navRoleFor()`, and `workspaceForRole(base, undefined)` returns
-the DEFAULT staff tree.
-
-There is no value of `role` meaning "this viewer has no business here":
-- `undefined` already means "staff role not yet resolved" → default tree.
-- a missing workspace already means "configuration error" and renders an error
-  screen — wrong for a customer who is legitimately signed in.
-
-So it needs a **third state**, in four places, landing together:
-1. `packages/next-shell/src/viewer-contract.ts` — separate "not a workshop role"
-   from "unresolved".
-2. `packages/next-shell/src/WorkspaceShell.tsx:156-159` — a "signed in, but this
-   workspace is not yours" state, distinct from the configuration-error screen.
-   ⚠️ It is a CLIENT component and takes `role` as a prop.
-3. `packages/next-shell/src/require-route.ts` — refuse, `notFound()`.
-4. The app layout — send the customer somewhere useful, not into a wall.
-
-⚠️ **BOTH HALVES SHIP TOGETHER.** Gate only → 45 menu entries that 404, the
-signpost-that-404s failure this repo has paid for three times. Nav only → hidden
-but not refused, which CLAUDE.md §8 forbids by name.
-
-⚠️ **`platform_administrator` IS IN THE SAME UNMAPPED SET.** Sweeping all six
-risks locking admins out; there is prior history of admins being unusable
-without a membership. Decide that role separately.
-
-⚠️ **THIS MEASURED THE NAVIGATION, NOT THE DATA.** Whether the API and RLS refuse
-what is behind those 45 screens is UNCHECKED. It may be 45 empty screens rather
-than 45 leaking ones — that changes the severity, not the need. Drive it in a
-browser as a real customer.
+⚠️ **FOUR migrations were pending, not two.** 056 and 057 were recorded as
+dispatched on 2026-08-06 and had never been applied — so `/plan-work/*` and
+`/learning/*` had been deployed against tables that did not exist. Check the
+LEDGER (`apply-migrations` with no `confirm`), never the note that says a
+workflow was dispatched.
 
 ---
 
-## ▶ THEN: THE CUSTOMER VALUE CHAIN
+## ▶ THE NEXT SLICE — ONE PRESS, NOT TWO
 
-`docs/00-project/CUSTOMER_VALUE_CHAIN.md` holds the owner's full journey, given
-verbally on 2026-08-06: landing → free search for a workshop or mechanic →
-choose or be assigned → **Request for Service** → file complaint + car details +
-problem → **submit WHILE SIGNED IN** → lands at reception → an agent registers
-the customer and their vehicles and assigns the work → an orchestrated agent runs
-the repair with the workshop's other agents.
+Signed OUT, "Request repair service" goes to `/api/auth/register`, which sends
+the visitor to Keycloak with `redirect_uri = <apex>/api/auth/callback/keycloak`.
+They register and land back on **the apex**, not on the form. The second press
+of the same button (now the signed-in variant) takes them to the form.
 
-**Owner's framing:** *"customer is the initiator of the value chain of this app
-in this case the auto repair business."* That is also the argument for the leak
-fix — a customer is not a degraded staff role.
+Nothing carries a destination through registration: there is no `next` on the
+href and **no callback-url mechanism anywhere in `packages/auth`** — grepped.
+The comment in `marketplace-landing.tsx` that claimed otherwise is corrected.
 
-**The customer's own three requests** (all customer-web, NONE verified yet):
+▶ Making it one press means carrying an intent through the Auth.js callback.
+**It was deliberately NOT shipped unverified**: proving it requires driving a
+real registration, which creates a real Keycloak account. Plan it, then drive it.
+
+⚠️ The form has **no signed-out branch at all**. A stranger reaching it gets a
+rendered form (`/vehicles` 401s and is swallowed to an empty garage), fills it
+in, and only learns they need an account when they submit. That is worth a
+guard on the same slice.
+
+---
+
+## ▶ THEN: THE CUSTOMER'S OWN THREE REQUESTS — still NONE verified
+
+From `docs/00-project/CUSTOMER_VALUE_CHAIN.md`:
 1. Sign in to **view AND add** complaints.
-2. **Add / register their own vehicles** — self-service AND agent-driven, both.
+2. **Add / register their own vehicles** — self-service AND agent-driven.
 3. **Repair status on every section and card**, not one status page.
 
 ⚠️ Customer §33 audits 35/35, but that is MENU COVERAGE — every entry has a
 working page. It says nothing about whether these three exist. Check first.
 
-🔴 **NO GOOGLE ADK.** Steps 8-9 are deterministic services. Copy Solar's
-**ADR-0008 (AI-SOC)** and **ADR-0009 (Billing Agent)** — both shipped
-deterministic and ADK-free. Write an ADR when the first lands, as a RECORD of the
-owner's decision, not a gate to re-argue it through.
+⚠️ The Request for Service form still does NOT register the vehicle: the
+customer describes the car in free text and reception creates the record on
+conversion, because `VehicleService.create` needs a structured make id.
+Self-service vehicle registration needs a make picker — its own slice.
 
 ---
 
-## WHAT SHIPPED 2026-08-06 (all live)
+## 🔴 TRAPS CONFIRMED AGAIN 2026-08-07
 
-| Commit | |
-|---|---|
-| `b0ac564` | Keycloak prewarm — wake it during render, not on click |
-| `578719e` | Landing sign-in decided by SESSION, not by `/me` (Solar's pattern) |
-| `ae812a0` | 768px breakpoint — re-measured green on live |
-| `9ea1cd0` | `set-keycloak-smtp.yml` — password reset |
-| `1828bdc` `58fcbfe` `72bae51` | Customer value chain, no-ADK decision, leak scope |
-
-**Phase 5 is FINISHED** — `node scripts/audit-menu-coverage.mjs --all`:
-241/243 routes, **0 dead ends**, the 2 signposts are Phase 12 by design.
-Owner 64/64 · Default 56/56 · Manager 36/36 · Reception 29/29 · Customer 35/35 ·
-Technician 40/42.
+1. **RENDER CAN FAIL A DEPLOY FOR NO FAULT OF THE BUILD.** `Release`
+   31190439026 spent 18 minutes in `update_in_progress` and ended
+   `update_failed`; the container had logged `▲ Next.js 15.1.3 / Ready in 791ms`
+   on `0.0.0.0:10000` and Render still reported *"Port scan timeout reached, no
+   open ports detected"*. The identical image redeployed clean minutes later.
+   ▶ **`Diagnose Render deploy`** (new) is how you tell that apart from a real
+   failure: it prints the deploy's DURATION, the service EVENTS and the
+   container's own LOG LINES. A deploy that dies in seconds could not pull its
+   image; one that dies after minutes started a container that never became
+   healthy. Those share only the word "failed".
+2. 🔴 **A GREEN DEPLOY IS NOT A VISIBLE FEATURE.** The owner's button passed
+   typecheck, lint, unit tests, a container smoke test and a Render deploy, and
+   could not render for anyone: the variable it reads was set on neither the
+   service nor the build. ▶ **Grep the LIVE HTML for the feature's own text.**
+3. **`NEXT_PUBLIC_` is a BUILD-time inline**, not a runtime read. A server
+   component wanting a deploy-time value must use a plain name — `API_BASE_URL`
+   and now `CUSTOMER_WEB_URL` are named on exactly that reasoning.
+4. 🔴 **`Release` deploys workshop-web ONLY**; customer-web needs
+   `deploy-customer-web.yml` dispatched separately. The form route 404'd on live
+   for a day because of this, and the new guard in `point-web-at-keycloak.yml`
+   is what caught it.
+5. A queued `apply-migrations` checks out master at RUN time.
 
 ## OPEN — needs the owner
-- **SMTP secrets on THIS repo**: `SMTP_HOST/PORT/USER/PASS/FROM` (Brevo free, as
-  Solar uses). Until then password reset is a dead end: the page renders and
-  promises an email Keycloak cannot send. Then run **Set Keycloak SMTP** —
-  dry-run first, it verifies both credentials without writing.
+- 🔴 **The owner's live password was committed to a PUBLIC repo** (`a0022ff`
+  removed it from the file; **git history still carries it**). **Rotate it in
+  Keycloak.** Removing it stopped the spread; only rotation ends it.
+- **SMTP secrets on THIS repo**: `SMTP_HOST/PORT/USER/PASS/FROM` (Brevo free).
+  Until then password reset is a dead end. Then run **Set Keycloak SMTP**.
 - `RENDER_API_KEY` still unrotated since 2026-07-27.
 
 ## OPEN — Claude can do
-- **LIST 1 item 2** — the viewer contract cannot say `unknown`. Draft parked at
-  `docs/00-project/DRAFT_ViewerUnavailableScreen.tsx.txt` (`.txt` so it cannot be
-  imported). It was REVERTED from `packages/`, not shipped: it threw into an
-  error boundary that does not exist. Codex flagged the live consequence — a
-  session with no grants now sees a dashboard link, and `requireNavRoute` 404s on
-  empty grants, so during a cold `/me` that button can 404.
-- **Playwright has not run since 2026-07-29**; ~120 pages unmeasured.
+- **Playwright has not run since 2026-07-29** — the largest unmeasured surface.
+- 059's supplier-visibility checks **SKIP on live**: no `supplier_users` row
+  exists to act as. Seed one and re-run the rehearsal.
 - Honesty debts: `quotation` and `purchase_order` approval scopes are recorded,
   not enforced.
-- Migration 057's tables (`knowledge.diagnostic_trees`, `learning.course_materials`)
-  are EMPTY — they need an authoring screen or a seed. Ask the owner which.
-
-## TRAPS CONFIRMED AGAIN THIS SESSION
-1. 🔴 **GitHub created NO run for two pushes.** `Release`'s `headSha` lagged the
-   tip. Assume this is normal: after every push, check, and
-   `gh workflow run release.yml --ref master` if absent.
-2. 🔴 **`Release` deploys workshop-web ONLY.** customer-web needs
-   `deploy-customer-web.yml` dispatched separately.
-3. Runner backlog reached **1h45m** tonight; it later cleared. Queued ≠ broken.
-4. A dispatched run checks out master at RUN time, not dispatch time.
+- 057's tables (`knowledge.diagnostic_trees`, `learning.course_materials`) are
+  applied and EMPTY — they need an authoring screen or a seed. Ask which.

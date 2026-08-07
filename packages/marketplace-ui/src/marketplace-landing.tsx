@@ -325,15 +325,31 @@ export function MarketplaceLanding({
               <>
                 {/*
                   SIGNED OUT, the same button — but through registration, which
-                  is what makes it "register the user" as the owner asked. The
-                  account is created at Keycloak and the visitor lands back on
-                  the request form, so one press covers sign-up AND the request
-                  rather than making them find their way back afterwards.
+                  is what makes it "register the user" as the owner asked.
 
-                  ⚠️ `next` is a PATH, never a full URL: `/api/auth/register`
-                  builds the redirect from the incoming request's own origin, so
-                  a tunnel or preview host returns to ITSELF. Passing an absolute
-                  URL here would send a preview visitor to production.
+                  🔴 CORRECTION, 2026-08-07. This comment used to claim the
+                  visitor "lands back on the request form, so one press covers
+                  sign-up AND the request". THAT IS NOT WHAT HAPPENS, and the
+                  claim was written the same day the button could not render at
+                  all, so nobody could have noticed by using it.
+                  `/api/auth/register` sends the visitor to Keycloak with
+                  `redirect_uri = <this origin>/api/auth/callback/keycloak` —
+                  the APEX callback. Auth.js then lands them on the apex, not on
+                  the customer app's form. Nothing carries a destination through:
+                  there is no `next` parameter on this href, and no callback-url
+                  mechanism anywhere in `packages/auth`.
+
+                  So it is TWO presses today: register, land back here, and press
+                  the same button again — which now renders the signed-in variant
+                  above and goes straight to the form. Recoverable, and the
+                  second press is the same button in the same place, but it is
+                  not what was claimed.
+
+                  ▶ Making it one press means carrying an intended destination
+                  through registration, which means touching the Auth.js callback
+                  — and that cannot be proven without driving a real
+                  registration, which creates a real Keycloak account. It is
+                  written up as its own slice rather than shipped unverified.
                 */}
                 {requestServiceHref ? (
                   /* eslint-disable-next-line @next/next/no-html-link-for-pages */
