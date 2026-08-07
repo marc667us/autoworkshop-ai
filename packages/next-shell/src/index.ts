@@ -83,3 +83,8 @@ export type { RegistrationStatus } from './registration';
  */
 export { AuthErrorScreen } from './AuthErrorScreen';
 export type { AuthErrorScreenProps } from './AuthErrorScreen';
+// The in-app notification inbox (owner request 2026-08-07). One component,
+// mounted by every app; the mark-read SERVER ACTION is supplied per app because
+// it must run where the session cookie lives.
+export { NotificationsInbox } from './NotificationsInbox';
+export type { NotificationsInboxProps } from './NotificationsInbox';

@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet, NotificationsInbox } from '@autoworkshop/next-shell';
+import { markNotificationReadAction } from '../mark-notification-read-action';
 import { DataTable, EmptyState, PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { navLabelFor } from './nav-label';
 
@@ -42,6 +43,20 @@ function when(iso: string | null): string {
   }
 }
 
+/**
+ * 🔔 THE MESSAGE INBOX WAS MERGED IN HERE, 2026-08-07.
+ *
+ * Owner: "give every user a notification inbox to receive notices in app".
+ * This screen already existed and counts what is WAITING — proposals to
+ * approve, documents expiring — derived live from real tables. Migration 060
+ * introduced something different: actual MESSAGES the system sends ("a customer
+ * has asked for service", "your request was accepted").
+ *
+ * They are not the same thing, but they are the same QUESTION — "what should I
+ * know?" — and the navigation already had exactly one Notifications entry. A
+ * second one would have been two screens with one name, which is how they start
+ * disagreeing. So the messages render above the derived counts, in one place.
+ */
 export async function NotificationInboxScreen({ route }: { route: string }) {
   const title = await navLabelFor('workshop', route, 'Notification Inbox');
   const inbox = await apiGet<InboxItem[]>('workshop', '/comms/inbox');
@@ -57,6 +72,7 @@ export async function NotificationInboxScreen({ route }: { route: string }) {
     return (
       <>
         {header}
+      <NotificationsInbox workspace="workshop" markReadAction={markNotificationReadAction} withHeader={false} />
         <ApiFailure reason={inbox.reason} workspaceId="workshop" />
       </>
     );
@@ -66,6 +82,7 @@ export async function NotificationInboxScreen({ route }: { route: string }) {
     return (
       <>
         {header}
+      <NotificationsInbox workspace="workshop" markReadAction={markNotificationReadAction} withHeader={false} />
         <EmptyState
           title="Nothing is waiting"
           description="No unread messages, no stock at its reorder level, and no repair waiting on a customer's decision. This list is counted live, so an empty one means there is genuinely nothing here."
@@ -79,6 +96,7 @@ export async function NotificationInboxScreen({ route }: { route: string }) {
   return (
     <>
       {header}
+      <NotificationsInbox workspace="workshop" markReadAction={markNotificationReadAction} withHeader={false} />
       <DataTable
         caption={`${total} things waiting across ${inbox.data.length} categories`}
         rows={inbox.data}
