@@ -152,6 +152,12 @@ const workshopGroups: NavGroup[] = [
     // Same reasoning. `CAN_CREATE_VEHICLE` additionally includes `customer`,
     // who is in a different WORKSPACE entirely and never sees this tree.
     ['register-vehicle', 'Register Vehicle', { permission: 'organization.admin' }],
+    // The owner's value chain, step 7: "his form is received at the reception".
+    // A customer picks this workshop from the PUBLIC directory and asks for
+    // help; this is where that arrives. Ungated deliberately — every role that
+    // reaches a reception tree is staff who may triage an incoming request, and
+    // the API and RLS both refuse a `customer` independently.
+    ['service-requests', 'Service Requests', { counterKey: 'workshop.serviceRequests.new' }],
     ['new-complaints', 'New Complaints', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['vehicle-intake', 'Vehicle Intake'],
@@ -660,6 +666,11 @@ const workshopManagerGroups: NavGroup[] = [
     ['register-customer', 'Register Customer'],
     ['register-vehicle', 'Register Vehicle'],
     ['repair-request-inbox', 'Repair Request Inbox'],
+    // Owner's value chain, step 7 — a request sent to this workshop from the
+    // PUBLIC mechanic directory. Distinct from the Repair Request Inbox, which
+    // lists JOB CARDS: this is work that has not been accepted yet, from
+    // somebody whose car is very often not on file at all.
+    ['service-requests', 'Service Requests', { counterKey: 'workshop.serviceRequests.new' }],
     ['customer-complaint-inbox', 'Customer Complaint Inbox', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['vehicle-intake', 'Vehicle Intake'],
@@ -724,6 +735,11 @@ const workshopReceptionGroups: NavGroup[] = [
   ]),
   group('requests', 'Requests', 'clipboard', [
     ['repair-request-inbox', 'Repair Request Inbox'],
+    // Owner's value chain, step 7 — a request sent to this workshop from the
+    // PUBLIC mechanic directory. Distinct from the Repair Request Inbox, which
+    // lists JOB CARDS: this is work that has not been accepted yet, from
+    // somebody whose car is very often not on file at all.
+    ['service-requests', 'Service Requests', { counterKey: 'workshop.serviceRequests.new' }],
     ['customer-complaint-inbox', 'Customer Complaint Inbox', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['walk-in-requests', 'Walk-In Requests'],
