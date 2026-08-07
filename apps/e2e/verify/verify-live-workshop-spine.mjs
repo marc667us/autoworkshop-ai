@@ -1,5 +1,25 @@
 /** The workshop spine, on PRODUCTION, as the real owner. Creates real data. */
 import { chromium } from '@playwright/test';
+/**
+ * ⚠️ CREDENTIALS COME FROM THE ENVIRONMENT. They used to be written into this
+ * file, and this repository is PUBLIC — so the owner's live Keycloak password
+ * was readable by anyone who found the repo, and remains in git history for
+ * anyone who looks. Removing it here stops it spreading; only ROTATING it
+ * actually fixes the exposure.
+ *
+ * Run with:
+ *   LIVE_OWNER_EMAIL=... LIVE_OWNER_PASSWORD=... node verify/verify-live-workshop-spine.mjs
+ */
+const LIVE_USER = process.env['LIVE_OWNER_EMAIL'] ?? '';
+const LIVE_PASSWORD = process.env['LIVE_OWNER_PASSWORD'] ?? '';
+if (!LIVE_USER || !LIVE_PASSWORD) {
+  // SKIPPED, not failed. Without a session every authenticated check reports
+  // "that screen is not in your menu", which reads as a product defect and is
+  // not one — exactly the false conclusion this repo has recorded four times.
+  console.log('SKIPPED: set LIVE_OWNER_EMAIL and LIVE_OWNER_PASSWORD. Nothing was attempted.');
+  process.exit(0);
+}
+
 const L='https://autoworkshop.aiappinvent.com';
 let pass=0,fail=0; const fails=[];
 const check=(n,ok,d='')=>{ if(ok)pass++; else{fail++;fails.push(`${n}${d?` — ${d}`:''}`);} };
@@ -11,7 +31,7 @@ const si=p.getByRole('link',{name:'Sign in'}).first();
 if(await si.count()){await si.click();const pr=p.getByRole('button',{name:/Keycloak/i});
 await pr.waitFor({state:'visible',timeout:120000});await pr.click({noWaitAfter:true});
 await p.waitForURL(/openid-connect\/auth/,{timeout:180000});
-await p.fill('#username','marc667us@yahoo.com');await p.fill('#password','Forest-prism-bramble-nomad7');
+await p.fill('#username', LIVE_USER); await p.fill('#password', LIVE_PASSWORD);
 await p.click('#kc-login',{noWaitAfter:true});await p.waitForURL(u=>!/openid-connect/.test(u.toString()),{timeout:180000});}
 await p.goto(`${L}/home/dashboard`,{waitUntil:'networkidle',timeout:180000});
 await p.waitForTimeout(2500);
