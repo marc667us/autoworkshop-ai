@@ -1,0 +1,239 @@
+# Turn Keycloak's email verification ON or OFF, and unstick anybody it trapped.
+#
+# ── 🔴 THE DEFECT THIS CLOSES ───────────────────────────────────────────────
+#
+# Measured on the LIVE realm 2026-08-07 (`Diagnose Keycloak email`, run
+# 31205339529): `verifyEmail: true` and `smtpServer` **ABSENT**. Keycloak was
+# demanding an email verification it had no mail server to send, so a new
+# customer registered, was told to check their inbox, and nothing ever arrived.
+# 1 of 3 accounts was already stuck. Owner: *"verification email dont come to
+# the user mail to verify"*, *"emailing system dont work"*.
+#
+# That combination does not merely break password reset — IT BLOCKS SIGN-UP,
+# which is step one of the customer value chain. The funnel deployed the same
+# day ended at a wall nobody could pass.
+#
+# ── ⚠️ THE TRADE-OFF, STATED PLAINLY ───────────────────────────────────────
+#
+# Turning verification OFF means Keycloak stops proving that a registrant owns
+# the address they typed. Somebody can sign up as `someone-else@example.com`.
+# That is a real weakening and it is chosen deliberately, because the
+# alternative on a realm with no mail server is not "verified users" — it is NO
+# USERS AT ALL. Nothing else in the product depends on `emailVerified`, so no
+# authorization decision changes.
+#
+# ▶ IT IS ONE DISPATCH TO PUT BACK. The moment SMTP exists (`Set Keycloak
+# SMTP`), run this with `verify_email=on`. This workflow is the single control
+# for the flag in both directions precisely so re-enabling is not a hunt.
+#
+# ── WHY A WORKFLOW AND NOT THE REALM FILE ──────────────────────────────────
+#
+# `--import-realm` runs on FIRST BOOT ONLY. Editing
+# `infrastructure/keycloak/realm-autoworkshop.json` cannot change a realm that
+# already exists — it only decides what a FRESH one starts as. Both are updated
+# together, or the next fresh realm reintroduces exactly this trap.
+#
+# ⚠️ DRY RUN BY DEFAULT. The dry run authenticates as admin and READS the realm,
+# so a bad admin password fails before anything is written.
+
+name: Set Keycloak email verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write the change. Anything else reads and reports only.'
+        required: false
+        default: ''
+      verify_email:
+        description: 'Whether Keycloak should require email verification'
+        required: true
+        default: 'off'
+        type: choice
+        options:
+          - 'off'
+          - 'on'
+      mark_existing_verified:
+        description: 'When turning OFF, also mark already-registered users verified so nobody stays trapped'
+        required: false
+        default: true
+        type: boolean
+      realm:
+        description: 'Keycloak realm'
+        required: false
+        default: 'autoworkshop'
+      keycloak_url:
+        description: 'Public Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+
+jobs:
+  set:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KC_URL: ${{ inputs.keycloak_url }}
+      REALM: ${{ inputs.realm }}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+      CONFIRM: ${{ inputs.confirm }}
+      WANT: ${{ inputs.verify_email }}
+      MARK_VERIFIED: ${{ inputs.mark_existing_verified }}
+    steps:
+      - name: Guard — the admin password must be present
+        run: |
+          if [ -z "$KC_ADMIN_PASSWORD" ]; then
+            echo "::error::KC_BOOTSTRAP_ADMIN_PASSWORD is not set on this repo."
+            exit 1
+          fi
+
+      - name: Warm Keycloak
+        run: |
+          echo "waking Keycloak (cold start is 115-147s on the free tier)"
+          curl -sS -o /dev/null -w 'discovery %{http_code} in %{time_total}s\n' \
+            --max-time 300 \
+            "$KC_URL/realms/${REALM}/.well-known/openid-configuration"
+
+      - name: Get an admin token
+        run: |
+          TOKEN="$(printf '%s' \
+            "client_id=admin-cli&grant_type=password&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASSWORD}" \
+            | curl -sS --max-time 120 -d @- \
+                "$KC_URL/realms/master/protocol/openid-connect/token" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('access_token',''))")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::could not obtain an admin token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "KC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "admin token acquired"
+
+      - name: Read the realm and say what would change
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer ${KC_TOKEN}" \
+            "$KC_URL/admin/realms/${REALM}" > realm.json
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open('realm.json'))
+          want = os.environ['WANT'] == 'on'
+          smtp = bool(r.get('smtpServer'))
+          print(f"verifyEmail now  : {r.get('verifyEmail')}")
+          print(f"verifyEmail want : {want}")
+          print(f"smtpServer       : {'configured' if smtp else 'ABSENT'}")
+          # 🔴 REFUSE TO ARM A TRAP. Turning verification ON without a mail
+          # server recreates the exact outage this workflow exists to end: a
+          # registrant told to check an inbox nothing was ever sent to.
+          if want and not smtp:
+              raise SystemExit(
+                  '::error::refusing to turn verifyEmail ON while the realm has NO smtpServer — '
+                  'that is precisely the state that blocked sign-up. Run "Set Keycloak SMTP" first.')
+          PY
+
+      - name: What this would do
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          echo "DRY RUN — nothing written."
+          echo "With confirm=APPLY this would set verifyEmail=${WANT} on realm ${REALM}"
+          echo "and, when turning off with mark_existing_verified, clear the trap for existing users."
+
+      - name: Write the flag
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # The admin API takes a whole RealmRepresentation. The realm is read,
+          # ONE field is changed, and the rest is sent back untouched — building
+          # a partial body here would silently reset every other realm setting.
+          python3 - <<'PY'
+          import json, os
+          r = json.load(open('realm.json'))
+          r['verifyEmail'] = os.environ['WANT'] == 'on'
+          json.dump(r, open('realm-new.json', 'w'))
+          print('body prepared, verifyEmail =', r['verifyEmail'])
+          PY
+          code="$(curl -s -o put_out.txt -w '%{http_code}' -X PUT \
+            -H "Authorization: Bearer ${KC_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data @realm-new.json \
+            "$KC_URL/admin/realms/${REALM}")"
+          echo "PUT /admin/realms/${REALM} -> ${code}"
+          case "$code" in
+            200|204) ;;
+            *) head -c 400 put_out.txt; echo; echo "::error::realm update failed"; exit 1 ;;
+          esac
+
+      - name: Unstick the users the trap already caught
+        if: ${{ inputs.confirm == 'APPLY' && inputs.verify_email == 'off' && inputs.mark_existing_verified }}
+        run: |
+          set -euo pipefail
+          # Turning the flag off stops NEW registrations being trapped. It does
+          # NOT release somebody already sitting on "verify your email" — their
+          # account still carries emailVerified=false and a VERIFY_EMAIL required
+          # action, and Keycloak keeps asking. Both have to be cleared, or the
+          # fix reads as working while the person who reported it is still stuck.
+          curl -fsS -H "Authorization: Bearer ${KC_TOKEN}" \
+            "$KC_URL/admin/realms/${REALM}/users?max=500" > users.json
+          python3 - <<'PY' > todo.txt
+          import json
+          us = json.load(open('users.json'))
+          for u in us:
+              stuck = (not u.get('emailVerified')) or ('VERIFY_EMAIL' in (u.get('requiredActions') or []))
+              if stuck:
+                  print(u['id'], u.get('username', '?'))
+          PY
+          COUNT="$(wc -l < todo.txt | tr -d ' ')"
+          echo "users to unstick: ${COUNT}"
+          [ "$COUNT" = "0" ] && { echo "nobody was trapped"; exit 0; }
+
+          while read -r ID NAME; do
+            [ -n "$ID" ] || continue
+            python3 - "$ID" <<'PY' > one.json
+          import json, sys
+          us = json.load(open('users.json'))
+          u = next(x for x in us if x['id'] == sys.argv[1])
+          u['emailVerified'] = True
+          u['requiredActions'] = [a for a in (u.get('requiredActions') or []) if a != 'VERIFY_EMAIL']
+          print(json.dumps(u))
+          PY
+            code="$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+              -H "Authorization: Bearer ${KC_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              --data @one.json \
+              "$KC_URL/admin/realms/${REALM}/users/${ID}")"
+            echo "  ${NAME} -> ${code}"
+            case "$code" in 200|204) ;; *) echo "::error::could not update ${NAME}"; exit 1 ;; esac
+          done < todo.txt
+
+      - name: Read it back
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          # A PUT that returned 204 is not proof the realm kept the value.
+          curl -fsS -H "Authorization: Bearer ${KC_TOKEN}" \
+            "$KC_URL/admin/realms/${REALM}" > after.json
+          curl -fsS -H "Authorization: Bearer ${KC_TOKEN}" \
+            "$KC_URL/admin/realms/${REALM}/users?max=500&briefRepresentation=true" > users-after.json
+          python3 - <<'PY'
+          import json, os, sys
+          r = json.load(open('after.json'))
+          want = os.environ['WANT'] == 'on'
+          got = r.get('verifyEmail')
+          print(f'verifyEmail readback : {got} (wanted {want})')
+          us = json.load(open('users-after.json'))
+          unver = [u.get('username') for u in us if not u.get('emailVerified')]
+          pend = [u.get('username') for u in us
+                  if 'VERIFY_EMAIL' in (u.get('requiredActions') or [])]
+          print(f'users                : {len(us)}')
+          print(f'still unverified     : {len(unver)} {unver}')
+          print(f'still holding VERIFY_EMAIL: {len(pend)} {pend}')
+          if got != want:
+              sys.exit('::error::the realm did not keep the value')
+          if not want and (unver or pend):
+              # Not fatal — a fresh sign-up between the write and this read would
+              # do it — but it must be VISIBLE rather than pass quietly.
+              print('::warning::some accounts are still unverified; re-run with mark_existing_verified')
+          PY
