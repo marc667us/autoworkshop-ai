@@ -85,6 +85,33 @@ replace them. Nothing in this decision forecloses that.
   a car *is*, and cannot distinguish a repair nobody in the workshop can move
   from one that is somebody's job today. Both look equally busy in their columns.
 
+## Amendment, 2026-08-07 — ADK IS ALLOWED FOR PHASE 8
+
+The owner has since permitted Google ADK **for Phase 8 (MCP + AI, Release 0.7)**:
+*"allow adk for phase 8 please and build … after when you get there."*
+
+**This ADR is unchanged for what it covers.** The repair orchestrator shipped
+deterministic, it works, and it is Phase 5 work — rebuilding it on ADK would be
+churn with no user-visible gain. §0.1's default simply reasserts itself for
+Phase 8's own deliverables:
+
+- Phase 8 (gateway, registry, the 19 MCP server skeletons, orchestrator +
+  conductors + specialists, Class A/B enabled and C/D gated, approval UI, MCP
+  audit + kill switch) **is built on Google ADK**, per §0.1 and §0.2.
+- Everything already shipped deterministic **stays deterministic** — this
+  orchestrator, and the reception conversion in `058`/`ServiceRequestService`.
+- Timing: **when the programme reaches Phase 8**, not before. The owner was
+  explicit.
+
+⚠️ This resolves the conflict flagged when the phase status was reviewed: Phase
+8's deliverable in `COMBINED_PLAN_v2.md §8` literally reads "ADK orchestrator +
+conductors + specialists", which the previous standing instruction ruled out.
+The plan and the instruction now agree, and Phase 8 no longer needs
+re-specifying before it can start.
+
+⚠️ ADK IS STILL NOT A SESSION TOOL. "Do not open or run Google ADK" as part of
+the App Factory boot remains in force; this permits BUILDING Phase 8 on it.
+
 ## Related
 
 - `docs/00-project/CUSTOMER_VALUE_CHAIN.md` — the owner's chain, steps 1–9

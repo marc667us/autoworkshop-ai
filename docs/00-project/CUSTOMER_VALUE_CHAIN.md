@@ -219,6 +219,13 @@ required.
 
 ---
 
+## ⚠️ AMENDED 2026-08-07 — ADK IS ALLOWED FOR PHASE 8 ONLY
+
+The owner has permitted Google ADK **for Phase 8 (MCP + AI)**, to be built *"when
+you get there"*. That does NOT reopen the sections below: steps 8-9 of this chain
+are Phase 5/7 work, they shipped deterministic, and they stay that way. See
+`ADR-018`'s amendment. Phase 8's own deliverables are built on ADK per §0.1.
+
 ## Steps 8–9 are built WITHOUT Google ADK — decided by the owner
 
 **The owner's instruction is standing and settled: do not use Google ADK.** It
