@@ -23,8 +23,20 @@
 name: Drain notifications
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
+  # 🔴 THE SCHEDULE IS OFF UNTIL THE FEATURE IS DEPLOYED, and turning it on is
+  # the LAST step of that deploy, not the first.
+  #
+  # Migration 060 is not applied to live and the API does not yet carry
+  # NOTIFICATIONS_DRAIN_TOKEN, so every scheduled run would get a 403 and fail.
+  # A workflow that goes red hourly for a reason nobody can act on is how a red
+  # build stops meaning anything — this repository has the scar and the rule.
+  #
+  # ▶ RE-ENABLE by uncommenting the two lines below, AFTER:
+  #     1. migration 060 is applied to live, and
+  #     2. `deploy-api` has run (it writes the SMTP + drain secrets), and
+  #     3. a manual dispatch of this workflow returns HTTP 200.
+  # schedule:
+  #   - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       limit:

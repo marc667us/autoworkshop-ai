@@ -109,6 +109,79 @@ Self-service vehicle registration needs a make picker — its own slice.
    is what caught it.
 5. A queued `apply-migrations` checks out master at RUN time.
 
+## 📧 EMAIL — PARKED 2026-08-07, ONE DNS RECORD FROM DONE
+
+**Nothing is broken and nothing is half-applied.** Sign-up works, nobody is
+locked out, migration 060 is LOCAL ONLY, the drain cron is DISABLED, and the
+live API is untouched by any of this.
+
+### ▶ THE ONLY THING BLOCKING EVERYTHING
+
+**One MX record in Namecheap → Advanced DNS:**
+
+| Type | Host | Value | Priority |
+|---|---|---|---|
+| MX Record | `send` | `feedback-smtp.us-east-1.amazonses.com` | `10` |
+
+Resend's domain `aiappinvent.com` (id `e05dd15f-be86-4b39-90b9-0831b4da5e97`)
+is **DKIM ✅ verified**, SPF-TXT and SPF-MX pending. Until it verifies, Resend
+refuses every send: `550 The aiappinvent.com domain is not verified`.
+
+⚠️ There is also a stray TXT at `send` holding `feedback-smtp.us-east-1.amazonses.com`
+— an MX value typed into a TXT on 08-07. It probably wants removing, but do NOT
+delete it on a guess; re-verify first and see whether Resend still objects.
+
+🔴 **DO NOT TOUCH, EVER, FOR THIS TASK:** Mail Settings, any `@` record, `mail.`,
+or `autodiscover.`. The `@` MX rows (`mx1`/`mx2.privateemail.com`, priority 10)
+deliver mail to **sales@, admin@ and support@** — three live mailboxes. I
+briefly advised switching Mail Settings to Custom MX; **that advice was wrong**
+and the owner caught it. Subdomain MX already coexists with Private Email in
+this zone (`mail.` and `autodiscover.` both carry MX), so nothing needs changing
+to add one at `send`.
+
+### WHAT IS ALREADY DONE AND WAITING
+
+- **7 repo secrets set**: `SMTP_HOST=smtp.resend.com`, `SMTP_PORT=2587`,
+  `SMTP_PORT_FOR_KC=2587`, `SMTP_USER=resend`, `SMTP_PASS`, `SMTP_FROM=noreply@aiappinvent.com`,
+  `NOTIFICATIONS_DRAIN_TOKEN`.
+- **Port 2587 and the credentials are PROVEN** — both failures were *after* a
+  successful SMTP login, at the data stage.
+- `deploy-api.yml` now writes those vars, so they survive a deploy.
+- Resend keys are in `Documents\autoworkshop app\send 33.txt` (send-only) and
+  `send 44.txt` (**FULL ACCESS** — the more sensitive one). Not in git.
+
+### ▶ WHEN THE MX IS ADDED, run in this order
+
+1. Confirm DNS: `Resolve-DnsName send.aiappinvent.com -Type MX -Server 8.8.8.8`
+2. `POST https://api.resend.com/domains/<id>/verify` with the full-access key, poll to `verified`
+3. Send a test over SMTP from `noreply@aiappinvent.com` — that is the real proof
+4. **Set Keycloak SMTP** — dry run first; it asks KEYCLOAK ITSELF to send and
+   refuses to write if that fails
+5. **Set Keycloak email verification** `verify_email=on`
+6. Rehearse migration 060 on live, then apply
+7. `deploy-api` (carries the SMTP + drain secrets)
+8. Manually dispatch **Drain notifications**; only when it returns 200,
+   re-enable its `schedule:` block
+9. Drive a real password reset end to end
+
+⚠️ Keycloak's own SMTP self-test may STILL fail after all this: the `admin`
+account lives in the `master` realm and has no email, and that is where
+`testSMTPConnection` sends. Do not read that as the DNS having failed — prove it
+with a real password reset instead.
+
+### ▶ THEN: SOLAR — Brevo is DEAD (subscription lapsed)
+
+Owner, 2026-08-07: Brevo has been deactivated, and Solar must move to Resend.
+**11 workflows** in `Desktop\solar-pv-designer-lite\.github\workflows` reference
+Brevo: `beta-monitor`, `send-beta-invites`, `send-reader-followup`,
+`list-beta-readers`, `email-delivery-check`, `daily-digest`, `synthetic-health`,
+`agent-triage`, `render-deploy-now`, `render-env-debug`,
+`render-rotate-leaked-secrets`.
+⚠️ Blocked on the SAME domain verification — Resend will not send until then, so
+converting Solar first would swap one dead sender for another.
+⚠️ Solar's own SMTP secrets are separate (different repo, ADR-011). The root TXT
+still carries `brevo-code:9425bcf9…`; harmless, leave it.
+
 ## ✅ EMAIL — SIGN-UP UNBLOCKED, RESET STILL DEAD
 
 Owner, 2026-08-07: *"verification email dont come to the user mail to verify"*,
