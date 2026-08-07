@@ -108,7 +108,28 @@ jobs:
           # 401 and concluding the admin password is wrong.
           missing=0
           for v in KC_BOOTSTRAP_ADMIN_PASSWORD SMTP_HOST SMTP_USER SMTP_PASS SMTP_FROM; do
-            if [ -z "$(eval echo "\$$v")" ]; then
+            # `${!v:-}` — bash indirect expansion — rather than the previous
+            # `eval echo "\$$v"`.
+            #
+            # ⚠️ AN EARLIER VERSION OF THIS COMMENT CLAIMED THE OLD FORM WOULD
+            # EXECUTE a password containing `$(...)` or a backtick. THAT IS
+            # WRONG, and the Supervisor tested it rather than believing me:
+            # `eval` evaluates `echo <value>` once, and the result of that
+            # parameter expansion is subject to word splitting and pathname
+            # expansion but NOT to a second round of command substitution. No
+            # RCE was there. The claim is corrected instead of quietly deleted,
+            # because this repository has a standing lesson that a confident
+            # comment stops the next reader looking — and one that invents a
+            # vulnerability is just as costly as one that hides a real guard.
+            #
+            # What the old form DID do wrong is still worth fixing: it put
+            # secret values through word splitting and globbing for no reason,
+            # so a secret containing whitespace or a `*` was mangled before
+            # being tested. Indirect expansion reads the value exactly as
+            # stored. `:-` is load-bearing under `set -u`: without it an absent
+            # secret aborts the loop instead of being reported, which is the
+            # precise case this step exists to catch.
+            if [ -z "${!v:-}" ]; then
               echo "::error::$v is not set as a repository secret"
               missing=1
             fi

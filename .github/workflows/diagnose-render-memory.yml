@@ -1,0 +1,403 @@
+# Why a service RAN OUT OF MEMORY — read-only.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 🔴 `Diagnose Render deploy` CANNOT ANSWER THIS, AND THAT IS NOT A BUG IN IT.
+#
+# That workflow anchors its log window on `deploy.finishedAt`, which is exactly
+# right for a deploy that failed. But an out-of-memory kill happens while the
+# service is RUNNING, often hours later — `autoworkshop-customer` was killed at
+# 2026-08-07T22:42:34Z, five hours and fourteen minutes after its last deploy
+# ended at 17:28. Pointed at that service, the deploy diagnostic dutifully
+# returned logs from 17:03, which are healthy, and the OOM is simply not in the
+# window. Reading those logs and concluding "nothing looks wrong" is the trap
+# this workflow exists to remove.
+#
+# So this one anchors on the FAILURE EVENT instead: it finds the most recent
+# `server_failed` (or a timestamp you give it) and pulls the log window that
+# ENDS there — the minutes leading up to the kill, which is where the cause is.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# ⚠️ WHAT AN OOM EVENT DOES AND DOES NOT TELL YOU.
+#
+# Render reports `reason: {'oomKilled': {'memoryLimit': '512Mi'}}`. That is the
+# CONTAINER being killed by the kernel, and it says nothing about which
+# allocation was responsible. In particular it does not distinguish:
+#
+#   * a slow leak — memory climbs over hours, and the kill recurs on a rhythm;
+#   * a spike — one expensive request (image processing, a large response, a
+#     big JSON parse) briefly exceeds the cap and the process dies once;
+#   * a heap that was simply never capped — V8 grows until the cgroup limit
+#     kills it, instead of collecting harder as it approaches the ceiling.
+#
+# Those have completely different fixes, and the ONLY thing that separates them
+# is the SHAPE OVER TIME. So this workflow counts how many times it has happened
+# and prints the intervals, rather than reporting the latest one in isolation.
+#
+# ⚠️ RENDER'S FREE TIER SERVES NO MEMORY METRICS through the API on this plan,
+# so there is no RSS curve to read. The evidence available is: the events list,
+# the request log immediately before the kill, and the process's own output.
+# This prints all three and labels each, rather than implying a measurement it
+# does not have.
+#
+# READ-ONLY. It creates nothing, deploys nothing and changes no configuration.
+
+name: Diagnose Render memory
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Which AutoWorkshop service to diagnose'
+        required: true
+        default: customer-web
+        type: choice
+        options:
+          - customer-web
+          - api
+          - production-web
+          - staging-web
+      at:
+        description: 'Anchor the window here (2026-08-07T22:42:34Z). Blank = the most recent server_failed.'
+        required: false
+        default: ''
+        type: string
+      log_minutes:
+        description: 'Minutes of log BEFORE the failure to pull'
+        required: false
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SERVICE_CHOICE: ${{ inputs.service }}
+      AT: ${{ inputs.at }}
+      LOG_MINUTES: ${{ inputs.log_minutes }}
+      # Same resolution as `Diagnose Render deploy`, deliberately identical so
+      # the two cannot disagree about which service a name means.
+      WEB_SERVICE_ID: >-
+        ${{ inputs.service == 'production-web' && vars.RENDER_WEB_SERVICE_ID
+         || inputs.service == 'staging-web'    && vars.RENDER_STAGING_SERVICE_ID
+         || '' }}
+      SERVICE_NAME: >-
+        ${{ inputs.service == 'api'          && 'autoworkshop-api'
+         || inputs.service == 'customer-web' && 'autoworkshop-customer'
+         || '' }}
+
+    steps:
+      - name: Refuse early if the key is absent
+        run: |
+          set -euo pipefail
+          # Without this the first curl 401s and the reader spends ten minutes
+          # deciding whether the service is gone or the key is wrong.
+          [ -n "${RENDER_API_KEY}" ] || {
+            echo "::error::RENDER_API_KEY is not set as a repository secret"; exit 1; }
+
+      - name: Resolve the service
+        run: |
+          set -euo pipefail
+          case "${SERVICE_CHOICE}" in
+            production-web|staging-web)
+              [ -n "${WEB_SERVICE_ID}" ] || {
+                echo "::error::${SERVICE_CHOICE} resolves from a repository variable"
+                echo "(RENDER_WEB_SERVICE_ID / RENDER_STAGING_SERVICE_ID) and it is EMPTY."
+                exit 1; }
+              ;;
+          esac
+
+          if [ -n "${WEB_SERVICE_ID}" ]; then
+            SID="${WEB_SERVICE_ID}"
+            echo "service ${SERVICE_CHOICE} -> ${SID} (from repository variable)"
+          else
+            # ?name= is a SEARCH, not equality — the exact match is what stops
+            # `autoworkshop-api` resolving to a longer name containing it.
+            SID="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' \
+              "https://api.render.com/v1/services?name=${SERVICE_NAME}&limit=20" \
+              | python3 -c "
+          import sys, json, os
+          rows = json.load(sys.stdin)
+          for r in rows:
+              s = r.get('service', r)
+              if s.get('name') == os.environ['SERVICE_NAME']:
+                  print(s['id']); break
+          ")"
+            [ -n "$SID" ] || { echo "::error::no service named exactly ${SERVICE_NAME}"; exit 1; }
+            echo "service ${SERVICE_CHOICE} -> ${SID} (exact name match)"
+          fi
+          echo "SID=${SID}" >> "$GITHUB_ENV"
+
+      - name: Every out-of-memory kill Render still remembers
+        run: |
+          set -euo pipefail
+          # 100, not the default 20: the SHAPE over time is the whole diagnosis,
+          # and a page holding one kill cannot show a rhythm.
+          code="$(curl -s -o events.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            "https://api.render.com/v1/services/${SID}/events?limit=100")"
+          echo "GET events -> ${code}"
+          if [ "$code" != "200" ]; then
+            echo "::warning::events refused — an ACCESS result, not evidence the service was healthy"
+            head -c 400 events.json; echo
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import json, os, datetime as dt
+
+          rows = json.load(open('events.json'))
+          if not rows:
+              print('NO EVENTS RETURNED — an empty result, not a healthy one')
+
+          def parse(s):
+              return dt.datetime.fromisoformat(s.replace('Z', '+00:00'))
+
+          ooms, failures = [], []
+          oldest = newest = None
+          for r in rows:
+              e = r.get('event', r)
+              ts = e.get('timestamp')
+              if ts:
+                  t = parse(ts)
+                  oldest = t if oldest is None or t < oldest else oldest
+                  newest = t if newest is None or t > newest else newest
+              if e.get('type') != 'server_failed':
+                  continue
+              # 🔴 A FAILURE WITH NO TIMESTAMP IS DROPPED, NOT KEPT.
+              # It cannot anchor a log window, and keeping it would let `None`
+              # reach GITHUB_ENV and blow up the next step with a parse error
+              # that blames the anchor rather than the missing field (Codex).
+              if not ts:
+                  print('⚠️  a server_failed event carried no timestamp and was skipped')
+                  continue
+              d = e.get('details') or {}
+              reason = d.get('reason') or {}
+              failures.append((ts, reason))
+              if isinstance(reason, dict) and reason.get('oomKilled'):
+                  ooms.append((ts, reason['oomKilled'].get('memoryLimit', '?')))
+
+          # 🔴 SORT OLDEST-FIRST BEFORE TAKING [-1]. RENDER RETURNS EVENTS
+          # NEWEST-FIRST — measured, not assumed: the 2026-08-07 response led
+          # with 22:42:49 `server_available` and then 22:42:34 `server_failed`.
+          # So an unsorted `[-1]` is the OLDEST kill on the page, and this
+          # workflow would have pulled a log window from hours or days before
+          # the failure the reader is looking at, shown healthy traffic, and
+          # been believed. Caught by Codex, 2026-08-07.
+          ooms.sort(key=lambda x: parse(x[0]))
+          failures.sort(key=lambda x: parse(x[0]))
+
+          # The window the evidence covers, stated up front. "One kill" means
+          # something different over 26 hours than over 26 days, and the events
+          # endpoint pages — so a reader must know what they are NOT seeing.
+          if oldest and newest:
+              span = newest - oldest
+              print(f'events cover {oldest.isoformat()} .. {newest.isoformat()}  ({span})')
+              print('⚠️  older events exist beyond this page and are NOT counted below')
+          print()
+
+          print(f'server_failed events : {len(failures)}')
+          print(f'  of which OOM kills : {len(ooms)}')
+          print()
+
+          if not ooms:
+              print('No out-of-memory kill in this window.')
+              print('If the owner saw a memory warning, it is either older than this')
+              print('page or it came from the Render dashboard rather than an event.')
+          else:
+              for ts, limit in ooms:
+                  print(f'  OOM  {ts}   limit={limit}')
+              print()
+              # 🔴 THE INTERVALS ARE THE DIAGNOSIS. A leak recurs on a rhythm
+              # roughly proportional to traffic; a one-off spike does not recur
+              # at all. Printing only the latest kill is what makes every OOM
+              # look like "a leak" regardless of which it is.
+              if len(ooms) >= 2:
+                  times = [parse(t) for t, _ in ooms]
+                  times.sort()
+                  gaps = [(b - a) for a, b in zip(times, times[1:])]
+                  print('intervals between kills (oldest -> newest):')
+                  for g in gaps:
+                      print(f'  {g}')
+                  avg = sum(gaps, dt.timedelta()) / len(gaps)
+                  print(f'  mean {avg}')
+                  print()
+                  print('A REGULAR interval points at growth over time (a leak or an')
+                  print('uncapped heap). WILDLY UNEVEN intervals point at particular')
+                  print('requests, so look at what arrived just before each kill.')
+              else:
+                  print('Only ONE kill in this window, so there is no interval to read.')
+                  print('That is NOT evidence of a leak — a single kill is equally')
+                  print('consistent with one expensive request. Re-run this after the')
+                  print('next occurrence; two timestamps say more than one does.')
+
+          with open(os.environ['GITHUB_ENV'], 'a') as fh:
+              fh.write(f'LATEST_OOM={ooms[-1][0] if ooms else ""}\n')
+              fh.write(f'LATEST_FAIL={failures[-1][0] if failures else ""}\n')
+          PY
+
+      - name: What the container was doing just before it died
+        run: |
+          set -euo pipefail
+          OWNER="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services/${SID}" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('ownerId',''))")"
+          [ -n "$OWNER" ] || { echo "::error::could not determine ownerId"; exit 1; }
+
+          ANCHOR="${AT:-${LATEST_OOM:-${LATEST_FAIL:-}}}"
+          if [ -z "${ANCHOR}" ]; then
+            echo "No failure to anchor on and no explicit --at, so there is no"
+            echo "window worth pulling. Nothing further to report."
+            exit 0
+          fi
+          echo "anchoring on ${ANCHOR}"
+
+          python3 - <<'PY' > /tmp/window
+          import os, datetime as dt
+          anchor = dt.datetime.fromisoformat(os.environ['ANCHOR'].replace('Z', '+00:00'))
+          mins = int(os.environ.get('LOG_MINUTES') or '20')
+          # The window ENDS at the kill and reaches BACKWARD. The cause is what
+          # happened before, not after — after the kill the container is a fresh
+          # process with an empty heap, and its logs look perfectly healthy.
+          # A window centred on the kill is half wasted and reads as reassuring.
+          start = anchor - dt.timedelta(minutes=mins)
+          end = anchor + dt.timedelta(seconds=30)
+          print(start.strftime('%Y-%m-%dT%H:%M:%SZ'))
+          print(end.strftime('%Y-%m-%dT%H:%M:%SZ'))
+          PY
+          START="$(sed -n 1p /tmp/window)"
+          END="$(sed -n 2p /tmp/window)"
+          echo "window ${START} .. ${END}"
+
+          code="$(curl -s -o logs.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            --get \
+            --data-urlencode "ownerId=${OWNER}" \
+            --data-urlencode "resource=${SID}" \
+            --data-urlencode "startTime=${START}" \
+            --data-urlencode "endTime=${END}" \
+            --data-urlencode "limit=300" \
+            --data-urlencode "direction=backward" \
+            "https://api.render.com/v1/logs")"
+          echo "GET /v1/logs -> ${code}"
+          if [ "$code" != "200" ]; then
+            echo "::warning::logs refused — an ACCESS result, not evidence the container was quiet"
+            head -c 600 logs.json; echo
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import json, re
+          d = json.load(open('logs.json'))
+          rows = d.get('logs', d if isinstance(d, list) else [])
+          if not rows:
+              print('NO LOG LINES IN THIS WINDOW.')
+              print('On the free tier logs are retained briefly, so this may mean')
+              print('"expired" rather than "silent". It is not evidence of calm.')
+              raise SystemExit(0)
+
+          # ══════════════════════════════════════════════════════════════════
+          # 🔴 REDACT BEFORE PRINTING. THIS COPIES PRODUCTION LOGS INTO A
+          # GITHUB ACTIONS LOG, AND THE FIRST VERSION PRINTED THEM VERBATIM.
+          #
+          # Actions output is readable by anyone with repository access and is
+          # retained for 90 days — a wider and longer-lived audience than
+          # Render's own log viewer. Whatever a running service happened to log
+          # would be copied there: this application logs `clientIP` on every
+          # request (PERSONAL DATA under GDPR), and a stack trace or a debug
+          # line can carry a bearer token or a connection string.
+          #
+          # This repository already has a live incident from a credential
+          # reaching a place it was not meant to be, and a diagnostic that
+          # creates a second copy of production logs is exactly how that
+          # happens again. Caught by Codex, 2026-08-07.
+          #
+          # ⚠️ A DENY-LIST OF PATTERNS CANNOT BE COMPLETE, and this repository
+          # has the scar for that too — a credential blacklist that lost to the
+          # provider because it required the literal word "api". So this does
+          # NOT claim to catch everything. It removes the categories this
+          # service is KNOWN to emit, and the summary below deliberately prints
+          # only parsed fields rather than raw message text.
+          # ══════════════════════════════════════════════════════════════════
+          REDACTIONS = [
+              # Anything that looks like a credential being carried.
+              (re.compile(r'(?i)\b(authorization|bearer|token|secret|password|passwd|pwd|apikey|api[_-]?key|access[_-]?key|passphrase|cookie|set-cookie)\b\s*[:=]\s*\S+'),
+               r'\1=<redacted>'),
+              # Connection strings with inline credentials.
+              (re.compile(r'\b([a-z+]+://)[^:/@\s]+:[^@\s]+@'), r'\1<redacted>@'),
+              # JWTs, which carry the subject and email in the payload.
+              (re.compile(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+'), '<jwt-redacted>'),
+              # Client IPs — personal data, and never the reason for an OOM.
+              (re.compile(r'clientIP="[^"]*"'), 'clientIP="<redacted>"'),
+              # Bare email addresses.
+              (re.compile(r'\b[\w.+-]+@[\w-]+\.[\w.-]+\b'), '<email-redacted>'),
+          ]
+
+          def scrub(s: str) -> str:
+              for pattern, repl in REDACTIONS:
+                  s = pattern.sub(repl, s)
+              return s
+
+          rows = sorted(rows, key=lambda r: r.get('timestamp', ''))
+          print(f'{len(rows)} line(s), oldest first — REDACTED, see the note in this file\n')
+
+          # Slow requests are the ones worth seeing: a request that took seconds
+          # was doing something expensive, and an expensive thing is what fills
+          # 512Mi. Surfaced separately because it would otherwise be one line
+          # among three hundred.
+          slow = []
+          for r in rows:
+              msg = scrub(r.get('message', ''))
+              print(f"{r.get('timestamp','?')}  {msg}")
+              m = re.search(r'responseTimeMS=(\d+)', msg)
+              if m and int(m.group(1)) >= 3000:
+                  # PARSED FIELDS ONLY — never a slice of the raw line. A
+                  # truncation is not a redaction: `msg[:200]` would happily
+                  # include whatever the first 200 characters happened to be.
+                  path = re.search(r'(?:path|url|requestPath)="([^"]*)"', msg)
+                  rid = re.search(r'requestID="([^"]*)"', msg)
+                  slow.append((r.get('timestamp', '?'), int(m.group(1)),
+                               path.group(1) if path else '<no path field>',
+                               rid.group(1) if rid else '-'))
+
+          if slow:
+              print('\n─── requests slower than 3s in this window ───')
+              for ts, ms, path, rid in sorted(slow, key=lambda x: -x[1]):
+                  print(f'  {ts}  {ms}ms  path={path}  requestID={rid}')
+              print('\nA slow request immediately before an OOM is the single best')
+              print('lead available here — it is the shape of one expensive')
+              print('allocation rather than of steady growth.')
+          PY
+
+      - name: What a heap cap would and would not fix
+        run: |
+          # Printed every run, because this is the question that follows the
+          # diagnosis and it is answered wrongly by default.
+          cat <<'NOTE'
+          ─────────────────────────────────────────────────────────────────
+          NODE_OPTIONS=--max-old-space-size is NOT set on any service in this
+          repository (verified 2026-08-07: the only occurrences are in
+          diagnose-next-build.yml, which is about the BUILD, not the runtime).
+
+          What capping the heap WOULD do: make V8 collect harder as it nears the
+          ceiling instead of growing until the kernel kills the container. A
+          process that hits its own heap limit throws a JavaScript OOM it can
+          log — far better evidence than a container that vanishes.
+
+          🔴 WHAT IT WOULD NOT DO: bound NATIVE memory. `libvips42` is installed
+          in the customer-web and workshop-web runtime images, and libvips
+          allocates OUTSIDE the V8 heap. If image handling is what fills the
+          container, a heap cap will not stop it — and worse, it would make the
+          symptom quieter while leaving the cause untouched.
+
+          So: read the interval evidence above FIRST. Do not set a cap as a
+          reflex and record the problem as fixed.
+          ─────────────────────────────────────────────────────────────────
+          NOTE
