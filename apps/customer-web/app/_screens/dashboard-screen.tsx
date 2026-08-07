@@ -1,5 +1,10 @@
 import Link from 'next/link';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
+// The SAME helpers the garage card uses. Two status vocabularies on two
+// screens would tell one customer two different things about one car, and the
+// dashboard is the screen they see first.
+import { currentRepairByVehicle, type JobCardStatus } from './garage-status';
+import { customerStage, needsCustomer } from './repair-journey';
 import { PageHeader, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
@@ -100,6 +105,20 @@ export async function CustomerDashboardScreen() {
    * single honest line; the rest of the page is unaffected.
    */
   const orders = await apiGet<OrderRow[]>('customer', '/marketplace/orders');
+
+  // 🔴 THE ANSWER TO "WHAT IS HAPPENING TO MY CAR?", ON THE FIRST SCREEN.
+  //
+  // This card listed a plate and a model and nothing else, so the dashboard —
+  // the screen a customer lands on — was silent about the one thing they came
+  // to find out. Owner: "they must have views on each section or card outputs
+  // on what the status on their vehicle repair". EACH card, hence this one and
+  // not only the garage.
+  //
+  // An ENRICHMENT, and it degrades like one: if this call fails the vehicles
+  // still list. A dashboard that 500s because a badge could not be drawn is a
+  // worse product than one with no badge.
+  const cards = await apiGet<JobCardStatus[]>('customer', '/job-cards');
+  const current = currentRepairByVehicle(cards.ok ? cards.data : []);
   const openOrders = orders.ok
     ? orders.data.filter((o) => o.status !== 'delivered' && o.status !== 'cancelled')
     : [];
@@ -138,6 +157,26 @@ export async function CustomerDashboardScreen() {
                   {v.make}
                   {v.model ? ` ${v.model}` : ''}
                 </span>
+                {/*
+                  Only when there IS an open repair. Inventing "no active
+                  repair" on every row would be noise on a dashboard of parked
+                  cars, and the absence of a badge already says it.
+                */}
+                {current.has(v.id) ? (
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: primitive.space[2], alignItems: 'baseline' }}>
+                    <StatusBadge
+                      kind={customerStage(current.get(v.id)!.stage).badge}
+                      label={customerStage(current.get(v.id)!.stage).label}
+                    />
+                    {/* The stages where the CUSTOMER is the hold-up are the ones
+                        worth interrupting them for — a car sitting still while
+                        its owner is never told they are the blocker is the
+                        expensive version of this. */}
+                    {needsCustomer(current.get(v.id)!.stage) ? (
+                      <Link href="/service-and-repairs/repair-tracking">Action needed</Link>
+                    ) : null}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
