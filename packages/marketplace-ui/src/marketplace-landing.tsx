@@ -297,7 +297,23 @@ export function MarketplaceLanding({
               // Signed in: the account already exists, so offering to create one
               // is a dead end. Send them where their own work is instead.
               <>
-                <a href={viewer.dashboardHref} style={BUTTON_PRIMARY}>
+                {/*
+                  🔴 THE ONE BUTTON THE BUSINESS RUNS ON — owner, 2026-08-07:
+                  "create a button for a user to request for repair service that
+                  will open into a form that will register user, register his car
+                  and take the complaint."
+
+                  It is FIRST, ahead of the dashboard, because somebody arriving
+                  at this site with a broken car wants a workshop, not a
+                  dashboard. Everything else on this page is how they decide;
+                  this is how they act.
+                */}
+                {requestServiceHref ? (
+                  <a href={requestServiceHref} style={BUTTON_PRIMARY}>
+                    Request repair service
+                  </a>
+                ) : null}
+                <a href={viewer.dashboardHref} style={BUTTON_SECONDARY}>
                   Go to your dashboard
                 </a>
                 <a href="#find-parts" style={BUTTON_GREEN}>
@@ -307,8 +323,26 @@ export function MarketplaceLanding({
               </>
             ) : (
               <>
+                {/*
+                  SIGNED OUT, the same button — but through registration, which
+                  is what makes it "register the user" as the owner asked. The
+                  account is created at Keycloak and the visitor lands back on
+                  the request form, so one press covers sign-up AND the request
+                  rather than making them find their way back afterwards.
+
+                  ⚠️ `next` is a PATH, never a full URL: `/api/auth/register`
+                  builds the redirect from the incoming request's own origin, so
+                  a tunnel or preview host returns to ITSELF. Passing an absolute
+                  URL here would send a preview visitor to production.
+                */}
+                {requestServiceHref ? (
+                  /* eslint-disable-next-line @next/next/no-html-link-for-pages */
+                  <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+                    Request repair service
+                  </a>
+                ) : null}
                 {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-                <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+                <a href="/api/auth/register" style={BUTTON_SECONDARY}>
                   Create a free account
                 </a>
                 <a href="#find-parts" style={BUTTON_GREEN}>
@@ -1235,7 +1269,7 @@ function MechanicCard({
       */}
       {signedIn && requestServiceHref ? (
         <a
-          href={`${requestServiceHref}?workshop=${encodeURIComponent(mechanic.id)}`}
+          href={`${requestServiceHref}?workshop=${encodeURIComponent(mechanic.organizationId)}`}
           style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}
         >
           Request for Service

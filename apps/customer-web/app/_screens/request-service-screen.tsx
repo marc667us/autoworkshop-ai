@@ -25,6 +25,12 @@ import { requestServiceAction } from './request-service-actions';
  */
 export const dynamic = 'force-dynamic';
 
+interface Mechanic {
+  organizationId: string;
+  tradingName: string;
+  city?: string | null;
+}
+
 interface Vehicle {
   id: string;
   registrationNumber: string;
@@ -50,20 +56,31 @@ async function RequestForm({ workshopId }: { workshopId?: string }) {
   // The garage is an OPTIONAL convenience here. A failure to read it must not
   // block the request — the whole point is that this works for somebody with no
   // vehicles on file at all.
-  const vehicles = await apiGet<Vehicle[]>('customer', '/vehicles');
+  const [vehicles, mechanics] = await Promise.all([
+    apiGet<Vehicle[]>('customer', '/vehicles'),
+    // The PUBLIC workshop directory. Fetched so somebody who arrived from the
+    // landing's "Request repair service" button — rather than from a specific
+    // mechanic card — can choose one here instead of being sent back.
+    apiGet<Mechanic[]>('customer', '/public/mechanics'),
+  ]);
   const mine = vehicles.ok ? vehicles.data : [];
+  const workshops = mechanics.ok ? mechanics.data : [];
 
-  if (!workshopId) {
-    // Not an error state: it is a person who reached the form without choosing.
-    // Send them to the thing that makes the form usable.
-    // ⚠️ AN EMPTY STATE, NOT `ApiFailure`. Nothing failed: this is somebody who
-    // reached the form without choosing a workshop, and telling them the service
-    // is unavailable would be a lie about a working system — the same class of
-    // wrong message as "your session has ended" shown to a first-time visitor.
+  // 🔴 THE WORKSHOP IS THE FORM'S FIRST QUESTION WHEN NOBODY PICKED ONE.
+  //
+  // This used to be an empty state telling the visitor to go back and open the
+  // form from a workshop card. That is a wall on the one screen the whole funnel
+  // exists to reach: somebody who pressed "Request repair service" on the
+  // landing has already said exactly what they want, and answering with "go and
+  // find a workshop first" loses them.
+  //
+  // Nothing has failed, so this is still not an `ApiFailure` — the choice simply
+  // moves into the form.
+  if (!workshopId && workshops.length === 0) {
     return (
       <EmptyState
-        title="Choose a workshop first"
-        description="Open this form from a workshop in the directory, so your request reaches the one you picked."
+        title="No workshops listed yet"
+        description="Requests go to workshops in the public directory, and none are listed yet. Please try again shortly."
       />
     );
   }
@@ -75,11 +92,31 @@ async function RequestForm({ workshopId }: { workshopId?: string }) {
       successHref={{ href: '/service-and-repairs/service-requests', label: 'See your requests' }}
     >
       {/*
-        The chosen workshop, carried through the form rather than re-selected.
-        ⚠️ NOT A TRUST BOUNDARY — the API re-checks that this organisation exists
-        in this tenant, and RLS checks again. A hidden field is a suggestion.
+        The chosen workshop when they came from a mechanic card; a question when
+        they came from the landing button.
+        ⚠️ NEITHER IS A TRUST BOUNDARY — the API re-checks that this organisation
+        exists in this tenant, and RLS checks again. A hidden field is a
+        suggestion, and so is a select.
       */}
-      <input type="hidden" name="organizationId" value={workshopId} />
+      {workshopId ? (
+        <input type="hidden" name="organizationId" value={workshopId} />
+      ) : (
+        <Field
+          label="Which workshop?"
+          hint="Pick the one you would like to look at your car."
+          htmlFor="organizationId"
+        >
+          <Select
+            id="organizationId"
+            name="organizationId"
+            required
+            options={workshops.map((w) => ({
+              value: w.organizationId,
+              label: w.city ? `${w.tradingName} — ${w.city}` : w.tradingName,
+            }))}
+          />
+        </Field>
+      )}
 
       {mine.length > 0 ? (
         <Field

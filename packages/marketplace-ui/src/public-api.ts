@@ -33,7 +33,15 @@ export interface PublicPart {
 }
 
 export interface PublicMechanic {
+  /** The DIRECTORY listing's id. Not the workshop. */
   id: string;
+  /**
+   * The WORKSHOP this listing belongs to — what a service request is addressed
+   * to. Distinct from `id`, and conflating them was a real defect: the Request
+   * for Service link passed the listing id and every request would have been
+   * refused with "that workshop was not found".
+   */
+  organizationId: string;
   tradingName: string;
   city: string;
   country: string;

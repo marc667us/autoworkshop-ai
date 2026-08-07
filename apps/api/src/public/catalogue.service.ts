@@ -327,7 +327,12 @@ export class CatalogueService {
     }
 
     const rows = await this.db.queryWithoutTenant<Record<string, unknown>>(
-      `SELECT m.id, m.trading_name, m.city, m.country, m.services, m.specialisms
+      // 🔴 `organization_id` AS WELL AS `id`. They are DIFFERENT columns, and the
+      // difference was a live defect: the Request for Service link passed the
+      // DIRECTORY id where `POST /service-requests` expects an ORGANISATION, so
+      // every request would have been refused with "that workshop was not
+      // found". The directory row is not the workshop.
+      `SELECT m.id, m.organization_id, m.trading_name, m.city, m.country, m.services, m.specialisms
          FROM catalogue.mechanic_directory m
         WHERE ${where.join(' AND ')}
         ORDER BY m.trading_name
@@ -337,6 +342,9 @@ export class CatalogueService {
 
     return rows.map((r) => ({
       id: String(r.id),
+      // The WORKSHOP, not the directory row. A service request is addressed to
+      // an organisation; `id` above identifies the listing.
+      organizationId: String(r.organization_id),
       tradingName: String(r.trading_name),
       city: String(r.city),
       country: String(r.country),
