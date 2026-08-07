@@ -1,0 +1,221 @@
+# Why did a Render deploy fail? READ-ONLY.
+#
+# Built 2026-08-07, when `Release` run 31190439026 spent 18 minutes in
+# `update_in_progress` and ended `update_failed` — and there was NO WAY FROM HERE
+# TO ASK WHY. `_deploy-render.yml` reports the STATUS Render returns and nothing
+# else, so the log said "deploy ended in update_failed" and stopped. That is the
+# whole diagnosis available today: a verdict with no evidence.
+#
+# `render-status.yml` lists deploys and their statuses. It deliberately does not
+# fetch events or logs, so it can say a deploy failed but never why. This fills
+# exactly that gap and nothing more.
+#
+# THE FAILURE MODE THIS GUARDS AGAINST: a probe that returns empty and reads as
+# "nothing wrong". Every request below prints its HTTP status BEFORE its body, so
+# a 401/403 from an API key without log entitlement is visible as a REFUSAL
+# rather than an empty section that looks like a clean bill of health.
+#
+# SCOPED TO A FIXED SET OF SERVICES. The owner's Render account also hosts the
+# Solar production application, which is off-limits (ADR-011). Web ids come from
+# repository variables; the API and customer services are resolved by EXACT name
+# match, never a substring, so no typo can address a neighbouring service.
+#
+# READ-ONLY: GET requests only. It creates, updates, deletes and deploys nothing.
+name: Diagnose Render deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Which AutoWorkshop service to diagnose'
+        required: true
+        default: production-web
+        type: choice
+        options:
+          - production-web
+          - staging-web
+          - api
+          - customer-web
+      deploy_id:
+        description: 'Deploy id (dep-...). Leave blank for the most recent deploy.'
+        required: false
+        default: ''
+        type: string
+      log_minutes:
+        description: 'Minutes of logs to pull around the deploy'
+        required: false
+        default: '30'
+        type: string
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      SERVICE_CHOICE: ${{ inputs.service }}
+      DEPLOY_ID: ${{ inputs.deploy_id }}
+      LOG_MINUTES: ${{ inputs.log_minutes }}
+      # Resolved from the choice so no id is ever typed by hand. The two web
+      # services come from the same repository variables the deploy workflows
+      # use, so this probe cannot drift from what actually ships.
+      WEB_SERVICE_ID: >-
+        ${{ inputs.service == 'production-web' && vars.RENDER_WEB_SERVICE_ID
+         || inputs.service == 'staging-web'    && vars.RENDER_STAGING_SERVICE_ID
+         || '' }}
+      # Only used when the choice is api / customer-web. Exact-name match below.
+      SERVICE_NAME: >-
+        ${{ inputs.service == 'api'          && 'autoworkshop-api'
+         || inputs.service == 'customer-web' && 'autoworkshop-customer'
+         || '' }}
+    steps:
+      - name: Resolve the service
+        run: |
+          set -euo pipefail
+          if [ -n "${WEB_SERVICE_ID}" ]; then
+            SID="${WEB_SERVICE_ID}"
+            echo "service ${SERVICE_CHOICE} -> ${SID} (from repository variable)"
+          else
+            # Render's ?name= filter is a SEARCH, not an equality test — it
+            # returns anything containing the string. The exact match below is
+            # what keeps `autoworkshop-api` from resolving to a longer name that
+            # merely contains it.
+            SID="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' \
+              "https://api.render.com/v1/services?name=${SERVICE_NAME}&limit=20" \
+              | python3 -c "
+          import sys, json, os
+          rows = json.load(sys.stdin)
+          for r in rows:
+              s = r.get('service', r)
+              if s.get('name') == os.environ['SERVICE_NAME']:
+                  print(s['id']); break
+          ")"
+            [ -n "$SID" ] || { echo "::error::no service named exactly ${SERVICE_NAME}"; exit 1; }
+            echo "service ${SERVICE_CHOICE} -> ${SID} (exact name match)"
+          fi
+          echo "SID=${SID}" >> "$GITHUB_ENV"
+
+      - name: The deploy itself
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_ID}" ]; then
+            DEPLOY_ID="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              "https://api.render.com/v1/services/${SID}/deploys?limit=1" \
+              | python3 -c "import sys,json;rows=json.load(sys.stdin);print(rows[0]['deploy']['id'] if rows else '')")"
+            [ -n "$DEPLOY_ID" ] || { echo "::error::this service has no deploys"; exit 1; }
+            echo "no deploy id supplied; using the most recent: ${DEPLOY_ID}"
+          fi
+          echo "DEPLOY_ID=${DEPLOY_ID}" >> "$GITHUB_ENV"
+
+          code="$(curl -s -o dep.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services/${SID}/deploys/${DEPLOY_ID}")"
+          echo "GET deploys/${DEPLOY_ID} -> ${code}"
+          [ "$code" = "200" ] || { head -c 400 dep.json; echo; exit 1; }
+          python3 - <<'PY'
+          import json
+          d = json.load(open('dep.json'))
+          d = d.get('deploy', d)
+          for k in ('id','status','trigger','createdAt','startedAt','finishedAt','image','imageUrl'):
+              if k in d:
+                  print(f"{k:<12}: {d[k]}")
+          # `finishedAt - startedAt` is the single most diagnostic number here: a
+          # deploy that fails in seconds could not pull its image, whereas one
+          # that fails after many minutes started a container that never became
+          # healthy. Those two have nothing in common except the word "failed".
+          import datetime as dt
+          def p(s):
+              return dt.datetime.fromisoformat(s.replace('Z','+00:00')) if s else None
+          a, b = p(d.get('startedAt')), p(d.get('finishedAt'))
+          if a and b:
+              print(f"{'duration':<12}: {(b-a).total_seconds():.0f}s")
+          PY
+
+      # Render's events carry the platform's OWN account of what happened —
+      # health-check failures, out-of-memory kills, image pull errors. This is
+      # the field that turns "update_failed" into a cause.
+      - name: Service events
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o events.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services/${SID}/events?limit=30")"
+          echo "GET events -> ${code}"
+          if [ "$code" != "200" ]; then
+            echo "::warning::events unavailable on this key/plan"
+            head -c 400 events.json; echo
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          rows = json.load(open('events.json'))
+          if not rows:
+              print("NO EVENTS RETURNED — this is an empty result, not a healthy one")
+          for r in rows:
+              e = r.get('event', r)
+              d = e.get('details') or {}
+              print(f"{e.get('timestamp','?')}  {e.get('type','?')}")
+              # Details vary by event type and the interesting field is rarely
+              # the same one twice, so print the lot rather than guessing.
+              for k, v in d.items():
+                  print(f"      {k}: {v}")
+          PY
+
+      # The container's own output. If the process crashed on boot, the reason is
+      # here and nowhere else.
+      - name: Logs around the deploy
+        run: |
+          set -euo pipefail
+          OWNER="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/services/${SID}" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('ownerId',''))")"
+          [ -n "$OWNER" ] || { echo "::error::could not determine ownerId"; exit 1; }
+
+          # The window is anchored on the DEPLOY's own timestamps, not on "now" —
+          # a diagnosis run hours later must still see the minutes that matter.
+          python3 - <<'PY' > /tmp/window
+          import json, datetime as dt, os
+          d = json.load(open('dep.json'))
+          d = d.get('deploy', d)
+          mins = int(os.environ.get('LOG_MINUTES') or '30')
+          def p(s):
+              return dt.datetime.fromisoformat(s.replace('Z','+00:00')) if s else None
+          end = p(d.get('finishedAt')) or dt.datetime.now(dt.timezone.utc)
+          start = end - dt.timedelta(minutes=mins)
+          print(start.strftime('%Y-%m-%dT%H:%M:%SZ'))
+          print(end.strftime('%Y-%m-%dT%H:%M:%SZ'))
+          PY
+          START="$(sed -n 1p /tmp/window)"
+          END="$(sed -n 2p /tmp/window)"
+          echo "window ${START} .. ${END}"
+
+          code="$(curl -s -o logs.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Accept: application/json' \
+            --get \
+            --data-urlencode "ownerId=${OWNER}" \
+            --data-urlencode "resource=${SID}" \
+            --data-urlencode "startTime=${START}" \
+            --data-urlencode "endTime=${END}" \
+            --data-urlencode "limit=200" \
+            --data-urlencode "direction=backward" \
+            "https://api.render.com/v1/logs")"
+          echo "GET /v1/logs -> ${code}"
+          if [ "$code" != "200" ]; then
+            # A 400/401/403 here is a fact about the KEY or the PLAN, not about
+            # the service. Saying so is the difference between "no logs" and
+            # "logs refused", and only one of those means look somewhere else.
+            echo "::warning::logs refused — this is an access result, not evidence the container was quiet"
+            head -c 600 logs.json; echo
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          d = json.load(open('logs.json'))
+          rows = d.get('logs', d if isinstance(d, list) else [])
+          if not rows:
+              print("NO LOG LINES IN THIS WINDOW — empty, which is itself a finding")
+          for r in reversed(rows):
+              print(f"{r.get('timestamp','?')}  {r.get('message','')}")
+          PY
