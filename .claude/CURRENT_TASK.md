@@ -109,12 +109,48 @@ Self-service vehicle registration needs a make picker — its own slice.
    is what caught it.
 5. A queued `apply-migrations` checks out master at RUN time.
 
+## ✅ EMAIL — SIGN-UP UNBLOCKED, RESET STILL DEAD
+
+Owner, 2026-08-07: *"verification email dont come to the user mail to verify"*,
+*"emailing system dont work"*.
+
+**MEASURED** (`Diagnose Keycloak email`, run 31205339529): the live realm had
+`verifyEmail: true` and **NO `smtpServer`**. Keycloak demanded a verification it
+had no mail server to send — so it did not merely break password reset, **it
+blocked SIGN-UP**, step one of the value chain. 1 of 3 accounts was stuck.
+
+**FIXED** (`Set Keycloak email verification`, run 31205692929, read back):
+`verifyEmail: false`, and the trapped account released — 0 users unverified, 0
+holding `VERIFY_EMAIL`.
+
+⚠️ **THE TRADE-OFF IS REAL:** Keycloak no longer proves a registrant owns the
+address they typed. Chosen because the alternative on a realm with no mail server
+is not "verified users", it is no users at all. Nothing in the product reads
+`emailVerified`. **One dispatch to put back** once SMTP exists — and the workflow
+REFUSES to turn it on while `smtpServer` is absent, so the trap cannot be rearmed.
+
+🔴 **PASSWORD RESET IS STILL A DEAD END** and cannot be fixed from here: it needs
+real SMTP credentials, and this repo has none (only `KC_BOOTSTRAP_ADMIN_PASSWORD`
+and `RENDER_API_KEY`). See the owner action below.
+
 ## OPEN — needs the owner
 - 🔴 **The owner's live password was committed to a PUBLIC repo** (`a0022ff`
   removed it from the file; **git history still carries it**). **Rotate it in
   Keycloak.** Removing it stopped the spread; only rotation ends it.
-- **SMTP secrets on THIS repo**: `SMTP_HOST/PORT/USER/PASS/FROM` (Brevo free).
-  Until then password reset is a dead end. Then run **Set Keycloak SMTP**.
+- 🔴 **SMTP — the only thing standing between the product and working email.**
+  Zero cost: a Brevo free account, then set five secrets on THIS repo:
+  ```
+  gh secret set SMTP_HOST -b "smtp-relay.brevo.com"   # provider's host
+  gh secret set SMTP_PORT -b "2525"                   # NOT 587
+  gh secret set SMTP_USER -b "<brevo login>"
+  gh secret set SMTP_PASS -b "<brevo SMTP key>"
+  gh secret set SMTP_FROM -b "<verified sender address>"
+  ```
+  🔴 **Render's free tier blocks outbound SMTP on 25, 465 and 587. Brevo's 2525
+  is open** — Solar's scar, do not rediscover it. Then run **Set Keycloak SMTP**
+  (dry run first: it opens a real authenticated SMTP session and fails before a
+  single visitor is promised an email). After that, **Set Keycloak email
+  verification** with `verify_email=on` to restore verification.
 - `RENDER_API_KEY` still unrotated since 2026-07-27.
 
 ## OPEN — Claude can do
