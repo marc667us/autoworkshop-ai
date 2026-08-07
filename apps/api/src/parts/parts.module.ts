@@ -8,6 +8,8 @@ import {
   StockController,
   ToolController,
 } from './parts.controller';
+import { SupplierRequestController } from './supplier-request.controller';
+import { SupplierRequestService } from './supplier-request.service';
 import { PartsService } from './parts.service';
 import { PlanningController } from './planning.controller';
 import { PlanningService } from './planning.service';
@@ -35,10 +37,12 @@ import { PlanningService } from './planning.service';
     RequisitionController,
     PurchaseOrderController,
     GoodsReceiptController,
+    // The WORKSHOP -> SUPPLIER edge of the marketplace (059).
+    SupplierRequestController,
     ToolController,
     PlanningController,
   ],
-  providers: [PartsService, PlanningService],
-  exports: [PartsService, PlanningService],
+  providers: [PartsService, PlanningService, SupplierRequestService],
+  exports: [PartsService, PlanningService, SupplierRequestService],
 })
 export class PartsModule {}

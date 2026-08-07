@@ -188,6 +188,11 @@ const workshopGroups: NavGroup[] = [
   ]),
   group('parts-and-supply', 'Parts and Supply', 'box', [
     ['parts-depot', 'Parts Depot'],
+    // 🔴 THE WORKSHOP -> SUPPLIER EDGE (059). Asking a marketplace supplier for
+    // a part the workshop does not stock. Distinct from Procurement, which is
+    // the internal purchase-order process: this is the ASK, sent to somebody
+    // who has not agreed and may decline.
+    ['parts-requests', 'Parts Requests', { counterKey: 'workshop.partsRequests.quoted' }],
     ['reservations', 'Reservations'],
     // §24: reorder alerts and quarantine carry warning badges.
     ['procurement', 'Procurement', { warningKey: 'workshop.parts.reorderAlerts' }],
@@ -269,6 +274,11 @@ const supplierGroups: NavGroup[] = [
     ['low-stock-alerts', 'Low-Stock Alerts', { warningKey: 'supplier.stock.low' }],
   ]),
   group('orders-and-delivery', 'Orders and Delivery', 'truck', [
+    // 🔴 THE SUPPLIER'S HALF OF THE WORKSHOP -> SUPPLIER EDGE (059). A workshop
+    // found this supplier in the parts marketplace and asked for a part. It sits
+    // ABOVE New Orders deliberately: a request is an unanswered question and an
+    // order is settled business, so the thing needing a person comes first.
+    ['parts-requests', 'Parts Requests', { counterKey: 'supplier.partsRequests.new' }],
     ['new-orders', 'New Orders', { counterKey: 'supplier.orders.new' }],
     ['confirmed-orders', 'Confirmed Orders'],
     ['dispatch', 'Dispatch'],

@@ -461,4 +461,39 @@ export class CatalogueService {
       })),
     };
   }
+  /**
+   * The published supplier directory — the marketplace's supply side.
+   *
+   * PUBLIC and unauthenticated for the same reason the mechanic directory is:
+   * finding each other is the free half of the product, and a directory behind a
+   * login cannot connect anybody. `is_published` is the whole gate — an
+   * unpublished supplier is not someone a workshop can transact with, and the
+   * `public_read` policies test exactly that rather than a tenant.
+   *
+   * ⚠️ NO CONTACT DETAILS. The same rule the mechanic cards follow: the address
+   * and phone number are genuinely ABSENT from this response, not hidden in it,
+   * so there is nothing for a devtools inspector to reveal.
+   */
+  async suppliers(): Promise<{ id: string; name: string; city: string | null; country: string | null }[]> {
+    // `queryWithoutTenant`, like every other public read in this file — the
+    // directory has no tenant by design, and the `public_read` policies gate it
+    // on `is_published` instead.
+    const rows = await this.db.queryWithoutTenant<Record<string, unknown>>(
+      `SELECT id, name, city, country
+         FROM catalogue.suppliers
+        WHERE is_published
+        ORDER BY name ASC
+        LIMIT 500`,
+    );
+    // Returns the ROWS directly — not a pg result object. Reading `.rows` off
+    // it typechecks as `any` in looser positions and yields undefined at run
+    // time, which is the shape of a list that is silently always empty.
+    return rows.map((r) => ({
+      id: r['id'] as string,
+      name: r['name'] as string,
+      city: (r['city'] as string | null) ?? null,
+      country: (r['country'] as string | null) ?? null,
+    }));
+  }
+
 }

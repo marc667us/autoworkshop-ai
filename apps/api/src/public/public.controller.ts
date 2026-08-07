@@ -123,6 +123,15 @@ export class PublicController {
     return this.catalogue.searchMechanics(query);
   }
 
+  /**
+   * The published supplier directory — the supply side of the marketplace, and
+   * what a workshop picks from when raising a parts request (059).
+   */
+  @Get('suppliers')
+  async suppliers() {
+    return this.catalogue.suppliers();
+  }
+
   /** Counters for the landing page's KPI strip. */
   @Get('stats')
   async stats() {
