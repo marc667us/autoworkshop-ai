@@ -146,10 +146,29 @@ and `RENDER_API_KEY`). See the owner action below.
   gh secret set SMTP_PASS -b "<brevo SMTP key>"
   gh secret set SMTP_FROM -b "<verified sender address>"
   ```
-  🔴 **Render's free tier blocks outbound SMTP on 25, 465 and 587. Brevo's 2525
-  is open** — Solar's scar, do not rediscover it. Then run **Set Keycloak SMTP**
-  (dry run first: it opens a real authenticated SMTP session and fails before a
-  single visitor is promised an email). After that, **Set Keycloak email
+  🔴 **Render's free tier blocks outbound SMTP on 25, 465 and 587.** Two
+  zero-cost providers offer a port that is NOT blocked:
+
+  | | host | port | free | setup |
+  |---|---|---|---|---|
+  | **Brevo** | `smtp-relay.brevo.com` | **2525** | 300/day | verify ONE sender address, no DNS |
+  | **Resend** | `smtp.resend.com` | **2587** (set `SMTP_PORT_FOR_KC=2587`) | 3,000/mo | needs a DNS-verified domain before it sends to anyone but the account owner |
+
+  Brevo is fastest to working; Resend gives better deliverability because domain
+  verification is what puts real DKIM/SPF on the mail. Neither is open source —
+  but both speak plain SMTP, so the provider is a swappable adapter and nothing
+  in the product couples to either (ADR-015).
+
+  🔴 **A SELF-HOSTED OPEN-SOURCE MAIL SERVER CANNOT WORK HERE**, and this is not
+  a cost question. Render free gives no static IP and no reverse-DNS (PTR)
+  record, and blocks port 25 — Gmail and Yahoo reject or spam mail from such a
+  sender. **Mailpit cannot serve as a test target either**: a Render web service
+  accepts only HTTP(S) on a single port, so there is no raw TCP ingress for
+  Keycloak to deliver SMTP to. Mailpit is for LOCAL development only.
+
+  Then run **Set Keycloak SMTP** — dry run first. It now asks **Keycloak itself**
+  to send via `testSMTPConnection`, not the GitHub runner, so a blocked Render
+  port is caught before the realm is configured. After that, **Set Keycloak email
   verification** with `verify_email=on` to restore verification.
 - `RENDER_API_KEY` still unrotated since 2026-07-27.
 
