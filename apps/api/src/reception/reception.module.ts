@@ -4,6 +4,8 @@ import { IdentityModule } from '../identity/identity.module';
 // through the service that allocates the job number and sets the opening stage.
 // RepairModule does not import ReceptionModule, so there is no cycle.
 import { RepairModule } from '../repair/repair.module';
+// For `NotificationsService`: a service request must tell reception it arrived.
+import { NotificationsModule } from '../notifications/notifications.module';
 import {
   AppointmentController,
   CustomerFeedbackController,
@@ -25,7 +27,7 @@ import { ServiceRequestService } from './service-request.service';
  * RepairModule, CoreModule and MediaModule carry the same note.
  */
 @Module({
-  imports: [IdentityModule, RepairModule],
+  imports: [IdentityModule, RepairModule, NotificationsModule],
   controllers: [
     AppointmentController,
     WalkInController,

@@ -1,0 +1,110 @@
+# Send the notifications the product owes — migration 060.
+#
+# ── WHY A CRON AND NOT A WORKER INSIDE THE API ────────────────────────────
+#
+# The API runs on Render's free tier and SPINS DOWN after ~15 minutes idle, so
+# an in-process timer would stop existing exactly when nobody is using the app —
+# which is precisely when a queued message is waiting. A cron that arrives from
+# outside also WAKES the service, so the drain and the wake are one action.
+#
+# 🔴 GITHUB DELIVERS ~0.6 RUNS PER HOUR WHATEVER THE SCHEDULE ASKS FOR. Measured
+# across 8 workflows on the sibling project: 12/h and 2/h both arrived at ~0.6/h.
+# So this asks for every 15 minutes and EXPECTS roughly hourly, and the design
+# that copes is do-more-per-run rather than ask-more-often: each run drains up to
+# 200 messages, not a handful. Tightening the cron would change nothing.
+#
+# ── ⚠️ IT IS NOT AN ERROR FOR THIS TO SEND NOTHING ────────────────────────
+#
+# With no SMTP provider configured the drain reports `configured: false` and
+# claims NOTHING — deliberately, so an unconfigured platform does not burn every
+# message's retry budget. That is a normal state today, not a failure, and this
+# workflow says so rather than going red and training everyone to ignore it.
+name: Drain notifications
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Maximum messages to send in this run'
+        required: false
+        default: '200'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two drains overlapping is safe at the DATABASE level — `claim_pending_
+  # notifications` uses FOR UPDATE SKIP LOCKED precisely so they cannot select
+  # the same rows — but there is no value in paying for two, and cancelling one
+  # mid-send would abandon a message it had already claimed.
+  group: drain-notifications
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Send what is owed
+        env:
+          API_BASE_URL: https://autoworkshop-api.onrender.com
+          DRAIN_TOKEN: ${{ secrets.NOTIFICATIONS_DRAIN_TOKEN }}
+          LIMIT: ${{ inputs.limit || '200' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DRAIN_TOKEN}" ]; then
+            echo "::warning::NOTIFICATIONS_DRAIN_TOKEN is not set on this repository, so nothing can be drained."
+            echo "Set the SAME value as a GitHub secret and as NOTIFICATIONS_DRAIN_TOKEN on the API service."
+            exit 0
+          fi
+
+          # The free tier sleeps. The first request wakes it and can take ~25s,
+          # so a single attempt would report the drain broken for a property of
+          # the hosting tier.
+          for i in 1 2 3; do
+            code="$(curl -s -o /tmp/drain.json -w '%{http_code}' --max-time 180 \
+              -X POST -H "x-drain-token: ${DRAIN_TOKEN}" \
+              "${API_BASE_URL}/api/v1/notifications/drain?limit=${LIMIT}" || echo 000)"
+            [ "$code" = "201" ] || [ "$code" = "200" ] && break
+            echo "  attempt ${i}: HTTP ${code} (waking?)"
+            sleep 20
+          done
+
+          echo "drain -> HTTP ${code}"
+          cat /tmp/drain.json 2>/dev/null || true
+          echo
+
+          case "$code" in
+            200|201) ;;
+            403)
+              echo "::error::the API refused the drain token. The GitHub secret and the API's NOTIFICATIONS_DRAIN_TOKEN must be the SAME value."
+              exit 1 ;;
+            *)
+              echo "::error::drain did not answer (HTTP ${code})"
+              exit 1 ;;
+          esac
+
+          # `configured: false` means no mail provider — a real state, not a
+          # fault, and it must be visible without being red.
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open('/tmp/drain.json'))
+          except Exception:
+              raise SystemExit('::error::the drain did not return JSON')
+          if not d.get('configured'):
+              print(f"::warning::no mail provider configured ({d.get('transport')}) — "
+                    "nothing was claimed and nothing was lost. Messages stay queued.")
+          else:
+              print(f"transport : {d.get('transport')}")
+              print(f"claimed   : {d.get('claimed')}")
+              print(f"sent      : {d.get('sent')}")
+              print(f"failed    : {d.get('failed')}")
+              # A run where EVERY message failed is a provider problem worth
+              # seeing, not a quiet statistic in a log nobody opens.
+              if d.get('claimed') and d.get('sent') == 0:
+                  print('::error::every message in this batch failed to send')
+                  raise SystemExit(1)
+          PY

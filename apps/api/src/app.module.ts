@@ -16,6 +16,7 @@ import { FinanceModule } from './finance/finance.module';
 import { WarrantyModule } from './warranty/warranty.module';
 import { PartsModule } from './parts/parts.module';
 import { CommsModule } from './comms/comms.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { SelfServiceModule } from './selfservice/selfservice.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { ReportsModule } from './reports/reports.module';
@@ -51,6 +52,7 @@ import { OperationsModule } from './operations/operations.module';
     PartsModule,
     SettingsModule,
     CommsModule,
+    NotificationsModule,
     SelfServiceModule,
     KnowledgeModule,
     ReportsModule,

@@ -7,6 +7,7 @@ import type {
   DecideServiceRequestBody,
 } from './reception.schemas';
 import { JobCardService } from '../repair/job-card.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /**
  * The customer's Request for Service — the owner's value chain, steps 4-7.
@@ -66,6 +67,9 @@ export class ServiceRequestService {
     // here would produce a row that looks like a job card and is outside the
     // state machine every later screen assumes.
     private readonly jobCards: JobCardService,
+    // Migration 060. Reception must HEAR about an intake, not discover it by
+    // opening a screen.
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -108,6 +112,35 @@ export class ServiceRequestService {
           input.preferredContact ?? null,
         ],
       );
+      // 🔴 THE STEP THAT MAKES RECEPTION HEAR ABOUT IT (migration 060).
+      //
+      // The owner's value chain says the request "is received at the reception".
+      // Until now that meant a row appeared in a list nobody was watching: the
+      // product had no sender of any kind, so an intake could sit unseen until
+      // somebody happened to open the inbox screen.
+      //
+      // ⚠️ IN THE SAME TRANSACTION as the request itself, deliberately. If the
+      // request commits, the notification it owes commits with it; neither can
+      // exist without the other. Delivery is a separate concern and happens in
+      // the drain — a dead mail relay must never stop a customer filing a
+      // request.
+      //
+      // ⚠️ The dedupe prefix is the REQUEST id, so a retried submission cannot
+      // ring reception twice for one car.
+      await this.notifications.notifyWorkshopStaff(client, ctx, {
+        organizationId: input.organizationId,
+        event: 'service_request.created',
+        subject: 'New service request',
+        body:
+          `A customer has asked for service.\n\n` +
+          `Vehicle: ${input.vehicleDescription.trim()}\n` +
+          `Complaint: ${input.complaint.trim()}\n\n` +
+          `Open Reception → Service requests to accept or decline it.`,
+        resourceType: 'service_request',
+        resourceId: inserted.rows[0]!.id,
+        dedupePrefix: `service_request.created:${inserted.rows[0]!.id}`,
+      });
+
       const created = await client.query(
         `SELECT ${SELECT_COLUMNS}
            FROM reception.service_requests sr
@@ -182,7 +215,7 @@ export class ServiceRequestService {
       throw new ForbiddenException('Say why the request is being declined.');
     }
     return this.db.withTenant(ctx, async (client) => {
-      const rows = await client.query<{ id: string }>(
+      const rows = await client.query<{ id: string; requested_by: string }>(
         `UPDATE reception.service_requests
             SET status = $4,
                 decline_reason = $5,
@@ -190,7 +223,10 @@ export class ServiceRequestService {
                 decided_at = now()
           WHERE id = $1 AND tenant_id = $2 AND organization_id = $3
             AND status = 'new'
-        RETURNING id`,
+        -- requested_by comes back from the UPDATE rather than a second SELECT:
+        -- it is the person who must be TOLD, and reading it separately would be
+        -- a second answer to "whose request is this" that could disagree.
+        RETURNING id, requested_by`,
         [
           id, ctx.tenantId, ctx.organizationId, input.status,
           input.declineReason ?? null, ctx.userId,
@@ -203,6 +239,33 @@ export class ServiceRequestService {
         // read it.
         throw new NotFoundException('That request is no longer awaiting a decision.');
       }
+
+      // 🔴 THE CUSTOMER LEARNS WHAT HAPPENED (migration 060). Without this the
+      // decision is visible only to whoever thinks to re-open the page they
+      // submitted — and a DECLINE that nobody is told about is the worst case:
+      // the customer waits for a workshop that has already said no.
+      //
+      // The decline reason is included because a refusal with no reason sends
+      // them back to the directory knowing nothing they did not know before.
+      await this.notifications.notifyUser(client, ctx, {
+        recipientId: rows.rows[0]!.requested_by,
+        event: 'service_request.decided',
+        subject:
+          input.status === 'accepted'
+            ? 'Your service request was accepted'
+            : 'Your service request was declined',
+        body:
+          input.status === 'accepted'
+            ? 'The workshop has accepted your request and will be in touch about next steps.'
+            : `The workshop declined your request.\n\nReason: ${input.declineReason ?? 'not given'}\n\n` +
+              'You can choose another workshop from the directory.',
+        resourceType: 'service_request',
+        resourceId: id,
+        // The STATUS is in the key, so accepting and later declining are two
+        // different events — while a retried decision of the SAME kind is one.
+        dedupePrefix: `service_request.decided:${id}:${input.status}`,
+      });
+
       const after = await client.query(
         `SELECT ${SELECT_COLUMNS}
            FROM reception.service_requests sr
