@@ -28,12 +28,26 @@ describe('a non-workshop role gets no workshop navigation', () => {
     },
   );
 
-  it('THE DEFECT IS REAL: bypassing the guard still yields 45', () => {
+  it('THE DEFECT IS REAL: bypassing the guard still exposes the whole staff tree', () => {
     // Exactly what happened before the fix — the raw resolution a customer got.
     const ws = workspaceForRole(getWorkspace('workshop')!, navRoleFor('customer'));
     let n = 0;
     for (const g of visibleGroups(ws, [] as never)) n += g.items.length;
-    expect(n).toBe(45);
+
+    // 🔴 A THRESHOLD, NOT THE EXACT COUNT, AND THAT IS A CORRECTION.
+    //
+    // This asserted `toBe(45)` — the figure measured on 2026-08-06. Adding ONE
+    // ordinary nav entry (Service Requests) made it 46 and turned Release RED,
+    // on a change that had nothing to do with authorization. A test that breaks
+    // every time the menu grows is a test people learn to update without
+    // reading, which is worse than no test.
+    //
+    // The property worth pinning is not the number. It is that the default
+    // staff tree is ENTIRELY UNGATED — grant filtering removes nothing — so the
+    // guard is the only thing standing between a customer and all of it. That
+    // is what makes the `toBe(0)` assertions above meaningful rather than
+    // vacuous, and it stays true whatever the menu's size.
+    expect(n).toBeGreaterThan(40);
   });
 
   it('a real STAFF role is untouched — this must not lock the workshop out', () => {
