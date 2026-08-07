@@ -35,25 +35,29 @@ workflow was dispatched.
 
 ---
 
-## ▶ THE NEXT SLICE — ONE PRESS, NOT TWO
+## ✅ THE FUNNEL — CLOSED AND MEASURED ON LIVE
 
-Signed OUT, "Request repair service" goes to `/api/auth/register`, which sends
-the visitor to Keycloak with `redirect_uri = <apex>/api/auth/callback/keycloak`.
-They register and land back on **the apex**, not on the form. The second press
-of the same button (now the signed-in variant) takes them to the form.
+🔴 **The Supervisor found the funnel dropped people ANONYMOUS onto the form.**
+The apex and customer-web are DIFFERENT HOSTS with separate session cookies
+(each app runs its own Auth.js instance), so a visitor signed in on the apex
+arrived signed OUT — and the form rendered for them anyway, because `/vehicles`
+401s and is swallowed into an empty garage, which looks exactly like a customer
+with no cars. They typed the fault, pressed Send, and got "Your session has
+ended" **with everything they had typed gone.**
 
-Nothing carries a destination through registration: there is no `next` on the
-href and **no callback-url mechanism anywhere in `packages/auth`** — grepped.
-The comment in `marketplace-landing.tsx` that claimed otherwise is corrected.
+Fixed and verified on live, anonymously:
+- The form now **refuses before it is filled in** — 0 `<form>` elements, 0
+  inputs, one "Sign in and continue" button.
+- `callbackUrl` **keeps the chosen workshop**: measured
+  `callbackUrl=%2Fservice-and-repairs%2Frequest-service%3Fworkshop%3Dabc-123`.
+- Both landing variants now point at the form (signed out no longer goes to
+  `/api/auth/register`, where it was byte-identical to "Create a free account"
+  beside it while being gated on a value its own href never read).
 
-▶ Making it one press means carrying an intent through the Auth.js callback.
-**It was deliberately NOT shipped unverified**: proving it requires driving a
-real registration, which creates a real Keycloak account. Plan it, then drive it.
-
-⚠️ The form has **no signed-out branch at all**. A stranger reaching it gets a
-rendered form (`/vehicles` 401s and is swallowed to an empty garage), fills it
-in, and only learns they need an account when they submit. That is worth a
-guard on the same slice.
+⚠️ **Registration is still one click INSIDE Keycloak's login page**, not a
+direct link from the landing. That is the accepted shape: it is one press to
+the right place and nothing typed can be lost. If the owner wants sign-up to be
+the first thing a stranger sees, that is a deliberate change, not a bug.
 
 ---
 
@@ -66,6 +70,12 @@ From `docs/00-project/CUSTOMER_VALUE_CHAIN.md`:
 
 ⚠️ Customer §33 audits 35/35, but that is MENU COVERAGE — every entry has a
 working page. It says nothing about whether these three exist. Check first.
+
+▶ **The next real slice starts here.** The chain is deployed and the funnel
+reaches the form; what has NOT been done is **driving it once end to end as a
+real customer** — sign in, send a request, watch it arrive at reception, convert
+it to a job card. Everything above is measured at the HTTP layer, which proves
+the routes exist and refuse correctly. It does not prove a request can be sent.
 
 ⚠️ The Request for Service form still does NOT register the vehicle: the
 customer describes the car in free text and reception creates the record on
