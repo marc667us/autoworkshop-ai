@@ -30,6 +30,17 @@
 # different network contexts and there is no reason for them to agree.
 # `SMTP_PORT_FOR_KC` overrides it if a provider needs something else.
 #
+# PROVIDERS THAT WORK FROM RENDER, both zero cost (2026-08-07):
+#   Brevo   smtp-relay.brevo.com  port 2525 (STARTTLS)  300/day
+#           Starts sending after verifying ONE sender address — no DNS needed.
+#   Resend  smtp.resend.com       port 2587 (STARTTLS)  3,000/month
+#           Needs a DOMAIN verified by DNS records before it will send to
+#           anyone but the account owner — more setup, better deliverability,
+#           because that is what puts real DKIM/SPF on the mail.
+# Set `SMTP_PORT_FOR_KC=2587` for Resend. Neither is open source; both speak
+# plain SMTP, so the provider is a swappable adapter and nothing in the product
+# is coupled to either (ADR-015, bring-your-own-connection).
+#
 # ── ⚠️ DRY RUN BY DEFAULT, AND THE DRY RUN PROVES SOMETHING ─────────────────
 #
 # This repo has a recorded defect for the opposite: "a step gated on
@@ -213,10 +224,63 @@ jobs:
           for k, v in smtp.items():
               print(f"  {k:16s} = " + (f"<{len(v)} chars>" if k == 'password' else str(v)))
 
+          # ── 🔴 ASK KEYCLOAK TO SEND, NOT THE RUNNER ────────────────────────
+          #
+          # The SMTP login proved in the previous step ran on a GITHUB RUNNER.
+          # That proves the credentials are valid and that GITHUB can reach the
+          # provider. It proves NOTHING about whether KEYCLOAK can — and
+          # Keycloak runs on Render, which is the whole reason this file warns
+          # about blocked ports. Treating the runner's success as Keycloak's is
+          # "a truth about A used as evidence for B", the failure shape this
+          # repository has recorded four times.
+          #
+          # `testSMTPConnection` makes the Keycloak server itself open the
+          # connection and send, from its own network. It persists nothing, so
+          # it runs on a DRY RUN too — which is what makes the dry run worth
+          # trusting rather than a rehearsal of the easy half.
+          def keycloak_smtp_test():
+              url = f"{BASE}/admin/realms/{REALM}/testSMTPConnection"
+              # Keycloak changed this endpoint's body format across versions:
+              # newer builds take the config as JSON, older ones take it
+              # form-encoded under `config`. Try both before believing a failure.
+              for form, payload in ((False, smtp), (True, {'config': json.dumps(smtp)})):
+                  try:
+                      status, _ = call('POST', url, payload, token=token, form=form)
+                      return True, f"HTTP {status}"
+                  except urllib.error.HTTPError as e:
+                      detail = ''
+                      try:
+                          detail = e.read().decode()[:300]
+                      except Exception:
+                          pass
+                      last = f"HTTP {e.code} {detail}"
+                  except Exception as e:  # network, timeout
+                      last = f"{type(e).__name__}: {e}"
+              return False, last
+
+          ok, detail = keycloak_smtp_test()
+          if ok:
+              print(f"\n✅ KEYCLOAK ITSELF SENT A TEST MESSAGE ({detail}).")
+              print("   That is the fact that matters: the mail left Render, not a runner.")
+              print("   It is addressed to the ADMIN user's email address.")
+          else:
+              print(f"\n🔴 KEYCLOAK COULD NOT SEND: {detail}")
+              print("   The credentials are fine — the previous step logged in with them.")
+              print("   So this is Keycloak's network or the admin account, not the password:")
+              print("     • Render's free tier blocks outbound 25/465/587. Brevo offers 2525,")
+              print("       Resend offers 2587/2465. Set SMTP_PORT_FOR_KC to one of those.")
+              print("     • 'Failed to send email' can also mean the ADMIN USER HAS NO EMAIL")
+              print("       ADDRESS, since that is where the test is sent. That is not an")
+              print("       SMTP fault and would not affect real password-reset mail.")
+              if APPLY:
+                  print("   Writing the config anyway would leave the realm PROMISING mail it")
+                  print("   cannot send — the exact dead end this workflow exists to close.")
+                  sys.exit(1)
+
           if not APPLY:
               print("\nDRY RUN — the realm was NOT modified.")
-              print("Both the Keycloak admin login and the SMTP login above SUCCEEDED,")
-              print("so re-running with confirm=APPLY is expected to work.")
+              print("The Keycloak admin login and the SMTP login both SUCCEEDED,")
+              print("and the send test above is the one that speaks for production.")
               sys.exit(0)
 
           # A partial realm representation. Keycloak merges it, so this updates
