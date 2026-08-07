@@ -12,6 +12,61 @@ for **Phase 8 only** (owner, 2026-08-07, ADR-018 amendment).
 
 ---
 
+# ═══ UPDATE 2026-08-07 pt3 — READ THIS BEFORE THE SECTION BELOW ═══
+
+**R1 is UNCHANGED and still owner-only.** I searched the whole machine: there
+are **no Namecheap API credentials** anywhere, and the Namecheap API needs
+account-level enablement plus an IP allow-list. Browser automation was offered
+and declined. Every route to sending mail needs DNS write access or mailbox
+access. **Do not spend another session re-deriving this.**
+
+**What changed instead — the two halves nobody could test are now tested:**
+
+1. `infrastructure/migrations/rehearse/060_notifications_render_privileges.sql`
+   — **7/7 under Render's privilege shape, locally, rolled back.** 🔴 Locally the
+   definer functions are owned by a **BYPASSRLS superuser**, so a green drain
+   test here proves NOTHING about production RLS. This re-owns the table and all
+   five definer functions to a NOSUPERUSER NOBYPASSRLS role and drives
+   claim → record with no user context. Run it:
+   ```bash
+   docker exec -i aw-postgres psql -U autoworkshop -d autoworkshop -v ON_ERROR_STOP=1 \
+     < infrastructure/migrations/rehearse/060_notifications_render_privileges.sql
+   ```
+2. **A message was actually delivered and read back**, via Mailpit:
+   ```bash
+   bash scripts/dev-mailpit-cert.sh && docker compose --profile dev up -d mailpit
+   cd apps/api && REQUIRE_MAIL_DELIVERY=1 \
+     NODE_EXTRA_CA_CERTS=../../infrastructure/docker/mailpit-tls/cert.pem \
+     ./node_modules/.bin/vitest run src/notifications/
+   ```
+   ⚠️ Without `NODE_EXTRA_CA_CERTS` the delivery test SKIPS (by design).
+   `REQUIRE_MAIL_DELIVERY=1` makes that skip a **failure** — use it in CI.
+
+**🔴 THE CODEX GATE SILENTLY DID NOT RUN.** It read files for 9 minutes, died on
+`unknown variant 'max'` (CLI too old), produced zero findings and **exited 0**.
+Fixed by `npm i -g @openai/codex@latest` (0.137.0 → 0.147.0). **Check the output
+contains findings — never the exit code.** On the re-run it returned FAIL with 4
+real findings, all fixed.
+
+**🚨 "app is down" (owner, this session) — IT WAS COLD, NOT DOWN.** Keycloak
+timed out at 90s then answered **200 in 21s**; warm, all four services are
+0.5–2.1s. A 90s timeout is not proof KC is dead — cold start is ~127s measured.
+
+**🚨 "memory limit exceeded due to leaks" — THE EVIDENCE SAYS OTHERWISE.**
+`autoworkshop-customer`: **ONE** oomKilled in **4 days 4 hours** of events
+(512Mi, 22:42:34Z, back up in 3s). api and production-web: none. **No traffic
+for the 12 minutes before the kill**, so it did not die serving a request. New
+read-only **`Diagnose Render memory`** workflow anchors on the failure event
+(the deploy diagnostic anchors on the deploy and returns healthy logs from hours
+earlier) and counts intervals between kills. Details + candidate zero-cost
+remedies in the memory note `project_autoworkshop_session_2026-08-07_pt3_*`.
+
+**Still open from LIST 1:** I8 (Playwright), I10 (investigated, NOT built —
+`assertWithinApprovalLimit` is called from `variation.service.ts` only; the
+`quotation` and `purchase_order` scopes remain unenforced), I11, I12.
+
+---
+
 # ═══ RESUMPTION POINT — read this first ═══
 
 ## 🔴 R1. ONE DNS RECORD IS BLOCKING ALL EMAIL, ON BOTH PRODUCTS
