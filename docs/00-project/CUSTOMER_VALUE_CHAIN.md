@@ -80,9 +80,85 @@ is claimed:
   assigns the work.
 - Step 9: the orchestrated agent that runs the repair with the other agents.
 
-The owner separately asked for: customers to log in to view and add complaints,
-to add or register their own vehicles, and to have **views on each section or
-card showing the STATUS of their vehicle's repair**.
+## The customer's own screens — owner's additional requests, 2026-08-06
+
+Asked for explicitly, alongside the flow above. These are `customer-web`, NOT
+workshop-web:
+
+1. **Sign in to VIEW and ADD complaints.** Viewing is not enough — the customer
+   raises complaints themselves.
+2. **Add / register their own vehicles.** The customer must be able to register a
+   vehicle directly, not only have one created for them at reception by the
+   agent in step 8. Both paths must exist: self-registration AND agent
+   registration from a submitted request.
+3. 🔴 **STATUS OF THEIR VEHICLE'S REPAIR, ON EVERY SECTION OR CARD.** The owner's
+   words: *"they must have views on each section or card outputs on what the
+   status on their vehicle repair"*. So repair status is not one status page — it
+   is surfaced on the cards throughout the customer's screens. A customer should
+   never have to hunt for where their car is up to.
+
+⚠️ NONE OF THESE THREE HAS BEEN VERIFIED AGAINST WHAT EXISTS. Customer §33
+audits 35/35 routes, but that measures MENU COVERAGE — every menu entry has a
+working page — and says nothing about whether these three capabilities are among
+them. Check before building, and check before claiming.
+
+---
+
+## 🔴 THE AUTHORIZATION FIX — measured, scoped, and NOT a patch
+
+**Measured 2026-08-06**: a signed-in `customer` on `workshop-web` sees **45 of 45**
+items in the workshop default tree. Permission filtering removes NOTHING, because
+every item in that tree is ungated. The leaked list includes Customers (the whole
+customer book), Vehicles, Job Cards, Technicians, Quotations, Customer Proposals,
+Parts Depot, Procurement, Suppliers, Warranty Claims and four Reports screens.
+
+**Why it is not a one-line change.** Both the navigation and the gate resolve
+through the same two calls:
+
+  * `WorkspaceShell.tsx:156-159` — `getWorkspace()` then `workspaceForRole(base, role)`
+  * `require-route.ts` — the same pair, deliberately, so nav and router cannot drift
+
+`workspaceForRole(base, undefined)` returns the DEFAULT staff tree, and
+`navRoleFor()` returns `undefined` for every non-workshop role. There is no value
+of `role` that means "this viewer has no business in this workspace":
+
+  * `undefined` already means "staff role not yet resolved" → default tree.
+  * `!workspace` already means "configuration error" and renders an error screen,
+    which is wrong for a customer who is legitimately signed in.
+
+So the fix needs a THIRD state, and it must land in all four places at once:
+
+  1. `viewer-contract.ts` — distinguish "not a workshop role" from "unresolved".
+  2. `WorkspaceShell.tsx` — a "you are signed in, but this workspace is not yours"
+     state, distinct from the configuration-error screen.
+  3. `require-route.ts` — refuse, `notFound()`.
+  4. The layout — send the customer somewhere useful rather than a wall.
+
+⚠️ **BOTH HALVES MUST SHIP TOGETHER.** Gate only → 45 menu entries that 404, which
+is the "signpost target that 404s" failure this repo has already paid for three
+times. Nav only → hidden but not refused, which CLAUDE.md §8 forbids by name:
+*hidden ≠ secure*.
+
+⚠️ **`platform_administrator` IS IN THE SAME UNMAPPED SET.** Excluding all six
+non-workshop roles in one sweep risks locking platform admins out of the app —
+there is a known prior issue about admins being unusable without a membership.
+Decide that role separately and deliberately.
+
+**How to prove the fix.** This returns 45 today, so it fails for the right reason
+and cannot pass vacuously:
+
+```ts
+import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
+const ws = workspaceForRole(getWorkspace('workshop')!, undefined);
+let n = 0;
+for (const g of visibleGroups(ws, [])) n += g.items.length;   // 45 before the fix, 0 after
+```
+
+⚠️ **THIS MEASURES THE NAVIGATION ONLY.** Whether the API and Postgres RLS refuse
+the DATA behind those 45 screens has NOT been checked. It may be "45 screens
+render empty" rather than "45 screens leak data" — that difference needs driving
+in a real browser as a real customer, and it does not change that the fix is
+required.
 
 ---
 
