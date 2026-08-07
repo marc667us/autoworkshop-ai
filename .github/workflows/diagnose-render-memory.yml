@@ -258,6 +258,13 @@ jobs:
           fi
           echo "anchoring on ${ANCHOR}"
 
+          # EXPORTED, not merely assigned: the heredoc below is a separate
+          # python process and reads `os.environ`, so a plain shell variable is
+          # invisible to it and the step dies on KeyError AFTER printing a
+          # perfectly correct anchor — which reads as a parsing bug rather than
+          # a missing export.
+          export ANCHOR LOG_MINUTES
+
           python3 - <<'PY' > /tmp/window
           import os, datetime as dt
           anchor = dt.datetime.fromisoformat(os.environ['ANCHOR'].replace('Z', '+00:00'))
