@@ -347,6 +347,25 @@ function JourneyCard({
         ) : null}
       </dl>
 
+      {/*
+        🔴 THE EVIDENCE BEHIND THE PRICE. Owner, 2026-08-07: the inspection must
+        be included. Reaching it from the card is the point — a report the
+        customer has to know exists and navigate to is one they will not read,
+        and this is the screen where they are asked to approve a quotation.
+
+        Always offered rather than shown only when a report exists: knowing
+        whether one has been submitted would need a second request per card
+        (the N+1 this file already avoids elsewhere), and the report page
+        already answers honestly with "no inspection yet". A link that
+        sometimes says "nothing here" is a smaller cost than a request per card
+        on every render.
+      */}
+      <p style={{ margin: `${primitive.space[3]} 0 0 0`, fontSize: primitive.fontSize.sm }}>
+        <Link href={`/service-and-repairs/inspection-report?job=${encodeURIComponent(card.id)}`}>
+          What the workshop found
+        </Link>
+      </p>
+
       {yours ? (
         <div style={{ marginTop: primitive.space[4] }}>
           {proposal ? (
