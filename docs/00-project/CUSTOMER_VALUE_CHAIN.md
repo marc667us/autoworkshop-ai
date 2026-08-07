@@ -86,17 +86,39 @@ card showing the STATUS of their vehicle's repair**.
 
 ---
 
-## ⚠️ A governance conflict to resolve with the owner before building steps 8–9
+## Steps 8–9 are built WITHOUT Google ADK — decided by the owner
 
-Root `CLAUDE.md` **§0.1 is a HARD RULE**: Google ADK is the ONLY agent framework,
-and orchestration-first (**§0.2**) requires a Root Orchestrator with department
-Conductors. Steps 8 and 9 above are squarely agent work.
+**The owner's instruction is standing and settled: do not use Google ADK.** It
+applies to BUILDING, not merely to opening ADK as a session tool. Asked to
+confirm, the owner restated it. This section previously framed that as an open
+governance question needing a decision; it is not one, and re-raising a settled
+instruction is itself the error.
 
-The owner also instructed, this session and standing in
-`outstanding_work_schedule.md`: **"open and run CODEX and the SUPERVISOR only. Do
-NOT open or run Google ADK or Stitch."**
+So steps 8 and 9 — the reception agent that registers the customer and their
+vehicles from the submitted form and assigns the work, and the orchestrated agent
+that runs the repair — are **deterministic services**, not ADK agents.
 
-These are not necessarily in conflict — "do not OPEN/RUN ADK as a session tool"
-is not the same as "do not BUILD to the ADK architecture" — but the difference
-decides how steps 8 and 9 get implemented, and it is the owner's call, not an
-assumption to make silently. **Ask before building the agent layer.**
+🔴 **THERE IS ESTABLISHED PRECEDENT IN THIS ACCOUNT, AND IT IS THE PATTERN TO
+COPY.** Solar shipped two agents this exact way, each with an ADR recording the
+exemption:
+
+  * **ADR-0008 — AI-SOC**
+  * **ADR-0009 — Billing Agent**
+
+Both are deterministic, both ship in production, neither uses ADK. Solar is this
+project's reference implementation (ADR-011), so this is the house style for
+agent work, not a workaround.
+
+⚠️ **LOG AN ADR WHEN THE FIRST ONE IS BUILT.** Root `CLAUDE.md` §0.1 names ADK as
+the default agent framework and requires any departure to be recorded in an ADR
+in `docs/ARCHITECTURE_DECISIONS.md` plus `docs/IMPLEMENTATION_LOG.md`. That
+mechanism exists precisely for this case. The ADR is the record of a decision
+already made — it is NOT a gate to re-litigate the decision through, and nobody
+should read it as one.
+
+**Practically, "deterministic" here means:** the reception step is a service that
+parses the submitted request, creates the customer and vehicle records through
+the existing NestJS domain services, and assigns the job — with explicit rules
+and an audit trail, not a model deciding. Any model use stays a one-shot utility
+inside a tool (e.g. summarising a free-text complaint), never a reasoning loop
+that drives the workflow.
