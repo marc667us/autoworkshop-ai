@@ -231,6 +231,47 @@ BEGIN
     IF NOT FOUND THEN RAISE EXCEPTION 'verify/060 #13: notify_user did not record the recipient address'; END IF;
     passed := passed + 1;
 
+    -- 14. 🔴 A SECOND DRAIN DOES NOT RE-CLAIM WHAT THE FIRST IS SENDING.
+    --
+    --     The first version used `SELECT ... FOR UPDATE SKIP LOCKED` and a
+    --     comment asserting exactly this property. It was FALSE: the API calls
+    --     the function through a single autocommit statement, so the locks were
+    --     released before any mail was sent and two drains would each send the
+    --     same message. A row lock cannot protect an SMTP conversation
+    --     happening in another process; only a committed state change can.
+    --
+    --     This check is the one that would have caught it, and it fails against
+    --     the old implementation.
+    nid := comms.enqueue_notification(
+        tid, oid, me, 'service_request.created', 'email',
+        'Claim me once', 'Claim me once.', 'claim@example.test',
+        'service_request', NULL, 'verify060-claim:' || gen_random_uuid()::text);
+    IF nid IS NULL THEN RAISE EXCEPTION 'verify/060 #14: could not enqueue the claim fixture'; END IF;
+
+    SELECT count(*) INTO n FROM comms.claim_pending_notifications(100) c WHERE c.id = nid;
+    IF n <> 1 THEN RAISE EXCEPTION 'verify/060 #14: the first claim did not return the pending row'; END IF;
+
+    SELECT count(*) INTO n FROM comms.claim_pending_notifications(100) c WHERE c.id = nid;
+    IF n <> 0 THEN
+        RAISE EXCEPTION 'verify/060 #14: a SECOND claim returned the same row — it would be sent twice';
+    END IF;
+    passed := passed + 1;
+
+    -- 15. 🔴 A MESSAGE THE DRAIN WILL NEVER TAKE AGAIN MUST NOT READ `pending`.
+    --     The claim stops at 5 attempts, so recording the fifth failure has to
+    --     move the row to `failed` — otherwise it sits in the queue for ever
+    --     looking like work that is still owed.
+    FOR n IN 1..5 LOOP
+        PERFORM comms.record_notification_result(nid, false, 'relay refused');
+    END LOOP;
+    PERFORM 1 FROM comms.notifications WHERE id = nid AND status = 'failed';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'verify/060 #15: an exhausted message did not become failed';
+    END IF;
+    SELECT count(*) INTO n FROM comms.claim_pending_notifications(100) c WHERE c.id = nid;
+    IF n <> 0 THEN RAISE EXCEPTION 'verify/060 #15: an exhausted message was claimed again'; END IF;
+    passed := passed + 1;
+
     DELETE FROM comms.notifications WHERE dedupe_key LIKE 'verify060%';
     DELETE FROM comms.notifications WHERE recipient_id = other_user;
     DELETE FROM identity.memberships WHERE user_id = other_user;
@@ -238,6 +279,6 @@ BEGIN
     DELETE FROM core.notification_preferences
      WHERE organization_id = oid AND event_key IN ('quiet.event','mixed.event');
 
-    RAISE NOTICE 'verify/060: % / 13 passed (4 and 11 are only MEANINGFUL under rehearsal — locally a superuser bypasses RLS)', passed;
+    RAISE NOTICE 'verify/060: % / 15 passed (4 and 11 are only MEANINGFUL under rehearsal — locally a superuser bypasses RLS)', passed;
 END
 $verify$;

@@ -80,6 +80,22 @@ const NO_ORG_PREDICATE_EXPECTED = new Set([
   // the audit trail is tenant-wide on purpose: an event about organisation A
   // written while acting in organisation B must still be recorded.
   'audit.events',
+  // 🔴 comms.notifications is here for the OPPOSITE reason to everything above:
+  // not because it has no organisation context, but because its predicate is
+  // STRICTLY NARROWER than an organisation one. A notification is addressed to
+  // a PERSON — `recipient_id = identity.current_user_id()` — so an organisation
+  // clause could only ever be redundant or harmful:
+  //   · redundant, because a recipient is already a single user, and
+  //   · harmful, because a customer may hold memberships at SEVERAL workshops.
+  //     Their active organisation is whichever one the request resolved, so an
+  //     organisation predicate would hide their own mail from workshop A while
+  //     they happened to be acting in workshop B. A personal inbox that depends
+  //     on which shop you are "in" is a defect, not isolation.
+  // The leak this suite exists to prevent — one organisation reading another's
+  // rows — cannot occur here, because no organisation can read ANY of it: only
+  // the addressee can. Adding an organisation clause would weaken nothing and
+  // break something real, which is the test for whether an exemption is honest.
+  'comms.notifications',
 ]);
 
 let pool: Pool | null = null;

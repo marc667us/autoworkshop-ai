@@ -202,6 +202,15 @@ export class NotificationsService {
     let sent = 0;
     let failed = 0;
     for (const row of claimed) {
+      // The SQL claim returns only `email` rows today. Asserted here anyway,
+      // because "the query only returns X" is a contract in another file and
+      // this loop's only behaviour is to SEND — a future channel appearing in
+      // that result would be silently emailed (Codex, 2026-08-07).
+      if (row.channel !== 'email') {
+        await this.record(row.id, false, `cannot send channel ${row.channel} by mail`);
+        failed += 1;
+        continue;
+      }
       // A row with no address cannot be delivered and must not be retried for
       // ever: it is recorded as a failure with a reason a human can act on.
       if (!row.to_address) {

@@ -86,12 +86,20 @@ CREATE TABLE IF NOT EXISTS comms.notifications (
     resource_type    TEXT,
     resource_id      uuid,
 
+    -- 🔴 `sending` IS NOT DECORATION. A drain that merely SELECTed pending rows
+    -- would leave them pending while it was sending them, and the second drain
+    -- would send them again — see `claim_pending_notifications` for why
+    -- FOR UPDATE alone cannot prevent that here.
     status           TEXT NOT NULL DEFAULT 'pending'
-                     CHECK (status IN ('pending', 'sent', 'failed', 'suppressed')),
+                     CHECK (status IN ('pending', 'sending', 'sent', 'failed', 'suppressed')),
     attempts         integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     last_error       TEXT,
     sent_at          timestamptz,
     read_at          timestamptz,
+    -- When the current attempt started. A drain that dies mid-send would
+    -- otherwise strand its rows in `sending` for ever; anything older than the
+    -- lease below is reclaimed.
+    claimed_at       timestamptz,
 
     -- 🔴 THE SAME EVENT MUST NOT ARRIVE TWICE. A retry, a double-submitted
     -- form, or a drain that runs while a previous drain is still finishing all
@@ -173,9 +181,30 @@ CREATE POLICY notification_update ON comms.notifications FOR UPDATE USING (
   OR current_setting('app.notify', true) = 'on'
 );
 
--- No DELETE policy and no DELETE grant. A notification is a record that
--- something was said; it is dismissed by being read, not by disappearing.
-GRANT SELECT, INSERT, UPDATE ON comms.notifications TO autoworkshop_app;
+-- ── 🔴 THE GRANTS ARE THE REAL DOOR, NOT THE GUC ──────────────────────────
+--
+-- The INSERT policy above trusts `current_setting('app.notify')`, and Codex was
+-- right to point out on 2026-08-07 that POSTGRES DOES NOT STOP THE CALLER
+-- SETTING THAT ITSELF. `autoworkshop_app` could run
+-- `SELECT set_config('app.notify','on',true)` and then insert. The comment
+-- claiming the function was "the only way in" was therefore describing an
+-- intention, not an enforcement — the same shape as a comment asserting a guard
+-- that does not exist, which this repository has now recorded three times.
+--
+-- So the privilege is removed rather than argued about. The app role holds NO
+-- INSERT on this table at all: the definer functions run as the table's OWNER
+-- and are the only thing that can create a notification. A forged direct INSERT
+-- now fails on PRIVILEGES, before any policy is consulted, and the GUC becomes
+-- what it should always have been — defence in depth, not the lock.
+--
+-- ⚠️ UPDATE IS COLUMN-SCOPED. A recipient must be able to mark their own
+-- notification read, and nothing more. With a table-wide UPDATE grant that same
+-- path could rewrite `status`, `attempts` or `sent_at` — letting a recipient
+-- mark their own unsent mail as delivered, or resurrect a failed one. Postgres
+-- expresses "only these columns" directly, so it is said in the grant instead
+-- of being left to every future call site to remember.
+GRANT SELECT ON comms.notifications TO autoworkshop_app;
+GRANT UPDATE (read_at, updated_at) ON comms.notifications TO autoworkshop_app;
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- ENQUEUE — the only door in
@@ -213,6 +242,23 @@ DECLARE
     v_enabled boolean;
     v_id      uuid;
 BEGIN
+    -- 🔴 THE CALLER MAY ONLY NOTIFY INSIDE ITS OWN TENANT.
+    --
+    -- These functions are SECURITY DEFINER and take the tenant, the recipient
+    -- and the body as arguments, so without this they are a general-purpose
+    -- "send anything to anyone" primitive granted to the whole app role — the
+    -- one place a bug or an injection elsewhere would turn into cross-tenant
+    -- messages wearing another workshop's voice. Codex raised this, 2026-08-07.
+    --
+    -- A background drain legitimately has NO tenant context, so an unset tenant
+    -- is allowed through: it can only reach the two bookkeeping functions
+    -- below, neither of which creates a notification.
+    IF identity.current_tenant_id() IS NOT NULL
+       AND p_tenant_id <> identity.current_tenant_id()
+       AND NOT identity.is_platform_admin() THEN
+        RAISE EXCEPTION 'a notification may not be raised for another tenant';
+    END IF;
+
     -- Most specific preference wins; no row at all means enabled.
     SELECT p.is_enabled INTO v_enabled
       FROM core.notification_preferences p
@@ -404,6 +450,23 @@ GRANT EXECUTE ON FUNCTION comms.notify_user(
 -- functions are its entire surface: claim some pending work, record what
 -- happened to it. It can do nothing else, and in particular it cannot read a
 -- notification it did not claim.
+-- 🔴 CLAIMING IS AN UPDATE, NOT A SELECT — AND THE FIRST VERSION GOT THIS WRONG.
+--
+-- It was `SELECT ... FOR UPDATE SKIP LOCKED`, with a comment asserting that two
+-- overlapping drains therefore could not send the same message twice. THAT WAS
+-- FALSE, and Codex caught it: the API calls this through `queryWithoutTenant`,
+-- which is `pool.query` — a SINGLE AUTOCOMMIT STATEMENT. The row locks are
+-- released the moment the function returns, long before any mail is sent. Two
+-- drains would each claim the same rows and every customer would get two copies.
+--
+-- A row lock can only protect work done INSIDE its transaction, and the work
+-- here is an SMTP conversation in another process. So the claim must CHANGE THE
+-- ROW: `sending` is a state the next drain does not select, and it survives the
+-- statement because it is committed data rather than a lock.
+--
+-- ⚠️ AND A LEASE, because a drain that dies mid-send would otherwise strand its
+-- rows in `sending` for ever — swapping a double-send for a silent never-send.
+-- Anything claimed longer ago than the lease is fair game again.
 CREATE OR REPLACE FUNCTION comms.claim_pending_notifications(p_limit integer)
 RETURNS TABLE (
     id uuid, organization_id uuid, recipient_id uuid, channel TEXT,
@@ -416,20 +479,30 @@ AS $$
 BEGIN
     PERFORM set_config('app.notify', 'on', true);
     RETURN QUERY
-    SELECT n.id, n.organization_id, n.recipient_id, n.channel,
-           n.subject, n.body, n.to_address, n.attempts
-      FROM comms.notifications n
-     WHERE n.status = 'pending'
-       AND n.channel = 'email'
-       -- Five attempts, then it stops costing time on every drain for ever.
-       -- The row stays `pending` rather than being falsified as `sent`.
-       AND n.attempts < 5
-     ORDER BY n.created_at
-     -- 🔴 SKIP LOCKED: two drains overlapping is normal (a cron fires while the
-     -- previous run is still finishing). Without this they would both select the
-     -- same rows and send every message twice.
-     FOR UPDATE SKIP LOCKED
-     LIMIT GREATEST(p_limit, 0);
+    WITH picked AS (
+        SELECT n.id
+          FROM comms.notifications n
+         WHERE n.channel = 'email'
+           AND (
+                 n.status = 'pending'
+                 -- Reclaimed: a previous drain took it and never reported back.
+                 OR (n.status = 'sending' AND n.claimed_at < now() - interval '15 minutes')
+               )
+           -- Five attempts, then `record_notification_result` marks it failed
+           -- and it stops costing time on every drain for ever.
+           AND n.attempts < 5
+         ORDER BY n.created_at
+         -- Still SKIP LOCKED, but now it only protects two drains racing to run
+         -- THIS statement — which is exactly the scope a row lock can cover.
+         FOR UPDATE SKIP LOCKED
+         LIMIT GREATEST(p_limit, 0)
+    )
+    UPDATE comms.notifications n
+       SET status = 'sending', claimed_at = now(), updated_at = now()
+      FROM picked
+     WHERE n.id = picked.id
+    RETURNING n.id, n.organization_id, n.recipient_id, n.channel,
+              n.subject, n.body, n.to_address, n.attempts;
 END;
 $$;
 
@@ -443,12 +516,24 @@ AS $$
 BEGIN
     PERFORM set_config('app.notify', 'on', true);
     UPDATE comms.notifications
-       SET status     = CASE WHEN p_sent THEN 'sent' ELSE 'pending' END,
+       SET status     = CASE
+                          WHEN p_sent THEN 'sent'
+                          -- 🔴 A ROW THE DRAIN WILL NEVER TAKE AGAIN MUST NOT
+                          -- SAY `pending`. The claim stops at 5 attempts, so
+                          -- the previous version left exhausted messages
+                          -- permanently pending and undrainable: an operator
+                          -- reading the queue would see work that was owed and
+                          -- would never happen. Codex, 2026-08-07.
+                          WHEN attempts + 1 >= 5 THEN 'failed'
+                          ELSE 'pending'
+                        END,
            -- Counted on FAILURE only. Counting successes would let a row that
            -- was delivered first time look like one that had struggled.
            attempts   = attempts + CASE WHEN p_sent THEN 0 ELSE 1 END,
            last_error = CASE WHEN p_sent THEN NULL ELSE p_error END,
            sent_at    = CASE WHEN p_sent THEN now() ELSE sent_at END,
+           -- Released either way: the attempt is over.
+           claimed_at = NULL,
            updated_at = now()
      WHERE id = p_id;
 END;
