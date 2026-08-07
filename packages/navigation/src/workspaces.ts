@@ -66,6 +66,12 @@ const customerGroups: NavGroup[] = [
     ['appointments', 'Appointments'],
     ['repair-proposals', 'Repair Proposals', { counterKey: 'customer.proposals.pending' }],
     ['repair-tracking', 'Repair Tracking'],
+    // 🔴 WHAT THE WORKSHOP FOUND. Owner, 2026-08-07: the inspection must be
+    // included. It is the EVIDENCE behind the quotation a customer is asked to
+    // approve, and they previously had no sight of it anywhere.
+    // A PREPARED REPORT, not the technician's working sheet — `2.txt` §557, and
+    // why `customer` is deliberately absent from CAN_READ_INSPECTION.
+    ['inspection-report', 'Inspection Report'],
     ['completed-repairs', 'Completed Repairs'],
   ]),
   group('parts-and-warranty', 'Parts and Warranty', 'cog', [

@@ -167,6 +167,19 @@ export class JobCardController {
   }
 
   /** §2924 — "The technician selects 'Start Inspection.'" */
+  /**
+   * `GET /job-cards/:id/inspection-report` — the vehicle OWNER's prepared
+   * report (`2.txt` §557), as distinct from `:id/inspections`, which is the
+   * technician's working sheet and which a customer may not read.
+   */
+  @Get(':id/inspection-report')
+  inspectionReport(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.inspections.customerReport(req.tenantContext, id);
+  }
+
   @Post(':id/inspections')
   startInspection(
     @Req() req: AuthenticatedRequest,

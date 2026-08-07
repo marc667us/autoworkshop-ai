@@ -646,6 +646,70 @@ export class InspectionService {
     return first;
   }
 
+  /**
+   * THE VEHICLE OWNER'S PREPARED INSPECTION REPORT — `2.txt` §557.
+   *
+   * ── 🔴 WHY A SEPARATE METHOD AND NOT `customer` ADDED TO CAN_READ_INSPECTION ──
+   *
+   * The customer's absence from that set is a DELIBERATE, documented decision:
+   * §557 gives the vehicle owner "a prepared diagnostic report, not the
+   * technician's working sheet". Adding the role to the set would hand them the
+   * sheet — internal notes, who recorded what, the workshop's own shorthand —
+   * and quietly overturn a spec decision as a side effect of a feature request.
+   *
+   * So this returns the OUTCOME and nothing else: what was checked and how it
+   * came out. No recorder identities, no internal notes, no working state.
+   *
+   * ⚠️ ONLY SUBMITTED INSPECTIONS. A half-finished sheet is a technician's
+   * working state, and showing it to the owner would have them reading "brakes:
+   * fail" before anybody had decided it was true. Nothing is shown until the
+   * inspection has been submitted.
+   *
+   * Owner-scoping is `assertCardVisible`, which already narrows a `customer` to
+   * job cards raised against their OWN vehicles — reused rather than re-derived,
+   * so this cannot drift from the rule the rest of the file applies.
+   */
+  async customerReport(
+    ctx: TenantContext,
+    jobCardId: string,
+  ): Promise<{ submittedAt: string; items: { checkpoint: string; result: string }[] }[]> {
+    const cardId = requireUuid(jobCardId, 'jobCardId');
+    return this.db.withTenant(ctx, async (client) => {
+      // 404 for a card this viewer cannot see, BEFORE anything is read — the
+      // same ordering the rest of this file uses, so an empty report never
+      // doubles as "not your card".
+      await this.assertCardVisible(client, ctx, cardId);
+
+      const rows = await client.query(
+        `SELECT i.id, i.submitted_at, it.checkpoint_code, it.result
+           FROM repair.inspections i
+           JOIN repair.inspection_items it ON it.inspection_id = i.id
+          WHERE i.tenant_id = $1 AND i.organization_id = $2
+            AND i.job_card_id = $3
+            AND i.submitted_at IS NOT NULL
+          ORDER BY i.submitted_at DESC, it.checkpoint_code ASC`,
+        [ctx.tenantId, ctx.organizationId, cardId],
+      );
+
+      const byInspection = new Map<string, { submittedAt: string; items: { checkpoint: string; result: string }[] }>();
+      for (const raw of rows.rows as Record<string, unknown>[]) {
+        const id = raw['id'] as string;
+        let entry = byInspection.get(id);
+        if (!entry) {
+          entry = { submittedAt: String(raw['submitted_at']), items: [] };
+          byInspection.set(id, entry);
+        }
+        entry.items.push({
+          // The LABEL, never the code. `BRK_PAD_L` is workshop shorthand and
+          // means nothing to the person whose car it is.
+          checkpoint: checkpointLabel(raw['checkpoint_code'] as string),
+          result: raw['result'] as string,
+        });
+      }
+      return [...byInspection.values()];
+    });
+  }
+
   private assertMayRead(ctx: TenantContext): void {
     if (!CAN_READ_INSPECTION.has(ctx.activeRole)) {
       throw new ForbiddenException(`role '${ctx.activeRole}' may not read inspections`);
