@@ -3,7 +3,7 @@ import { viewerHasSession } from '@autoworkshop/next-shell';
 import { MarketplaceLanding } from '@autoworkshop/marketplace-ui';
 import { AddToBasket } from '@autoworkshop/marketplace-ui';
 
-import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin } from '@autoworkshop/marketplace-ui';
+import { fetchFacets, fetchMechanics, fetchParts, fetchStats, fetchVin, REQUEST_SERVICE_PATH } from '@autoworkshop/marketplace-ui';
 
 /**
  * `/` — the front door, and the ONLY route in this workspace that serves two
@@ -120,8 +120,14 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // customer-web's own client-side store; the shared landing must not know
       // it exists, or it could not be mounted anywhere else.
       // Same host, so a relative path. The apex mount is the one that needs an
-      // absolute URL — see `NEXT_PUBLIC_CUSTOMER_WEB_URL` there.
-      requestServiceHref="/service-and-repairs/request-service"
+      // absolute URL — it reads `CUSTOMER_WEB_URL` (the old
+      // `NEXT_PUBLIC_CUSTOMER_WEB_URL` is only a deprecated fallback now) and
+      // builds the href with `requestServiceHrefFrom`.
+      //
+      // The PATH is imported rather than retyped: a route rename would otherwise
+      // break this mount silently while the apex kept working, because only one
+      // of the two spellings would have been updated.
+      requestServiceHref={REQUEST_SERVICE_PATH}
       basketHref="/parts-and-warranty/parts-orders"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />

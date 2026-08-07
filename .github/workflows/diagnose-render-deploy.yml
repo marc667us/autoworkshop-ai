@@ -47,6 +47,11 @@ on:
         default: '30'
         type: string
 
+# READ-ONLY is claimed in the header, so the token says it too rather than
+# inheriting a repository default that may be write.
+permissions:
+  contents: read
+
 jobs:
   diagnose:
     runs-on: ubuntu-latest
@@ -72,6 +77,21 @@ jobs:
       - name: Resolve the service
         run: |
           set -euo pipefail
+          # An UNSET repository variable would otherwise fall through to the name
+          # lookup with an empty name and report "no service named exactly " —
+          # pointing the reader at a lookup that was never meant to happen, in
+          # the one workflow whose job is to be readable when something else has
+          # already gone wrong.
+          case "${SERVICE_CHOICE}" in
+            production-web|staging-web)
+              [ -n "${WEB_SERVICE_ID}" ] || {
+                echo "::error::${SERVICE_CHOICE} resolves from a repository variable"
+                echo "(RENDER_WEB_SERVICE_ID / RENDER_STAGING_SERVICE_ID) and it is EMPTY."
+                echo "Set it, or pass a service this workflow can resolve by name."
+                exit 1; }
+              ;;
+          esac
+
           if [ -n "${WEB_SERVICE_ID}" ]; then
             SID="${WEB_SERVICE_ID}"
             echo "service ${SERVICE_CHOICE} -> ${SID} (from repository variable)"
@@ -100,9 +120,17 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${DEPLOY_ID}" ]; then
+            # `r.get('deploy', r)` like every other parse in this file: Render's
+            # list shape varies, and a flat response here would raise KeyError
+            # and hand the operator a Python traceback instead of a deploy id.
             DEPLOY_ID="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
               "https://api.render.com/v1/services/${SID}/deploys?limit=1" \
-              | python3 -c "import sys,json;rows=json.load(sys.stdin);print(rows[0]['deploy']['id'] if rows else '')")"
+              | python3 -c "
+          import sys, json
+          rows = json.load(sys.stdin)
+          d = (rows[0].get('deploy', rows[0]) if rows else {}) or {}
+          print(d.get('id', ''))
+          ")"
             [ -n "$DEPLOY_ID" ] || { echo "::error::this service has no deploys"; exit 1; }
             echo "no deploy id supplied; using the most recent: ${DEPLOY_ID}"
           fi

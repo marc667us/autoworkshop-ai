@@ -136,7 +136,12 @@ jobs:
           # happily persist a value the app then refuses — and the symptom is an
           # invisible button with a green deploy behind it, which is the exact
           # failure this whole change exists to end.
-          python3 - <<'PY'
+          # The CANONICAL value is emitted here and used for BOTH the probe and
+          # the write. The shell and this validator otherwise disagree about the
+          # same string — `${VAR%/}` strips exactly ONE trailing slash and no
+          # whitespace, while the app strips `/+$` — so `https://host//` could be
+          # PROVEN in a shape the app never builds (Supervisor, 2026-08-07).
+          python3 - > /tmp/customer_url <<'PY'
           import os, sys
           from urllib.parse import urlsplit
           raw = (os.environ.get('CUSTOMER_WEB_URL') or '').strip()
@@ -151,25 +156,43 @@ jobs:
               sys.exit('::error::customer_web_url carries credentials')
           if u.query or u.fragment:
               sys.exit('::error::customer_web_url has a query or fragment; a path cannot be appended to it')
-          print(f'customer_web_url accepted: {u.scheme}://{u.hostname}{u.path or ""}')
+          # Exactly what `requestServiceHrefFrom` builds: origin + path, every
+          # trailing slash removed.
+          print(f'{u.scheme}://{u.netloc}{u.path}'.rstrip('/'))
           PY
+          CANON="$(cat /tmp/customer_url)"
+          echo "customer_web_url accepted, canonical: ${CANON}"
 
-          URL="${CUSTOMER_WEB_URL%/}/service-and-repairs/request-service"
+          URL="${CANON}/service-and-repairs/request-service"
+          # 🔴 A SLEEP, AND 5xx IS RETRYABLE. Without a pause the six attempts
+          # returned within MILLISECONDS of each other, so a free service that
+          # was merely waking was declared dead — the loop said "cold start?"
+          # while allowing no time for one (Supervisor, 2026-08-07).
+          ok=0
           for i in $(seq 1 6); do
             code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$URL" || echo 000)"
             # 401/403/302 are FINE: the form is behind sign-in, and a redirect to
-            # the identity provider proves the route exists and is wired. Only
-            # 404 and 5xx mean there is nothing worth pointing at.
+            # the identity provider proves the route exists and is wired.
             case "$code" in
-              200|301|302|303|307|401|403) break ;;
+              200|301|302|303|307|401|403) ok=1; break ;;
             esac
-            echo "  ${code} (cold start? attempt ${i})"
+            echo "  ${code} (attempt ${i}; waking or down)"
+            [ "$i" -lt 6 ] && sleep 20
           done
           echo "customer form -> ${code}"
-          case "$code" in
-            200|301|302|303|307|401|403) ;;
-            *) echo "::error::${URL} returned ${code} — refusing to point the landing at a form that is not there"; exit 1 ;;
-          esac
+
+          # 🔴 A DOWN CUSTOMER APP MUST NOT BLOCK A KEYCLOAK REPAIR. This step
+          # used to hard-fail before the merge, so an unrelated third-party
+          # outage also blocked the one workflow that can fix AUTH_URL,
+          # KEYCLOAK_URL and the AUTH_SECRET-preserving merge — turning one
+          # broken funnel into a broken sign-in. Failing here now SKIPS only this
+          # key: the merge keeps whatever value the service already carries, and
+          # a 404 is still called out as the dead link it is.
+          if [ "$ok" = "1" ]; then
+            echo "$CANON" > /tmp/customer_url_ok
+          else
+            echo "::warning::${URL} returned ${code} — NOT writing CUSTOMER_WEB_URL. Any value already on the service is left untouched. If this is a 404 the form is genuinely missing: deploy customer-web (Release does NOT), then re-run."
+          fi
 
       - name: Read the current variables and merge
         run: |
@@ -208,14 +231,23 @@ jobs:
               # deliberately no NEXT_PUBLIC_ twin — the access token is used
               # server-side only and must not cross to the client.
               'API_BASE_URL': os.environ['API_BASE_URL'],
-              # Where the customer app is, so the apex can link INTO it. Read at
-              # RUNTIME by a server component, which is why it carries no
-              # `NEXT_PUBLIC_` prefix: that prefix means Next inlines the value
-              # into the browser bundle at BUILD time, so changing this URL would
-              # have required a rebuild. `API_BASE_URL` above is named on the
-              # same reasoning.
-              'CUSTOMER_WEB_URL': os.environ['CUSTOMER_WEB_URL'],
           }
+
+          # Where the customer app is, so the apex can link INTO it. Read at
+          # RUNTIME by a server component, which is why it carries no
+          # `NEXT_PUBLIC_` prefix: that prefix means Next inlines the value into
+          # the browser bundle at BUILD time, so changing this URL would have
+          # required a rebuild. `API_BASE_URL` above is named on the same
+          # reasoning.
+          #
+          # Only written when the probe above PROVED the form answers, and in the
+          # CANONICAL spelling the app itself would build. When the probe failed
+          # the key is absent from `want`, so the merge preserves whatever the
+          # service already has rather than overwriting it with an unproven value.
+          if os.path.exists('/tmp/customer_url_ok'):
+              want['CUSTOMER_WEB_URL'] = open('/tmp/customer_url_ok').read().strip()
+          else:
+              print('CUSTOMER_WEB_URL   : SKIPPED (probe did not pass); existing value preserved')
 
           changed = [k for k, v in want.items() if cur.get(k) != v]
           print('variables on the service :', len(cur))
@@ -264,22 +296,38 @@ jobs:
             -H 'Accept: application/json' \
             "https://api.render.com/v1/services/${SERVICE_ID}/env-vars?limit=100" > /tmp/after.json
           python3 - <<'PY'
-          import json, os
+          import json, sys
           rows = json.load(open('/tmp/after.json'))
           cur = {}
           for r in rows:
               e = r.get('envVar', r)
               if 'key' in e:
                   cur[e['key']] = e.get('value', '')
-          for k in ('KEYCLOAK_URL', 'KEYCLOAK_REALM', 'AUTH_URL', 'AUTH_TRUST_HOST'):
-              ok = cur.get(k) == os.environ.get({'KEYCLOAK_URL': 'KEYCLOAK_URL',
-                                                 'KEYCLOAK_REALM': 'REALM',
-                                                 'AUTH_URL': 'AUTH_URL',
-                                                 'AUTH_TRUST_HOST': '_TRUE'}[k], 'true')
-              print(f'{k:16} present={k in cur} matches={ok}')
+
+          # 🔴 READ BACK WHAT WAS ACTUALLY SENT, not a hand-written tuple of four
+          # keys. The old list checked KEYCLOAK_URL, KEYCLOAK_REALM, AUTH_URL and
+          # AUTH_TRUST_HOST — so API_BASE_URL and CUSTOMER_WEB_URL, the two this
+          # workflow now exists to write, were never verified at all. A PUT that
+          # stored one of them mangled, truncated or not at all would still have
+          # printed "variables written" and exited 0: the exact green-pipeline,
+          # invisible-button failure this change was made to end (Supervisor,
+          # 2026-08-07). Comparing against the merged set makes any future key
+          # verified automatically rather than when somebody remembers.
+          sent = {e['key']: e['value'] for e in json.load(open('/tmp/merged.json'))}
+
+          bad = []
+          for k, v in sorted(sent.items()):
+              present, matches = k in cur, cur.get(k) == v
+              # Values are never printed — a run log is not a vault.
+              print(f'{k:20} present={present} matches={matches}')
+              if not (present and matches):
+                  bad.append(k)
           print('total variables :', len(cur))
-          assert 'AUTH_SECRET' in cur, 'AUTH_SECRET disappeared — the merge dropped a key'
+          if 'AUTH_SECRET' not in cur:
+              sys.exit('::error::AUTH_SECRET disappeared — the merge dropped a key')
           print('AUTH_SECRET still present: yes')
+          if bad:
+              sys.exit(f'::error::these keys did not read back as written: {bad}')
           PY
         env:
           KEYCLOAK_URL: ${{ inputs.keycloak_url }}

@@ -324,36 +324,33 @@ export function MarketplaceLanding({
             ) : (
               <>
                 {/*
-                  SIGNED OUT, the same button — but through registration, which
-                  is what makes it "register the user" as the owner asked.
+                  SIGNED OUT, THE SAME DESTINATION AS SIGNED IN — the form.
 
-                  🔴 CORRECTION, 2026-08-07. This comment used to claim the
-                  visitor "lands back on the request form, so one press covers
-                  sign-up AND the request". THAT IS NOT WHAT HAPPENS, and the
-                  claim was written the same day the button could not render at
-                  all, so nobody could have noticed by using it.
-                  `/api/auth/register` sends the visitor to Keycloak with
-                  `redirect_uri = <this origin>/api/auth/callback/keycloak` —
-                  the APEX callback. Auth.js then lands them on the apex, not on
-                  the customer app's form. Nothing carries a destination through:
-                  there is no `next` parameter on this href, and no callback-url
-                  mechanism anywhere in `packages/auth`.
+                  🔴 IT USED TO GO TO `/api/auth/register`, and the comment here
+                  claimed that "one press covers sign-up AND the request". It did
+                  not. That route sends the visitor to Keycloak with
+                  `redirect_uri = <this origin>/api/auth/callback/keycloak`, so
+                  they registered and landed back HERE, on the apex — never on
+                  the form. Nothing carried a destination through: no `next` on
+                  the href, and no callback-url mechanism anywhere in
+                  `packages/auth`. The claim was written the same day the button
+                  could not render at all, so using the product would never have
+                  contradicted it.
 
-                  So it is TWO presses today: register, land back here, and press
-                  the same button again — which now renders the signed-in variant
-                  above and goes straight to the form. Recoverable, and the
-                  second press is the same button in the same place, but it is
-                  not what was claimed.
+                  It was ALSO byte-identical to "Create a free account" directly
+                  beneath it (Supervisor, 2026-08-07): two buttons, different
+                  promises, one behaviour — and this one was gated on
+                  `requestServiceHref`, a value its own href never read.
 
-                  ▶ Making it one press means carrying an intended destination
-                  through registration, which means touching the Auth.js callback
-                  — and that cannot be proven without driving a real
-                  registration, which creates a real Keycloak account. It is
-                  written up as its own slice rather than shipped unverified.
+                  Now both variants point at the form, so the gate and the
+                  destination are the same fact. The form itself refuses a
+                  signed-out visitor BEFORE they type anything and offers sign-in
+                  with a `callbackUrl` back to itself, plus registration —
+                  Keycloak's login page carries the Register link. One press to
+                  the right place, and nothing typed can be lost on the way.
                 */}
                 {requestServiceHref ? (
-                  /* eslint-disable-next-line @next/next/no-html-link-for-pages */
-                  <a href="/api/auth/register" style={BUTTON_PRIMARY}>
+                  <a href={requestServiceHref} style={BUTTON_PRIMARY}>
                     Request repair service
                   </a>
                 ) : null}
