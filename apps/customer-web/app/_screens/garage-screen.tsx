@@ -1,7 +1,14 @@
 import { Suspense } from 'react';
+import Link from 'next/link';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
+// Reused, never re-derived: two stage vocabularies would drift and tell the
+// customer two different things about one car.
+import { customerStage, needsCustomer } from './repair-journey';
+// Pure and import-free so it can be unit-tested — this screen cannot be,
+// because next-shell pulls in next-auth.
+import { currentRepairByVehicle, type JobCardStatus } from './garage-status';
 
 /**
  * The vehicle owner's garage — `01 (1).txt` §33, and the first screen in this
@@ -60,12 +67,40 @@ export function GarageScreen() {
   );
 }
 
+/**
+ * The card's answer to "what is happening to my car?".
+ *
+ * 🔴 THE DEFECT THIS FIXES. This card showed `v.status` — the VEHICLE RECORD's
+ * status, which reads `active` or `draft`. That is a database lifecycle field
+ * about the row, and it was the only badge on the card, so a customer whose car
+ * was in the workshop being repaired saw the word "active" and learned nothing.
+ * Owner, 2026-08-06: *"they must have views on each section or card outputs on
+ * what the status on their vehicle repair"*.
+ *
+ * `stage` is the REPAIR's stage, and `customerStage()` turns it into the
+ * customer's own words — "Being repaired", "Waiting for your approval". That map
+ * already existed for the repair-journey screen; it is reused rather than
+ * re-derived, because two stage vocabularies would drift and the customer would
+ * be told two different things about one car.
+ */
 async function GarageList() {
-  const result = await apiGet<Vehicle[]>('customer', '/vehicles');
+  // 🔴 FETCHED IN PARALLEL, AND THE JOB CARDS ARE ALLOWED TO FAIL.
+  //
+  // The vehicles are the point of this screen; the repair status is an
+  // enrichment. If `/job-cards` is unavailable the garage must still list the
+  // cars — degrading to "no status shown" is a far smaller failure than an
+  // error page where the customer's own vehicles used to be. So its result is
+  // consulted, never asserted.
+  const [result, cards] = await Promise.all([
+    apiGet<Vehicle[]>('customer', '/vehicles'),
+    apiGet<JobCardStatus[]>('customer', '/job-cards'),
+  ]);
 
   if (!result.ok) {
     return <ApiFailure reason={result.reason} workspaceId="customer" />;
   }
+
+  const current = currentRepairByVehicle(cards.ok ? cards.data : []);
 
   if (result.data.length === 0) {
     return (
@@ -104,10 +139,47 @@ async function GarageList() {
               {[v.make, v.model, v.variant].filter(Boolean).join(' ')}
               {v.modelYear ? ` · ${v.modelYear}` : ''}
             </span>
+            {/*
+              THE REPAIR'S STATUS WHEN THERE IS ONE, THE RECORD'S WHEN THERE IS
+              NOT. A car with nothing open genuinely has no repair status, and
+              inventing "no active repair" as a badge would be noise on every
+              card in a garage of parked cars. The vehicle badge stays as the
+              honest fallback.
+            */}
             <span style={{ marginLeft: 'auto' }}>
-              <StatusBadge kind={v.status === 'active' ? 'active' : 'draft'} label={v.status} />
+              {current.has(v.id) ? (
+                <StatusBadge
+                  kind={customerStage(current.get(v.id)!.stage).badge}
+                  label={customerStage(current.get(v.id)!.stage).label}
+                />
+              ) : (
+                <StatusBadge kind={v.status === 'active' ? 'active' : 'draft'} label={v.status} />
+              )}
             </span>
           </div>
+
+          {/*
+            One sentence of what is actually happening, and a way through to it.
+            A badge alone says "Waiting for your approval" without saying what
+            to approve or where — which is the shape of every status display
+            that leaves people stuck.
+          */}
+          {current.has(v.id) ? (
+            <p
+              style={{
+                margin: `${primitive.space[2]} 0 0 0`,
+                color: needsCustomer(current.get(v.id)!.stage)
+                  ? themeVar.textPrimary
+                  : themeVar.textSecondary,
+                fontSize: primitive.fontSize.sm,
+                fontWeight: needsCustomer(current.get(v.id)!.stage) ? 600 : 400,
+              }}
+            >
+              {customerStage(current.get(v.id)!.stage).detail}{' '}
+              <Link href="/service-and-repairs/repair-tracking">Track this repair</Link>
+            </p>
+          ) : null}
+
           <p style={{ margin: `${primitive.space[2]} 0 0 0`, color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
             {mileage(v.currentMileageKm)}
             {v.fuelType ? ` · ${v.fuelType}` : ''}
