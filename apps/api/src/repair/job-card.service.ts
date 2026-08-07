@@ -26,6 +26,7 @@ import {
   stageOptionsFor,
   type Stage,
 } from './job-card-stages';
+import { nextActionFor, daysStalled, orchestrationRank } from './repair-orchestration';
 
 export interface JobCard {
   id: string;
@@ -695,4 +696,42 @@ export class JobCardService {
     closedAt: row.closed_at ? row.closed_at.toISOString() : null,
     allowedStages: stageOptionsFor(ctx.activeRole, row.stage as Stage, row.resume_stage),
   });
+  /**
+   * WHAT NEEDS DOING NEXT, across every open repair — value chain step 9.
+   *
+   * The stage machine already says which moves are legal and who may make them.
+   * What nothing answered was the question a workshop actually asks each
+   * morning: of everything open, what needs doing, by whom, and what has nobody
+   * touched? This composes the existing list with the pure rules in
+   * `repair-orchestration.ts`.
+   *
+   * ⚠️ IT READS AND RANKS. It does not move a stage or write anything — the
+   * stage machine stays the single authority on a repair's state, and an
+   * orchestrator that advanced work silently would be a second one.
+   *
+   * `now` is injected so the ordering is testable without freezing the clock.
+   */
+  async orchestration(ctx: TenantContext, now: Date = new Date()) {
+    const cards = await this.list(ctx, {});
+    return cards
+      .filter((c) => c.stage !== 'completed')
+      .map((c) => {
+        const next = nextActionFor(c.stage);
+        const stalledDays = daysStalled(c.stageChangedAt, now);
+        return {
+          id: c.id,
+          jobNumber: c.jobNumber,
+          registrationNumber: c.registrationNumber,
+          customerName: c.customerName,
+          stage: c.stage,
+          stalledDays,
+          ...next,
+          rank: orchestrationRank(c.stage, stalledDays),
+        };
+      })
+      // Highest rank first: work the workshop OWNS above work it is waiting on,
+      // longest-stalled first within each.
+      .sort((a, b) => b.rank - a.rank);
+  }
+
 }

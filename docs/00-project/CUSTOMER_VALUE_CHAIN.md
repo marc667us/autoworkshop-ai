@@ -1,5 +1,34 @@
 # The customer value chain — owner specification, 2026-08-06
 
+## 🔴 THE VALUE PROPOSITION, IN THE OWNER'S WORDS (2026-08-07)
+
+> *"a major object and value proposition of the app is connecting vehicle owners
+> with need to repair with workshops and vehicle part suppliers, this is a win
+> win for all."*
+
+**THIS IS A THREE-SIDED MARKETPLACE, NOT A WORKSHOP TOOL WITH A CUSTOMER PORTAL
+BOLTED ON.** Vehicle owners, workshops and parts suppliers, and the product's
+job is the CONNECTION between them.
+
+⚠️ READ THIS BEFORE PRIORITISING ANYTHING. It changes what "done" means:
+
+- A feature that serves only ONE side is at best a third of a feature. The
+  customer can now ask a workshop for help (steps 4-7) — the **supplier** side
+  of the same idea does not exist yet. A workshop that needs a part has no
+  equivalent of "Request for Service".
+- The PUBLIC surface is not marketing, it is the product. The mechanic
+  directory, the parts marketplace and the VIN search are how the three sides
+  find each other; they are the funnel, not decoration around it.
+- "Win win for all" is a design test to apply to each feature: name what each of
+  the three sides gets. A feature only one side benefits from needs a reason.
+
+The chain below is the CUSTOMER→WORKSHOP edge. The WORKSHOP→SUPPLIER edge is the
+same shape and is largely unbuilt — that asymmetry is the biggest gap in the
+product against this stated proposition, and it is not a defect list item, it is
+a strategy one.
+
+
+
 **Captured verbatim in substance from the owner during the 2026-08-06 session.
 Nothing here is inferred.** The owner's framing: *"customer is the initiator of
 the value chain of this app in this case the auto repair business."*

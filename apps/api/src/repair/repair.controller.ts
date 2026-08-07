@@ -97,6 +97,18 @@ export class JobCardController {
    * by the `:id` route, fails `ParseUUIDPipe`, and the staging board 400s with a
    * message about a malformed UUID.
    */
+  /**
+   * `GET /job-cards/orchestration` — what needs doing next, ranked.
+   *
+   * ⚠️ DECLARED BEFORE `@Get(':id')`, like `board` and for the same reason: Nest
+   * matches routes in declaration order, and `:id` would swallow this path and
+   * then fail its UUID pipe on the word "orchestration".
+   */
+  @Get('orchestration')
+  orchestration(@Req() req: AuthenticatedRequest) {
+    return this.jobCards.orchestration(req.tenantContext);
+  }
+
   @Get('board')
   board(@Req() req: AuthenticatedRequest) {
     return this.jobCards.board(req.tenantContext);

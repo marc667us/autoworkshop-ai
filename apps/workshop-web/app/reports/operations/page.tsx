@@ -1,5 +1,6 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
 import { ReportScreen } from '../../_screens/report-screen';
+import { OrchestrationPanel } from '../../_screens/orchestration-panel';
 
 /**
  * `/reports/operations` - "Operations". Slice 8 of `COMPLETION_PLAN.md`.
@@ -20,5 +21,15 @@ const ROUTE = '/reports/operations';
 
 export default async function Page() {
   await requireNavRoute('workshop', ROUTE);
-  return <ReportScreen route={ROUTE} reportKey="job-progress" fallbackTitle="Operations" />;
+  // The orchestrator ABOVE the report, deliberately. The report says what
+  // happened; the panel says what to do now, and the second is what somebody
+  // opening Operations in the morning actually needs. Mounted on an existing
+  // route rather than a new menu entry — a nav item is a promise, and this is
+  // an addition to a screen that already answers the same question badly.
+  return (
+    <>
+      <OrchestrationPanel />
+      <ReportScreen route={ROUTE} reportKey="job-progress" fallbackTitle="Operations" />
+    </>
+  );
 }
