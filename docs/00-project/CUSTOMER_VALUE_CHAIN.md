@@ -22,6 +22,34 @@ job is the CONNECTION between them.
 - "Win win for all" is a design test to apply to each feature: name what each of
   the three sides gets. A feature only one side benefits from needs a reason.
 
+## 💳 PAYMENTS — owner requirement, 2026-08-07
+
+> *"supplier system must update the payment to include local mnt momo payment
+> systems and local bank payment card, use paystack"*
+
+**Paystack, covering MOBILE MONEY and local bank cards.** Ghana is a
+mobile-money-first market — MTN MoMo, Vodafone Cash, AirtelTigo — and a
+marketplace that can only take an international card excludes most of the people
+it is for. Paystack carries both channels in one integration, which is why it is
+the right single choice rather than two.
+
+⚠️ SOLAR ALREADY INTEGRATES PAYSTACK and is the reference implementation
+(ADR-011) — including a `/paystack/verify` callback with dedupe, and the
+hard-won rule that the verify callback carries NO bot-defense honeypot because a
+wrongful block means a real payment goes uncredited. Read Solar's implementation
+before writing this one; do not re-derive it.
+
+⚠️ ZERO-COST RULE (ADR-012): Paystack has no subscription — it takes a
+transaction percentage, which is a cost of taking money at all rather than a
+tool the project pays for. Solar's precedent stands. Do not introduce any paid
+tool alongside it.
+
+**Scope: the SUPPLIER side.** A workshop accepting a supplier's quote is the
+moment money moves on the workshop→supplier edge, and that is what this covers.
+NOT YET BUILT.
+
+---
+
 The chain below is the CUSTOMER→WORKSHOP edge. The WORKSHOP→SUPPLIER edge is the
 same shape and is largely unbuilt — that asymmetry is the biggest gap in the
 product against this stated proposition, and it is not a defect list item, it is
