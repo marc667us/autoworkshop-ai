@@ -5,13 +5,23 @@
 -- somebody else as its author, a `converted` row with no job card, and a
 -- `declined` row with no reason. Everything before them is scaffolding.
 --
--- ⚠️ CONSTRAINTS ONLY, NOT RLS. The policies cannot be exercised here: this
--- runs as the migration role, which on a local Postgres is a SUPERUSER and
--- BYPASSES row level security entirely. A "policy verified" line printed from
--- this script would be a lie of exactly the kind that made `verify/036` pass
--- 9/9 against a defect that existed only in production. The policies are
--- rehearsed on live by `Rehearse Migration On Live`, which runs as
--- `autoworkshop_app` with `superuser=false bypassrls=false`.
+-- ── 🔴 IT NOW ESTABLISHES A CALLER CONTEXT, AND THE FIRST VERSION DID NOT ──
+--
+-- That version said "constraints only, not RLS", on the reasoning that a local
+-- superuser bypasses policies so testing them here would prove nothing. True as
+-- far as it went, and it produced a script that COULD NOT RUN under the very
+-- rehearsal meant to catch production-only defects: `Rehearse Migration On
+-- Live` connects as `autoworkshop_app` (superuser=false, bypassrls=false), the
+-- policies are live, and the fixture set no `app.user_id` — so
+-- `identity.current_user_id()` was NULL, the INSERT policy correctly refused
+-- the very first insert, and the rehearsal failed at check #2.
+--
+-- The lesson is not "the policy was wrong". It is that a verify which declines
+-- to establish a caller has decided in advance that it will never test the
+-- thing most likely to be broken. Locally the settings below are harmless
+-- (a superuser bypasses the policies anyway); under rehearsal they are the
+-- whole point, because checks 15-18 then exercise the policies AS A REAL
+-- CALLER — which is the only place the inverted org predicate can be proven.
 
 DO $verify$
 DECLARE
@@ -38,6 +48,15 @@ BEGIN
         SELECT id INTO oid FROM identity.organizations WHERE tenant_id = tid LIMIT 1;
     END IF;
     IF oid IS NULL THEN RAISE EXCEPTION 'verify/058: no organisation'; END IF;
+
+    -- 🔴 THE CALLER. Without these the policies see no user, no tenant and no
+    -- organisation, and refuse everything — which is what failed the first
+    -- rehearsal. `app.current_role` is deliberately a STAFF role here so the
+    -- setup below can write; the customer cases set it to `customer` themselves.
+    PERFORM set_config('app.tenant_id', tid::text, true);
+    PERFORM set_config('app.user_id', me::text, true);
+    PERFORM set_config('app.organization_ids', oid::text, true);
+    PERFORM set_config('app.current_role', 'reception_staff', true);
 
     -- 1. The table exists with the columns the feature depends on.
     SELECT count(*) INTO n FROM information_schema.columns
@@ -184,6 +203,101 @@ BEGIN
 
     DELETE FROM reception.service_requests WHERE id = req;
 
-    RAISE NOTICE 'verify/058: % / 14 passed', passed;
+    -- ══════════════════════════════════════════════════════════════════════
+    -- 🔴 15-18: THE POLICIES, AS A REAL CALLER.
+    --
+    -- Meaningful ONLY under `Rehearse Migration On Live`, which runs as
+    -- `autoworkshop_app` with bypassrls=false. Locally these pass trivially
+    -- because a superuser ignores policies — which is precisely why the
+    -- rehearsal is the gate and this file is not.
+    -- ══════════════════════════════════════════════════════════════════════
+
+    -- 15. 🔴 A CUSTOMER MAY FILE AT A WORKSHOP THEY DO NOT BELONG TO. This is
+    --     the inverted org predicate, and the single most unusual thing about
+    --     this table: every other table requires `organization_id =
+    --     current_organization_id()`. If a copied policy ever replaces this
+    --     one, the whole public mechanic directory becomes decorative — a
+    --     customer could search workshops and ask none of them. The check sets
+    --     the caller's organisation to something ELSE entirely.
+    PERFORM set_config('app.current_role', 'customer', true);
+    PERFORM set_config('app.organization_ids', gen_random_uuid()::text, true);
+    INSERT INTO reception.service_requests
+        (tenant_id, organization_id, requested_by, vehicle_description, complaint)
+    VALUES (tid, oid, me, 'Policy test car', 'Policy test complaint')
+    RETURNING id INTO req;
+    passed := passed + 1;
+
+    -- 16. 🔴 A CUSTOMER MAY NOT FILE IN SOMEBODY ELSE'S NAME. `requested_by` is
+    --     pinned to the caller by the policy, not merely by the API — so a
+    --     direct write cannot impersonate.
+    --
+    --     ⚠️ A REAL SECOND USER, NEVER `gen_random_uuid()`. That was the first
+    --     version and it failed for entirely the wrong reason: locally the
+    --     superuser bypasses the policy, so the insert sailed past it and hit
+    --     the FOREIGN KEY instead. Catching `foreign_key_violation` would have
+    --     made the check green while proving nothing about impersonation — a
+    --     test passing on the strength of a constraint it was not testing.
+    SELECT id INTO other_user FROM identity.users WHERE id <> me LIMIT 1;
+    IF other_user IS NULL THEN
+        -- SKIPPED, and said so. Three states, not two: reporting a pass here
+        -- would claim impersonation was refused when nothing was attempted.
+        RAISE NOTICE 'verify/058 #16 SKIPPED: only one user exists, cannot attempt impersonation';
+    ELSE
+        refused := false;
+        BEGIN
+            INSERT INTO reception.service_requests
+                (tenant_id, organization_id, requested_by, vehicle_description, complaint)
+            VALUES (tid, oid, other_user, 'Impersonation', 'Impersonation');
+        EXCEPTION WHEN insufficient_privilege OR check_violation THEN refused := true;
+        END;
+        IF NOT refused THEN
+            -- Locally this WILL fire, because a superuser bypasses the policy.
+            -- That is honest: the check is meaningful only under rehearsal, and
+            -- saying so beats a green tick that means nothing.
+            RAISE NOTICE 'verify/058 #16: impersonation NOT refused — expected locally (superuser bypasses RLS), a DEFECT under rehearsal';
+        ELSE
+            passed := passed + 1;
+        END IF;
+        DELETE FROM reception.service_requests
+         WHERE requested_by = other_user AND vehicle_description = 'Impersonation';
+    END IF;
+
+    -- 17. 🔴 A CUSTOMER MAY NOT DECIDE A REQUEST — not even their own. Accepting
+    --     your own work request is the obvious abuse, and a customer holds a
+    --     real membership in the workshop's organisation, so an org-only
+    --     predicate would have allowed it. Enforced in the service AND here.
+    UPDATE reception.service_requests
+       SET status = 'accepted', decided_by = me, decided_at = now()
+     WHERE id = req;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN
+        RAISE NOTICE 'verify/058 #17: a CUSTOMER accepted a request — expected locally (superuser bypasses RLS), a DEFECT under rehearsal';
+        -- Put it back so later checks see the state they expect.
+        UPDATE reception.service_requests SET status='new', decided_by=NULL, decided_at=NULL WHERE id=req;
+    ELSE
+        passed := passed + 1;
+    END IF;
+
+    -- 18. 🔴 A CUSTOMER MAY NOT READ ANOTHER CUSTOMER'S REQUEST. The author
+    --     branch is `requested_by = current_user_id()`, NOT "belongs to my
+    --     organisation" — because a customer IS a member of the workshop's org,
+    --     and an org-only predicate would show them the workshop's entire
+    --     inbox. That is the 45-screen leak's exact shape, one layer down.
+    PERFORM set_config('app.user_id', gen_random_uuid()::text, true);
+    PERFORM set_config('app.current_role', 'customer', true);
+    SELECT count(*) INTO n FROM reception.service_requests WHERE id = req;
+    IF n <> 0 THEN
+        RAISE NOTICE 'verify/058 #18: a customer read ANOTHER customer''s request — expected locally (superuser bypasses RLS), a DEFECT under rehearsal';
+    ELSE
+        passed := passed + 1;
+    END IF;
+
+    -- Restore the staff caller so the cleanup can see the row it created.
+    PERFORM set_config('app.user_id', me::text, true);
+    PERFORM set_config('app.current_role', 'reception_staff', true);
+    PERFORM set_config('app.organization_ids', oid::text, true);
+    DELETE FROM reception.service_requests WHERE id = req;
+
+    RAISE NOTICE 'verify/058: % / 18 passed (15-18 are only MEANINGFUL under rehearsal — locally a superuser bypasses RLS)', passed;
 END
 $verify$;
