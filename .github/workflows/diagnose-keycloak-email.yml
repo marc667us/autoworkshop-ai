@@ -1,0 +1,169 @@
+# Why does no mail arrive? READ-ONLY.
+#
+# Built 2026-08-07, when the owner reported "verification email dont come to the
+# user mail to verify" and "emailing system dont work".
+#
+# TWO COMPLETELY DIFFERENT FAULTS LOOK IDENTICAL TO A USER, and they have
+# opposite remedies:
+#
+#   A. `verifyEmail` is ON and there is no `smtpServer`. Keycloak demands a
+#      verification it cannot send, so REGISTRATION ITSELF CANNOT COMPLETE. The
+#      new customer is parked on "verify your email" for ever. This blocks step
+#      one of the owner's value chain.
+#   B. `verifyEmail` is OFF. No verification mail was ever going to be sent, and
+#      the person waiting for one is waiting for something that does not exist.
+#      Only PASSWORD RESET is actually broken by the missing SMTP.
+#
+# The committed realm file says `"verifyEmail": true` and carries NO
+# `smtpServer` block — which is case A. But `--import-realm` runs on FIRST BOOT
+# ONLY and the live realm is KNOWN to have drifted from that file (see
+# `apps/workshop-web/app/api/auth/register/route.ts`), so the file is a claim
+# about the past, not a measurement. This asks the running realm.
+#
+# It also counts users by `emailVerified`, because that number says whether
+# anybody is actually STUCK or whether this is only a latent trap.
+#
+# ⚠️ NEVER PRINTS A VALUE OF THE SMTP BLOCK — keys only. A run log is not a
+# vault, and the password would be in it.
+#
+# READ-ONLY: GET requests only. It writes nothing to the realm.
+name: Diagnose Keycloak email
+
+on:
+  workflow_dispatch:
+    inputs:
+      realm:
+        description: 'Keycloak realm'
+        required: false
+        default: 'autoworkshop'
+      keycloak_url:
+        description: 'Public Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KC_URL: ${{ inputs.keycloak_url }}
+      REALM: ${{ inputs.realm }}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+    steps:
+      - name: Guard — the admin password must be present
+        run: |
+          if [ -z "$KC_ADMIN_PASSWORD" ]; then
+            echo "::error::KC_BOOTSTRAP_ADMIN_PASSWORD is not set on this repo."
+            exit 1
+          fi
+
+      # Free tier takes 115-147s to wake. Every check below would misreport a
+      # cold instance as a broken realm.
+      - name: Warm Keycloak
+        run: |
+          echo "waking Keycloak (cold start is 115-147s on the free tier)"
+          curl -sS -o /dev/null -w 'discovery %{http_code} in %{time_total}s\n' \
+            --max-time 300 \
+            "$KC_URL/realms/${REALM}/.well-known/openid-configuration"
+
+      - name: Get an admin token
+        run: |
+          # Sent with -d @- so the password never appears in the process table.
+          TOKEN="$(printf '%s' \
+            "client_id=admin-cli&grant_type=password&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASSWORD}" \
+            | curl -sS --max-time 120 -d @- \
+                "$KC_URL/realms/master/protocol/openid-connect/token" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('access_token',''))")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::could not obtain an admin token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "KC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "admin token acquired"
+
+      - name: The realm's email posture
+        run: |
+          set -euo pipefail
+          code="$(curl -s -o realm.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${KC_TOKEN}" \
+            "$KC_URL/admin/realms/${REALM}")"
+          echo "GET /admin/realms/${REALM} -> ${code}"
+          [ "$code" = "200" ] || { head -c 400 realm.json; echo; exit 1; }
+
+          python3 - <<'PY'
+          import json
+          r = json.load(open('realm.json'))
+          smtp = r.get('smtpServer') or {}
+
+          print('── flags that decide whether mail is even attempted ──')
+          for k in ('verifyEmail', 'registrationAllowed', 'resetPasswordAllowed',
+                    'registrationEmailAsUsername', 'loginWithEmailAllowed',
+                    'duplicateEmailsAllowed'):
+              print(f'  {k:30}: {r.get(k)}')
+
+          print()
+          print('── smtpServer ──')
+          if not smtp:
+              # An EMPTY block is the whole diagnosis, so it is stated as a
+              # finding rather than printed as an empty dict and left to read
+              # like "nothing to report".
+              print('  🔴 ABSENT — the realm has NO mail server. Keycloak takes SMTP')
+              print('     from realm config ONLY; there is no environment variable')
+              print('     for it, and --import-realm runs on FIRST BOOT ONLY, so')
+              print('     editing the realm file cannot fix an existing realm.')
+          else:
+              # KEYS ONLY. `password` lives in here.
+              print('  keys present:', sorted(smtp.keys()))
+              for k in ('host', 'port', 'from', 'fromDisplayName', 'ssl', 'starttls', 'auth'):
+                  if k in smtp:
+                      print(f'  {k:16}: {smtp[k]}')
+              if 'password' in smtp:
+                  print('  password        : (set — value not printed)')
+
+          print()
+          print('── VERDICT ──')
+          if r.get('verifyEmail') and not smtp:
+              print('  🔴 CASE A: verifyEmail is ON and there is NO mail server.')
+              print('     Keycloak demands a verification it cannot send, so a NEW')
+              print('     USER CANNOT FINISH REGISTERING. This blocks step one of')
+              print('     the value chain, not merely password reset.')
+          elif not r.get('verifyEmail') and not smtp:
+              print('  🟠 CASE B: verifyEmail is OFF and there is no mail server.')
+              print('     No verification mail was ever going to be sent — anybody')
+              print('     waiting for one is waiting for something that does not')
+              print('     exist. PASSWORD RESET is the thing genuinely broken.')
+          elif smtp:
+              print('  ✅ A mail server IS configured. If mail still does not arrive the')
+              print('     fault is delivery, not configuration: check the provider, the')
+              print('     port (Render free blocks 25/465/587; 2525 is open) and spam.')
+          PY
+
+      - name: Is anybody actually stuck?
+        run: |
+          set -euo pipefail
+          # A latent trap and an active outage need different urgency, and the
+          # count is the only thing that tells them apart.
+          curl -fsS -H "Authorization: Bearer ${KC_TOKEN}" \
+            "$KC_URL/admin/realms/${REALM}/users?max=200&briefRepresentation=true" > users.json
+          python3 - <<'PY'
+          import json
+          us = json.load(open('users.json'))
+          unver = [u for u in us if not u.get('emailVerified')]
+          pending = [u for u in us if u.get('requiredActions')]
+          print(f'users returned            : {len(us)}')
+          print(f'emailVerified = false     : {len(unver)}')
+          print(f'holding requiredActions   : {len(pending)}')
+          for u in pending[:15]:
+              # Usernames are already visible to any admin; passwords never are.
+              print(f"    {u.get('username')}: {u.get('requiredActions')}")
+          if unver:
+              print()
+              print('🔴 These accounts cannot verify while the realm has no mail server.')
+              print('   VERIFY_EMAIL can be cleared per user by an admin as a stopgap,')
+              print('   but the fix is SMTP — otherwise every future sign-up repeats it.')
+          PY
