@@ -169,10 +169,21 @@ BEGIN
     --     for one customer. Simulated in one session by running the same
     --     conditional UPDATE twice: the second must match ZERO rows, which is
     --     precisely what a concurrent loser sees.
+    -- 🔴 REACHED THROUGH THE REAL PATH, NOT MANUFACTURED. The first version
+    --    inserted this row directly with `status='accepted'`, and the live
+    --    rehearsal refused it: the INSERT policy permits `status = 'new'` ONLY,
+    --    because `accepted` is a RECEPTION decision and a customer must not be
+    --    able to file one pre-approved. The policy was right and the FIXTURE was
+    --    manufacturing a state the product forbids — a failure this repository
+    --    has recorded before, and one that only a non-superuser run can expose.
     INSERT INTO reception.service_requests
-        (tenant_id, organization_id, requested_by, vehicle_description, complaint, status)
-    VALUES (tid, oid, me, 'Claim test', 'Claim test', 'accepted')
+        (tenant_id, organization_id, requested_by, vehicle_description, complaint)
+    VALUES (tid, oid, me, 'Claim test', 'Claim test')
     RETURNING id INTO req;
+    -- Accepted the way reception accepts it, decider and all.
+    UPDATE reception.service_requests
+       SET status='accepted', decided_by=me, decided_at=now()
+     WHERE id=req;
 
     UPDATE reception.service_requests SET status='converting'
      WHERE id=req AND status='accepted';
