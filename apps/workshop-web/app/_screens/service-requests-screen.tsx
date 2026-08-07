@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
-import { decideServiceRequestAction } from './service-request-actions';
+import { decideServiceRequestAction, convertServiceRequestAction } from './service-request-actions';
 
 /**
  * Reception's inbox — the owner's value chain, step 7: "his form is received at
@@ -21,6 +21,13 @@ import { decideServiceRequestAction } from './service-request-actions';
  */
 export const dynamic = 'force-dynamic';
 
+interface WorkshopVehicle {
+  id: string;
+  registrationNumber: string;
+  make: string;
+  model: string | null;
+}
+
 interface ServiceRequest {
   id: string;
   vehicleDescription: string;
@@ -34,6 +41,12 @@ interface ServiceRequest {
 const BADGE: Record<string, 'draft' | 'active' | 'complete' | 'attention' | 'blocked'> = {
   new: 'attention',
   accepted: 'active',
+  // A state the system passes THROUGH while a job card is being opened. Seeing
+  // it settled here means the card failed after the claim and the release did
+  // not run — rare, and it must be VISIBLE rather than rendering as an unknown
+  // status, because a request nobody can act on is exactly the failure the claim
+  // was introduced to avoid trading for.
+  converting: 'attention',
   converted: 'complete',
   declined: 'blocked',
 };
@@ -57,7 +70,13 @@ async function Inbox() {
   // own requests, which for a staff member is almost always empty. Two paths
   // rather than a query flag, so the two audiences can never be confused by a
   // caller that forgot a parameter.
-  const result = await apiGet<ServiceRequest[]>('workshop', '/service-requests/inbox');
+  // The workshop's vehicles, so an ACCEPTED request can be converted without
+  // typing a uuid. Allowed to fail: the inbox is still readable and decidable
+  // without it, and only the convert control depends on it.
+  const [result, vehicles] = await Promise.all([
+    apiGet<ServiceRequest[]>('workshop', '/service-requests/inbox'),
+    apiGet<WorkshopVehicle[]>('workshop', '/vehicles'),
+  ]);
 
   if (!result.ok) {
     return <ApiFailure reason={result.reason} workspaceId="workshop" />;
@@ -94,7 +113,10 @@ async function Inbox() {
               </span>
             ) : null}
             <span style={{ marginLeft: 'auto' }}>
-              <StatusBadge kind={BADGE[r.status] ?? 'draft'} label={r.status} />
+              <StatusBadge
+                kind={BADGE[r.status] ?? 'draft'}
+                label={r.status === 'converting' ? 'opening job card…' : r.status}
+              />
             </span>
           </div>
 
@@ -175,6 +197,77 @@ async function Inbox() {
                 Decline
               </button>
             </form>
+          ) : null}
+
+          {/*
+            🔴 STEP 8 — "an ai agent use the form to register the customer and
+            the customer vihicles and final the assignment of the requets".
+            What is automated here is real: the job card is opened, the
+            complaint carried across VERBATIM from the customer's own words, and
+            the request closed out and linked.
+            What is NOT automated is which vehicle. The customer typed their car
+            as free text at a workshop that had never seen it, and inferring a
+            make from prose would create wrong vehicle records under a real
+            person's name — wrong data being far harder to undo than absent
+            data. So reception names the car, registering it first if need be.
+          */}
+          {r.status === 'accepted' ? (
+            vehicles.ok && vehicles.data.length > 0 ? (
+              <form
+                action={convertServiceRequestAction}
+                style={{ display: 'flex', gap: primitive.space[2], marginTop: primitive.space[3], flexWrap: 'wrap', alignItems: 'center' }}
+              >
+                <input type="hidden" name="id" value={r.id} />
+                <label htmlFor={`veh-${r.id}`} style={{ fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
+                  Vehicle
+                </label>
+                <select
+                  id={`veh-${r.id}`}
+                  name="vehicleId"
+                  required
+                  defaultValue=""
+                  style={{
+                    height: '2.25rem',
+                    padding: `0 ${primitive.space[2]}`,
+                    border: `1px solid ${themeVar.borderDefault}`,
+                    borderRadius: primitive.radius.md,
+                    background: themeVar.backgroundPrimary,
+                    color: themeVar.textPrimary,
+                  }}
+                >
+                  <option value="" disabled>
+                    Choose the vehicle…
+                  </option>
+                  {vehicles.data.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.registrationNumber} — {v.make}
+                      {v.model ? ` ${v.model}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  style={{
+                    height: '2.25rem',
+                    padding: `0 ${primitive.space[3]}`,
+                    border: `1px solid ${themeVar.borderDefault}`,
+                    borderRadius: primitive.radius.md,
+                    background: themeVar.backgroundPrimary,
+                    color: themeVar.textPrimary,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Open job card
+                </button>
+              </form>
+            ) : (
+              // An honest dead end rather than a disabled control with no
+              // explanation: the car has to exist before work can be booked
+              // against it, and this says where to make that happen.
+              <p style={{ margin: `${primitive.space[3]} 0 0 0`, fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
+                Register this vehicle first, then convert this request to a job card.
+              </p>
+            )
           ) : null}
         </li>
       ))}

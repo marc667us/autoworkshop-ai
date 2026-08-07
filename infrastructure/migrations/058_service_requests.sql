@@ -73,8 +73,23 @@ CREATE TABLE IF NOT EXISTS reception.service_requests (
     -- reception decision, and `declined` is a real outcome rather than a
     -- deletion — a workshop that turns work away should leave a trace, both for
     -- the customer's own history and so "we never heard from you" is checkable.
+    -- 🔴 `converting` IS A CLAIM, AND IT IS WHAT MAKES CONVERSION SAFE.
+    --
+    -- Opening a job card is a second transaction: the request cannot be read,
+    -- the card created, and the request updated atomically, because
+    -- `JobCardService.create` owns its own transaction and must (it allocates a
+    -- job number and writes lifecycle history). Without an intermediate state
+    -- the sequence is check-then-act, and TWO receptionists — or two clicks —
+    -- both read `accepted`, both open a job card, and one real customer has two.
+    -- Caught by Codex before this reached production.
+    --
+    -- So conversion CLAIMS the row first: `accepted -> converting` in one atomic
+    -- UPDATE. Exactly one caller can win that, and only the winner opens a card.
+    -- A row left in `converting` means the job card step failed after the claim;
+    -- it is visible, explicable and recoverable, which an orphaned job card with
+    -- no link back is not.
     status                TEXT NOT NULL DEFAULT 'new'
-                          CHECK (status IN ('new', 'accepted', 'declined', 'converted')),
+                          CHECK (status IN ('new', 'accepted', 'converting', 'declined', 'converted')),
     decline_reason        TEXT,
 
     -- Set when reception turns this into real work. The audit trail of the

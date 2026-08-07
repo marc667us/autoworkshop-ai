@@ -2,7 +2,11 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, U
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { validatedBody } from '../common/validation/validated-body';
 import { ServiceRequestService } from './service-request.service';
-import { CreateServiceRequestBody, DecideServiceRequestBody } from './reception.schemas';
+import {
+  ConvertServiceRequestBody,
+  CreateServiceRequestBody,
+  DecideServiceRequestBody,
+} from './reception.schemas';
 
 /**
  * `POST /service-requests` — the owner's value chain, step 5, and the first
@@ -57,5 +61,22 @@ export class ServiceRequestController {
     @Body(validatedBody(DecideServiceRequestBody)) body: DecideServiceRequestBody,
   ) {
     return this.requests.decide(req.tenantContext, id, body);
+  }
+
+  /**
+   * Turn an accepted request into a job card — value chain step 8.
+   *
+   * A SEPARATE route from `/decision`, not another status on it, because this
+   * one has a side effect outside the request: it opens real work. Folding it
+   * into the decision endpoint would make a triage click and a job-card creation
+   * indistinguishable in the audit trail.
+   */
+  @Post(':id/convert')
+  convert(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body(validatedBody(ConvertServiceRequestBody)) body: ConvertServiceRequestBody,
+  ) {
+    return this.requests.convert(req.tenantContext, id, body);
   }
 }

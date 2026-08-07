@@ -144,8 +144,46 @@ BEGIN
     IF n <> 0 THEN RAISE EXCEPTION 'verify/058 #11: DELETE was granted'; END IF;
     passed := passed + 1;
 
+    -- 12. 🔴 THE CLAIM SERIALISES — the check the whole `converting` state exists
+    --     for. Two callers both try `accepted -> converting`; exactly ONE may
+    --     win, because the loser is what stops a second job card being opened
+    --     for one customer. Simulated in one session by running the same
+    --     conditional UPDATE twice: the second must match ZERO rows, which is
+    --     precisely what a concurrent loser sees.
+    INSERT INTO reception.service_requests
+        (tenant_id, organization_id, requested_by, vehicle_description, complaint, status)
+    VALUES (tid, oid, me, 'Claim test', 'Claim test', 'accepted')
+    RETURNING id INTO req;
+
+    UPDATE reception.service_requests SET status='converting'
+     WHERE id=req AND status='accepted';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'verify/058 #12: the first claim did not win'; END IF;
+
+    UPDATE reception.service_requests SET status='converting'
+     WHERE id=req AND status='accepted';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 0 THEN RAISE EXCEPTION 'verify/058 #12: a SECOND caller also claimed the request — two job cards would be opened'; END IF;
+    passed := passed + 1;
+
+    -- 13. `converting` may hold NO job card — otherwise the claim itself would
+    --     violate `ck_service_request_converted` and the whole design fails on
+    --     its first use.
+    PERFORM 1 FROM reception.service_requests WHERE id=req AND converted_job_card_id IS NULL;
+    IF NOT FOUND THEN RAISE EXCEPTION 'verify/058 #13: converting row lost its null job card'; END IF;
+    passed := passed + 1;
+
+    -- 14. THE CLAIM CAN BE RELEASED. A transient job-card failure must return
+    --     the request to `accepted`, or a stuck row replaces the duplicate-work
+    --     bug this was all meant to fix.
+    UPDATE reception.service_requests SET status='accepted'
+     WHERE id=req AND status='converting';
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN RAISE EXCEPTION 'verify/058 #14: a claimed request could not be released'; END IF;
+    passed := passed + 1;
+
     DELETE FROM reception.service_requests WHERE id = req;
 
-    RAISE NOTICE 'verify/058: % / 11 passed', passed;
+    RAISE NOTICE 'verify/058: % / 14 passed', passed;
 END
 $verify$;

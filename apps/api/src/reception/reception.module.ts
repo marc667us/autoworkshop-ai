@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
+// For `JobCardService`: converting a request OPENS A JOB CARD, and that must go
+// through the service that allocates the job number and sets the opening stage.
+// RepairModule does not import ReceptionModule, so there is no cycle.
+import { RepairModule } from '../repair/repair.module';
 import {
   AppointmentController,
   CustomerFeedbackController,
@@ -21,7 +25,7 @@ import { ServiceRequestService } from './service-request.service';
  * RepairModule, CoreModule and MediaModule carry the same note.
  */
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, RepairModule],
   controllers: [
     AppointmentController,
     WalkInController,

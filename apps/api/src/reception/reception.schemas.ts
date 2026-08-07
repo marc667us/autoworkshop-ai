@@ -128,3 +128,28 @@ export const DecideServiceRequestBody = z
   })
   .strict();
 export type DecideServiceRequestBody = z.infer<typeof DecideServiceRequestBody>;
+
+/**
+ * Turning an accepted request into real work — the owner's value chain, step 8.
+ *
+ * ⚠️ `vehicleId` IS REQUIRED, AND THAT IS A DELIBERATE LIMIT ON AUTOMATION. The
+ * owner's flow has an agent "register the customer and the customer vehicles"
+ * from the form. A job card needs a VEHICLE ROW, and `VehicleService.create`
+ * needs a structured `makeId` — but the customer typed "2015 Toyota Corolla" as
+ * free text at a workshop that has never seen the car. Guessing a make from
+ * prose would silently create wrong vehicle records under a real customer's
+ * name, and wrong data is harder to undo than absent data.
+ *
+ * So reception names the vehicle: the one already linked to the request, or one
+ * they registered from the details the customer gave. The automation that
+ * remains is real — the job card is opened, the complaint carried across
+ * verbatim, and the request closed out and linked — and the one judgement a
+ * machine should not make here stays with a person.
+ */
+export const ConvertServiceRequestBody = z
+  .object({
+    vehicleId: z.string().uuid(),
+    priority: optionalText(40),
+  })
+  .strict();
+export type ConvertServiceRequestBody = z.infer<typeof ConvertServiceRequestBody>;

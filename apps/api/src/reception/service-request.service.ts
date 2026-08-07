@@ -1,7 +1,12 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
-import type { CreateServiceRequestBody, DecideServiceRequestBody } from './reception.schemas';
+import type {
+  ConvertServiceRequestBody,
+  CreateServiceRequestBody,
+  DecideServiceRequestBody,
+} from './reception.schemas';
+import { JobCardService } from '../repair/job-card.service';
 
 /**
  * The customer's Request for Service — the owner's value chain, steps 4-7.
@@ -54,7 +59,14 @@ function toRow(r: Record<string, unknown>): ServiceRequestRow {
 
 @Injectable()
 export class ServiceRequestService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    // Reused, NEVER re-implemented. Opening a job card allocates a job number,
+    // sets the opening stage and writes the lifecycle history; a direct INSERT
+    // here would produce a row that looks like a job card and is outside the
+    // state machine every later screen assumes.
+    private readonly jobCards: JobCardService,
+  ) {}
 
   /**
    * File a request at a chosen workshop.
@@ -200,5 +212,108 @@ export class ServiceRequestService {
       );
       return toRow(after.rows[0]! as Record<string, unknown>);
     });
+  }
+
+  /**
+   * Turn an accepted request into a job card — the owner's value chain, step 8.
+   *
+   * ── 🔴 CLAIM FIRST, THEN OPEN THE CARD. THE ORDER IS THE CORRECTNESS. ─────
+   *
+   * The obvious sequence — read the status, open the job card, mark the request
+   * converted — is CHECK-THEN-ACT across three separate transactions, because
+   * `JobCardService.create` owns its own (it must: it allocates a job number and
+   * writes lifecycle history). Two receptionists, or two clicks on a slow
+   * connection, both read `accepted`, both open a job card, and one real
+   * customer ends up with two. Codex caught that before it reached production.
+   *
+   * So this claims the row FIRST with a single conditional UPDATE
+   * `accepted -> converting`. Postgres serialises that write, so exactly one
+   * caller sees `rowCount === 1` and only that caller opens a card. The loser is
+   * told plainly, having created nothing.
+   *
+   * ⚠️ AND THE CLAIM IS RELEASED IF THE CARD FAILS. Without that, a transient
+   * failure would strand the request in `converting` for ever with no way back —
+   * trading a duplicate-work bug for a stuck-request bug. `converting` is
+   * therefore a state the system passes THROUGH, never one it settles in.
+   */
+  async convert(
+    ctx: TenantContext,
+    id: string,
+    input: ConvertServiceRequestBody,
+  ): Promise<{ requestId: string; jobCardId: string; jobNumber: string }> {
+    if (ctx.activeRole === 'customer') {
+      throw new ForbiddenException('A customer cannot convert a service request.');
+    }
+
+    // THE CLAIM. `status = 'accepted'` is required, not merely `<> converted`:
+    // a request must be accepted before it becomes work, or the triage step the
+    // whole inbox exists for is skippable. (Codex, MEDIUM.)
+    const claimed = await this.db.withTenant(ctx, async (client) => {
+      const rows = await client.query<{ complaint: string }>(
+        `UPDATE reception.service_requests
+            SET status = 'converting'
+          WHERE id = $1 AND tenant_id = $2 AND organization_id = $3
+            AND status = 'accepted'
+        RETURNING complaint`,
+        [id, ctx.tenantId, ctx.organizationId],
+      );
+      return rows.rows[0] ?? null;
+    });
+
+    if (!claimed) {
+      // One message for every reason — not accepted yet, already converting,
+      // already converted, declined, or another workshop's. Distinguishing them
+      // would confirm the existence of a request the caller may not read.
+      throw new ConflictException(
+        'That request is not ready to convert. It may already have been converted, or it has not been accepted yet.',
+      );
+    }
+
+    let card: { id: string; jobNumber: string };
+    try {
+      card = await this.jobCards.create(ctx, {
+        vehicleId: input.vehicleId,
+        // ⚠️ THE STORED COMPLAINT, returned by the claim itself — never the
+        // request body. The customer's own words are what the job card must
+        // carry, and `ConvertServiceRequestBody` does not accept a complaint at
+        // all, so reception cannot rewrite what was reported on the way through.
+        complaint: claimed.complaint,
+        priority: input.priority,
+      });
+    } catch (error) {
+      // RELEASE THE CLAIM. The card was not opened, so the request must go back
+      // to where reception can act on it again rather than sit in a state no
+      // screen offers a way out of.
+      await this.db
+        .withTenant(ctx, async (client) => {
+          await client.query(
+            `UPDATE reception.service_requests
+                SET status = 'accepted'
+              WHERE id = $1 AND tenant_id = $2 AND organization_id = $3
+                AND status = 'converting'`,
+            [id, ctx.tenantId, ctx.organizationId],
+          );
+        })
+        // Swallowed deliberately: the ORIGINAL failure is the one worth
+        // reporting, and rethrowing from the cleanup would replace a useful
+        // message ("that vehicle is not yours") with a confusing one.
+        .catch(() => undefined);
+      throw error;
+    }
+
+    await this.db.withTenant(ctx, async (client) => {
+      await client.query(
+        `UPDATE reception.service_requests
+            SET status = 'converted',
+                converted_job_card_id = $4,
+                decided_by = COALESCE(decided_by, $5),
+                decided_at = COALESCE(decided_at, now())
+          WHERE id = $1 AND tenant_id = $2 AND organization_id = $3
+            AND status = 'converting'`,
+        [id, ctx.tenantId, ctx.organizationId, card.id, ctx.userId],
+      );
+    });
+
+    return { requestId: id, jobCardId: card.id, jobNumber: card.jobNumber };
   }
 }

@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { apiPatch } from '@autoworkshop/next-shell';
+import { apiPatch, apiPost } from '@autoworkshop/next-shell';
 
 /**
  * Reception's decision on an incoming Request for Service.
@@ -33,4 +33,25 @@ export async function decideServiceRequestAction(formData: FormData): Promise<vo
   // immediately — a button that appears to do nothing gets pressed twice, and
   // the second press is the one that confuses everybody.
   revalidatePath('/customer-reception/service-requests');
+}
+
+/**
+ * Turn an accepted request into a job card — value chain step 8.
+ *
+ * ⚠️ THE COMPLAINT IS NOT SENT. The API reads the customer's own words from the
+ * stored row, so reception cannot quietly rewrite what was reported on the way
+ * through. All this supplies is WHICH VEHICLE, which is the one judgement the
+ * automation deliberately leaves to a person — the customer typed their car as
+ * free text, and guessing a make from prose would create wrong vehicle records
+ * under a real customer's name.
+ */
+export async function convertServiceRequestAction(formData: FormData): Promise<void> {
+  const id = String(formData.get('id') ?? '').trim();
+  const vehicleId = String(formData.get('vehicleId') ?? '').trim();
+  if (!id || !vehicleId) return;
+
+  await apiPost('workshop', `/service-requests/${id}/convert`, { vehicleId });
+  revalidatePath('/customer-reception/service-requests');
+  revalidatePath('/requests/service-requests');
+  revalidatePath('/requests-and-reception/service-requests');
 }
