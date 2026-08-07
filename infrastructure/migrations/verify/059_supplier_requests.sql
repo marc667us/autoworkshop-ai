@@ -18,6 +18,7 @@ DO $verify$
 DECLARE
     tid uuid; oid uuid; me uuid; other_user uuid;
     sup uuid; other_sup uuid; req uuid;
+    link_supplier uuid; link_user uuid;
     refused boolean; n int;
     passed int := 0;
 BEGIN
@@ -173,23 +174,44 @@ BEGIN
     -- 11. 🔴 A SUPPLIER USER CAN READ A REQUEST SENT TO THEM. The whole edge
     --     depends on it: without this the marketplace directory is decorative,
     --     exactly as it would have been for customers in 058.
-    INSERT INTO catalogue.supplier_users (supplier_id, user_id, member_role, status, invited_by)
-    VALUES (sup, me, 'owner', 'active', me)
-    ON CONFLICT DO NOTHING;
-    PERFORM set_config('app.current_role', 'supplier_owner', true);
-    PERFORM set_config('app.organization_ids', gen_random_uuid()::text, true);  -- NOT the workshop's
-    SELECT count(*) INTO n FROM parts.supplier_requests WHERE id=req;
-    IF n <> 1 THEN
-        RAISE NOTICE 'verify/059 #11: supplier could NOT read a request sent to them (n=%) — a DEFECT under rehearsal', n;
+    --     ⚠️ AN EXISTING LINK, NEVER A MANUFACTURED ONE. The first version
+    --     INSERTed the caller into `catalogue.supplier_users` to make itself a
+    --     supplier, and the live rehearsal refused it — that table has its own
+    --     RLS, and being able to appoint yourself a supplier would be the defect,
+    --     not the fixture. A verify that has to break a rule to set up its own
+    --     scenario is testing a state the product does not permit. Third time in
+    --     this project: seeding must REPRODUCE reality, not populate a table.
+    SELECT su.supplier_id, su.user_id INTO link_supplier, link_user
+      FROM catalogue.supplier_users su
+     WHERE su.status = 'active'
+     LIMIT 1;
+
+    IF link_user IS NULL THEN
+        RAISE NOTICE 'verify/059 #11 SKIPPED: no active supplier_users row exists, so no real supplier user to act as';
+        RAISE NOTICE 'verify/059 #12 SKIPPED: same reason';
     ELSE
-        passed := passed + 1;
+        -- Re-address the request to the supplier that user actually works for.
+        UPDATE parts.supplier_requests SET supplier_id = link_supplier WHERE id = req;
+
+        PERFORM set_config('app.user_id', link_user::text, true);
+        PERFORM set_config('app.current_role', 'supplier_owner', true);
+        PERFORM set_config('app.organization_ids', gen_random_uuid()::text, true);  -- NOT the workshop's
+        SELECT count(*) INTO n FROM parts.supplier_requests WHERE id=req;
+        IF n <> 1 THEN
+            RAISE NOTICE 'verify/059 #11: supplier could NOT read a request sent to them (n=%) — a DEFECT under rehearsal', n;
+        ELSE
+            passed := passed + 1;
+        END IF;
     END IF;
 
     -- 12. 🔴 A SUPPLIER MAY NOT READ ANOTHER SUPPLIER'S REQUEST. The arm is a
     --     membership test on THIS supplier, not "any supplier user".
-    SELECT id INTO other_sup FROM catalogue.suppliers WHERE id <> sup LIMIT 1;
-    IF other_sup IS NULL THEN
-        RAISE NOTICE 'verify/059 #12 SKIPPED: only one supplier exists, cannot test cross-supplier isolation';
+    SELECT id INTO other_sup FROM catalogue.suppliers
+     WHERE id <> COALESCE(link_supplier, sup) LIMIT 1;
+    IF link_user IS NULL OR other_sup IS NULL THEN
+        IF link_user IS NOT NULL THEN
+            RAISE NOTICE 'verify/059 #12 SKIPPED: only one supplier exists, cannot test cross-supplier isolation';
+        END IF;
     ELSE
         UPDATE parts.supplier_requests SET supplier_id=other_sup WHERE id=req;
         SELECT count(*) INTO n FROM parts.supplier_requests WHERE id=req;
@@ -198,11 +220,19 @@ BEGIN
         ELSE
             passed := passed + 1;
         END IF;
-        -- Put it back as the workshop, which can still see the row.
+        -- Put it back as the workshop, which can still see the row. The USER id
+        -- must be restored too — it was switched to the supplier's above, and
+        -- leaving it would make every later check run as the wrong person.
+        PERFORM set_config('app.user_id', me::text, true);
         PERFORM set_config('app.current_role', 'storekeeper', true);
         PERFORM set_config('app.organization_ids', oid::text, true);
-        UPDATE parts.supplier_requests SET supplier_id=sup WHERE id=req;
+        UPDATE parts.supplier_requests SET supplier_id=COALESCE(link_supplier, sup) WHERE id=req;
     END IF;
+
+    -- Restore the workshop caller before the customer check, in case 11/12 were
+    -- skipped and never switched back.
+    PERFORM set_config('app.user_id', me::text, true);
+    PERFORM set_config('app.organization_ids', oid::text, true);
 
     -- 13. 🔴 A CUSTOMER MAY NOT RAISE A PARTS REQUEST. Parts procurement is not
     --     a customer function, and a customer holds a real membership in the
