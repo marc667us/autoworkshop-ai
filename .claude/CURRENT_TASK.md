@@ -1,6 +1,15 @@
 # Current task — resume here
 
-**Written 2026-08-07 (pt2), after the deploy chain was driven end to end.**
+**Written 2026-08-07 (pt2) at SESSION CLOSE. Tip `1ef94de`, pushed, tree clean.**
+
+▶ **Read `.claude/NEXT_SESSION_SCHEDULE.md` FIRST** — it carries the resumption
+point (R1: one DNS record blocks all email; R2: Solar's Brevo is dead) and the
+numbered issues log I1–I12. This file is the detail behind them.
+
+✅ **NEW THIS SESSION: every user has an in-app notification inbox.** Merged into
+the existing `/home/notifications` screen in both apps rather than shipped as a
+second nav entry — the route already existed. It needs NO mail provider: `in_app`
+rows are delivered the moment they are written, so notifications work today.
 
 ## ▶ FIRST COMMAND OF THE SESSION
 
