@@ -155,6 +155,16 @@ jobs:
           us = json.load(open('users.json'))
           unver = [u for u in us if not u.get('emailVerified')]
           pending = [u for u in us if u.get('requiredActions')]
+          # 🔴 WHERE KEYCLOAK'S OWN TEST MAIL GOES. `testSMTPConnection` sends to
+          # the ADMIN user's address, so an admin with no email makes that test
+          # fail with "Failed to send email" — indistinguishable from a blocked
+          # port or an unverified sender domain, and it would send the next
+          # reader hunting the wrong fault.
+          admin = [u for u in us if u.get('username') == 'admin']
+          for a in admin:
+              print(f"admin account email       : {a.get('email') or 'NONE — the SMTP self-test cannot succeed'}")
+          if not admin:
+              print('admin account             : not in this realm (it lives in `master`)')
           print(f'users returned            : {len(us)}')
           print(f'emailVerified = false     : {len(unver)}')
           print(f'holding requiredActions   : {len(pending)}')
