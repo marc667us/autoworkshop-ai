@@ -16,6 +16,7 @@ export { currentViewer, viewerGrants, viewerRole } from './viewer';
 export {
   grantsFor,
   navRoleFor,
+  isForeignToWorkshop,
   viewerLabels,
   NO_GRANTS,
   organizationsFromMemberships,

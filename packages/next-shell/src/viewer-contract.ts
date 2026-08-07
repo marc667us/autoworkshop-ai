@@ -90,6 +90,59 @@ export function navRoleFor(activeRole: string | undefined): RoleId | undefined {
 }
 
 /**
+ * Roles that are REAL, and belong to a different workspace than the workshop.
+ *
+ * 🔴 THE DEFECT THIS EXISTS TO FIX — MEASURED, NOT THEORISED. A signed-in
+ * `customer` on workshop-web saw **45 of 45** items in the workshop default
+ * tree: Customers (the whole customer book), Vehicles, Job Cards, Technicians,
+ * Quotations, Customer Proposals, Parts Depot, Procurement, Suppliers, Warranty
+ * Claims and four Reports screens. Permission filtering removed NOTHING,
+ * because every item in that tree is ungated.
+ *
+ * The cause is a single value carrying two facts. `navRoleFor()` returns
+ * `undefined` for anything not in `ROLE_TO_NAV`, and `workspaceForRole(base,
+ * undefined)` returns the workshop's DEFAULT staff tree. `workspaces.ts`
+ * defends that default as "what a member whose role is not yet resolved should
+ * see" — which is sound for a STAFF member mid-resolution and wrong for a
+ * customer, who is not staff and never becomes staff. `undefined` meant both
+ * "staff role not yet resolved" and "not a workshop role at all".
+ *
+ * This set is the second fact, made explicit. It is the same class of bug as
+ * `grantsFor(null)` collapsing "no grants" and "could not ask".
+ *
+ * ⚠️ `platform_administrator` IS DELIBERATELY ABSENT. It is unmapped too, so it
+ * also lands on the default tree — but platform admins have a live history of
+ * being unable to use this application without a membership, and sweeping them
+ * in here alongside the customer would turn a leak fix into a lockout. Their
+ * treatment is a separate, deliberate decision. Do NOT add them "for
+ * consistency" without deciding what an admin should actually see.
+ *
+ * ⚠️ AND THIS IS NOT THE CONTROL. CLAUDE.md §8: hidden ≠ secure. It removes the
+ * navigation; `requireNavRoute` REFUSES the routes; the API's tenant guard and
+ * Postgres RLS deny independently. All three are required — a customer must not
+ * merely fail to see the menu, they must be refused the page.
+ */
+const NON_WORKSHOP_ROLES: ReadonlySet<string> = new Set([
+  'customer',
+  'supplier_owner',
+  'fleet_administrator',
+  'insurance_assessor',
+  'towing_operator',
+]);
+
+/**
+ * Whether this role belongs to a different workspace than the workshop.
+ *
+ * `false` for an ABSENT role, deliberately: absent means "not yet resolved",
+ * which is the staff-mid-resolution case the default tree exists for, and also
+ * what a cold `/me` produces. Treating unknown as foreign would lock out a real
+ * member the moment the API was slow.
+ */
+export function isForeignToWorkshop(activeRole: string | undefined): boolean {
+  return activeRole !== undefined && NON_WORKSHOP_ROLES.has(activeRole);
+}
+
+/**
  * What the viewer may SEE in the navigation.
  *
  * A straight pass-through of the API's list — the permission strings the API

@@ -124,6 +124,25 @@ export interface WorkspaceShellProps {
    * component is already a client component and already calls `usePathname`.
    */
   publicPaths?: readonly string[];
+
+  /**
+   * The viewer holds a role belonging to a DIFFERENT workspace — a customer, a
+   * supplier, a fleet administrator, an insurance assessor, a towing operator.
+   *
+   * Computed in the server layout with `isForeignToWorkshop(viewer?.activeRole)`
+   * and passed in, because this is a client component and the raw role string
+   * lives on the viewer the layout already resolved.
+   *
+   * ⚠️ NOT THE SAME QUESTION AS `signedIn`. They are signed in; this workspace
+   * simply is not theirs. Before this existed, a signed-in customer on
+   * workshop-web received the full workshop menu — 45 of 45 items, measured,
+   * because the default staff tree is entirely ungated.
+   *
+   * ⚠️ NOT A SECURITY CONTROL (CLAUDE.md §8, hidden ≠ secure). It removes the
+   * menu. `requireNavRoute` refuses the routes, and the API and RLS deny
+   * independently.
+   */
+  foreignWorkspace?: boolean;
   drawer?: React.ReactNode;
 }
 
@@ -147,11 +166,33 @@ export function WorkspaceShell({
   signInHref,
   signedIn,
   publicPaths,
+  foreignWorkspace = false,
   drawer,
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
   // Public page + nobody signed in = the shop front, not the application.
-  const bare = !signedIn && (publicPaths ?? []).includes(pathname);
+  // 🔴 `foreignWorkspace` IS THE SECOND WAY TO BE A VISITOR HERE, AND IT IS THE
+  // ONE THAT WAS MISSING.
+  //
+  // `bare` used to mean only "not signed in, on a public path". A signed-in
+  // CUSTOMER on workshop-web is signed in, so they were never bare — and they
+  // got the full workshop navigation: 45 of 45 items, measured, because the
+  // default staff tree is entirely ungated and grant filtering removed nothing.
+  //
+  // Being signed in says nothing about whether this workspace is YOURS. A
+  // customer is not a degraded staff member to be filtered down; they are
+  // somebody else's user, and the workshop's menu is not theirs to see. Folding
+  // it into `bare` rather than adding a parallel branch is deliberate: every
+  // consequence below — no side nav, no organisation or branch label, no
+  // counters, no warnings, no action badges — is exactly right for them too.
+  // Two conditions, one meaning: "you are a visitor to this workspace."
+  //
+  // ⚠️ CHILDREN STILL RENDER, AND THAT IS REQUIRED. workshop-web owns the APEX,
+  // whose `/` is the PUBLIC parts marketplace and free VIN search. Blocking the
+  // whole app for a customer would take the public shop front away from exactly
+  // the people the funnel converts. What is removed is the workshop's own
+  // navigation; the gated ROUTES are refused separately by `requireNavRoute`.
+  const bare = foreignWorkspace || (!signedIn && (publicPaths ?? []).includes(pathname));
 
   const base = getWorkspace(workspaceId);
   // T-0027: the role selects the tree (`07.txt` pt2 §46-§49). The value comes
@@ -182,8 +223,13 @@ export function WorkspaceShell({
       grants={grants}
       userLabel={userLabel}
       brandHref={brandHref}
-      roleLabel={roleLabel}
-      roleControl={roleControl}
+      // ⚠️ STRIPPED WHEN BARE, LIKE EVERY OTHER PIECE OF WORKSPACE CHROME.
+      // These were left passing through when `foreignWorkspace` was added, so a
+      // customer kept their role chip and organisation switcher in the workshop's
+      // top bar while the menu beneath had correctly vanished — half-dressed, and
+      // still implying the workspace was theirs. Caught by Codex.
+      roleLabel={bare ? undefined : roleLabel}
+      roleControl={bare ? undefined : roleControl}
       hideSideNav={bare}
       // ⚠️ THE TOP-BAR COUNTS ARE A SEPARATE PROP, and missing that is why the
       // first attempt still showed "✓ 10 · ✉ 5 · ⌾ 3" to a stranger after the
@@ -202,7 +248,7 @@ export function WorkspaceShell({
       // is false.
       counters={bare ? {} : counters}
       warnings={bare ? {} : warnings}
-      organizationSwitcher={organizationSwitcher}
+      organizationSwitcher={bare ? undefined : organizationSwitcher}
       accountControl={
         <AccountControl
           signedIn={signedIn}

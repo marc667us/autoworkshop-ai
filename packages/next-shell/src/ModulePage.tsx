@@ -6,7 +6,8 @@ import {
   workspaceForRole,
   type PermissionKey,
 } from '@autoworkshop/navigation';
-import { viewerRole } from './viewer';
+import { viewerRole, currentViewer } from './viewer';
+import { isForeignToWorkshop } from './viewer-contract';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
 /**
@@ -66,6 +67,24 @@ export async function renderModulePage(
   // SAME viewer the layout saw: `viewerRole` is memoised per request with
   // React's `cache()`, which is what keeps one render from resolving two
   // identities.
+  // 🔴 A ROLE FROM ANOTHER WORKSPACE IS REFUSED BEFORE THE TREE IS CONSULTED —
+  // THE SAME CHECK, AND FOR THE SAME REASON, AS `requireNavRoute`.
+  //
+  // This is the CATCH-ALL, and it was the half of the 45-screen leak that the
+  // first fix missed. Concrete pages call `requireNavRoute`; every route with no
+  // concrete page — `/home/calendar` among them — falls through to here
+  // instead, and here `viewerRole()` returns `undefined` for a customer, so
+  // `workspaceForRole` handed back the workshop DEFAULT staff tree exactly as
+  // before. Gating only the concrete pages fixed the routes that HAVE a page and
+  // left the placeholders wide open.
+  //
+  // Caught by Codex, and worth recording precisely because my own regression
+  // test would have stayed green through it: the test exercised the predicate
+  // and the raw tree, never this function. A check that walks past the gap it
+  // was written for is the recurring failure in this repository, and this is
+  // another instance.
+  if (isForeignToWorkshop((await currentViewer(workspaceId))?.activeRole)) notFound();
+
   const workspace = workspaceForRole(base, await viewerRole(workspaceId));
 
   const pathname = '/' + (slug ?? []).join('/');

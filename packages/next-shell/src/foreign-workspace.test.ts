@@ -1,0 +1,118 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
+import { isForeignToWorkshop, navRoleFor } from './viewer-contract';
+
+/**
+ * The regression guard for the 45-screen leak.
+ *
+ * ⚠️ IT ASSERTS THE LEAK IS STILL THERE WHEN THE GUARD IS BYPASSED. A test that
+ * only checked the fixed path would pass just as happily against a tree that had
+ * been quietly emptied for some other reason, and would never notice the guard
+ * being deleted. Proving BOTH directions is what makes it a guard rather than a
+ * green tick.
+ */
+function menuItemCountFor(activeRole: string | undefined, grants: string[] = []) {
+  if (isForeignToWorkshop(activeRole)) return 0; // what the shell + gate now do
+  const ws = workspaceForRole(getWorkspace('workshop')!, navRoleFor(activeRole));
+  let n = 0;
+  for (const g of visibleGroups(ws, grants as never)) n += g.items.length;
+  return n;
+}
+
+describe('a non-workshop role gets no workshop navigation', () => {
+  it.each(['customer', 'supplier_owner', 'fleet_administrator', 'insurance_assessor', 'towing_operator'])(
+    '%s sees ZERO workshop menu items',
+    (role) => {
+      expect(menuItemCountFor(role)).toBe(0);
+    },
+  );
+
+  it('THE DEFECT IS REAL: bypassing the guard still yields 45', () => {
+    // Exactly what happened before the fix — the raw resolution a customer got.
+    const ws = workspaceForRole(getWorkspace('workshop')!, navRoleFor('customer'));
+    let n = 0;
+    for (const g of visibleGroups(ws, [] as never)) n += g.items.length;
+    expect(n).toBe(45);
+  });
+
+  it('a real STAFF role is untouched — this must not lock the workshop out', () => {
+    expect(menuItemCountFor('workshop_owner')).toBeGreaterThan(0);
+    expect(menuItemCountFor('technician')).toBeGreaterThan(0);
+  });
+
+  it('platform_administrator is DELIBERATELY not swept in', () => {
+    // Sweeping it would risk locking admins out; that decision is separate.
+    expect(isForeignToWorkshop('platform_administrator')).toBe(false);
+  });
+
+  it('an ABSENT role is not treated as foreign — a cold /me must not lock a member out', () => {
+    expect(isForeignToWorkshop(undefined)).toBe(false);
+  });
+});
+
+/**
+ * 🔴 THE CALL SITES, NOT JUST THE PREDICATE.
+ *
+ * Codex's finding on the first version of this fix: the tests above exercise
+ * `isForeignToWorkshop` and the raw navigation tree, and NEITHER of the two
+ * functions that actually gate a request. So they stayed green while
+ * `renderModulePage` — the catch-all, which serves every route without a
+ * concrete page, `/home/calendar` among them — still resolved the workshop
+ * default tree for a customer. The concrete pages were fixed and the
+ * placeholders were left wide open, and the suite reported success.
+ *
+ * A source-level assertion is a blunt instrument, and it is used deliberately:
+ * both call sites are async server functions that need a Next request context
+ * and a live `/me`, so unit-testing their behaviour here is not possible. What
+ * IS possible is refusing to let the guard be deleted silently. This fails the
+ * moment either call site drops the check — which is the regression that
+ * actually happened.
+ */
+describe('both gates call the guard — not just the predicate', () => {
+  /**
+   * 🔴 IMPORT LINES ARE STRIPPED, AND THAT IS THE WHOLE POINT.
+   *
+   * The first version of this helper matched the bare identifier, so
+   * `import { isForeignToWorkshop } ...` satisfied it. The guard was then
+   * DELETED from `ModulePage` and all twelve tests still passed — a test about
+   * inert guards that was itself inert. Verified by injecting exactly that
+   * deletion, which is the only way this was ever going to surface.
+   *
+   * Matching `isForeignToWorkshop(` after removing imports asserts a CALL.
+   */
+  const read = (f: string) =>
+    // Import statements are STRIPPED, and that is the whole point. The first
+    // version matched the bare identifier, so `import { isForeignToWorkshop }`
+    // satisfied it — the guard was then DELETED from ModulePage and all twelve
+    // tests still passed. A test about inert guards that was itself inert,
+    // found only by injecting that deletion. Matching a CALL after removing
+    // imports is what makes this bite.
+    readFileSync(new URL(f, import.meta.url), 'utf8').replace(/^\s*import[^;]*;/gm, '');
+
+  const CALL = 'isForeignToWorkshop(';
+
+  it('requireNavRoute refuses a foreign role', () => {
+    expect(read('./require-route.ts')).toContain(CALL);
+  });
+
+  it('renderModulePage (the CATCH-ALL) refuses a foreign role', () => {
+    // This one was missing. Every route with no concrete page falls through
+    // here, so a gate on the concrete pages alone protects almost nothing.
+    expect(read('./ModulePage.tsx')).toContain(CALL);
+  });
+
+  it('both refuse BEFORE resolving the tree, or the refusal is decorative', () => {
+    for (const f of ['./require-route.ts', './ModulePage.tsx']) {
+      const src = read(f);
+      expect(
+        src.indexOf(CALL),
+        `${f}: the guard must precede workspaceForRole`,
+      ).toBeLessThan(src.indexOf('const workspace = workspaceForRole('));
+      // Anchored on the STATEMENT, not the identifier: require-route.ts's own
+      // comment explains the defect using the words `workspaceForRole(base,
+      // undefined)`, and the first version of this check compared against that
+      // prose instead of the code.
+    }
+  });
+});

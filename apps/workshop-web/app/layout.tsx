@@ -4,6 +4,7 @@ import {
   currentViewer,
   grantsFor,
   navRoleFor,
+  isForeignToWorkshop,
   viewerLabels,
   viewerHasSession,
   registrationStatus,
@@ -101,6 +102,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           publicPaths={['/']}
           grants={grantsFor(viewer)}
           role={navRoleFor(viewer?.activeRole)}
+          // A customer, supplier, fleet admin, insurance assessor or towing
+          // operator is signed in but this workspace is not theirs. Without
+          // this they received the full workshop menu: 45 of 45 items,
+          // measured, because the default staff tree is entirely ungated so
+          // grant filtering removed nothing. `requireNavRoute` refuses the
+          // routes; this removes the menu that advertised them.
+          foreignWorkspace={isForeignToWorkshop(viewer?.activeRole)}
           {...viewerLabels(viewer)}
           // 🔴 OVERRIDES THE ORGANISATION CHIP DURING ONBOARDING, and the order
           // of these two lines is the fix. `/me` 401s for a user with no

@@ -5,7 +5,7 @@ import {
   workspaceForRole,
 } from '@autoworkshop/navigation';
 import { currentViewer, viewerRole } from './viewer';
-import { grantsFor } from './viewer-contract';
+import { grantsFor, isForeignToWorkshop } from './viewer-contract';
 
 /**
  * The gate a concrete page must call when its WORKSPACE is not gated as a whole
@@ -69,6 +69,22 @@ export async function requireNavRoute(
     currentViewer(workspaceId),
     viewerRole(workspaceId),
   ]);
+
+  // 🔴 A ROLE FROM ANOTHER WORKSPACE IS REFUSED BEFORE THE TREE IS CONSULTED.
+  //
+  // Consulting it would ADMIT them. `navRoleFor()` returns `undefined` for a
+  // customer, `workspaceForRole(base, undefined)` returns the workshop's DEFAULT
+  // staff tree, and every item in that tree is ungated — so `visibleGroups`
+  // filters nothing and all 45 entries come back "advertised". Measured: a
+  // signed-in customer could reach Customers, Vehicles, Job Cards, Quotations,
+  // Suppliers, Warranty Claims and the Reports screens.
+  //
+  // This is the REFUSING half of that fix. The navigation half lives in
+  // `WorkspaceShell`, and neither is sufficient alone: hiding without refusing
+  // is what CLAUDE.md §8 forbids by name, and refusing without hiding leaves 45
+  // menu entries that 404 — the signpost-that-404s failure this repository has
+  // already paid for three times.
+  if (isForeignToWorkshop(viewer?.activeRole)) notFound();
 
   // A signed-out visitor has no role and no grants, so they fall through to the
   // workspace default tree with `NO_GRANTS` — which is correct: they see what an
