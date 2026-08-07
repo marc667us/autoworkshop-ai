@@ -68,3 +68,7 @@ export { AddToBasket } from './add-to-basket';
 export { BasketPanel } from './basket-panel';
 export type { BasketPanelProps, BasketPart, PlaceResult } from './basket-panel';
 export { BasketLink } from './basket-link';
+// Where the customer app lives, for the app that owns the apex. The landing's
+// primary call to action renders only when this resolves — see the file for
+// what it refuses and why each refusal is a real failure.
+export { REQUEST_SERVICE_PATH, requestServiceHrefFrom } from './customer-app';

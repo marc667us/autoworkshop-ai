@@ -6,6 +6,7 @@ import {
   fetchParts,
   fetchStats,
   fetchVin,
+  requestServiceHrefFrom,
 } from '@autoworkshop/marketplace-ui';
 import { currentViewer, viewerHasSession } from '@autoworkshop/next-shell';
 
@@ -208,17 +209,15 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // 🔴 ABSOLUTE, AND ONLY WHEN CONFIGURED. The Request for Service form is a
       // CUSTOMER-WEB route, and this landing is served from the APEX
       // (workshop-web) — a different host. A relative path here would 404 on the
-      // exact step the funnel exists to reach, and it would do so silently,
-      // because the link only appears to signed-in visitors.
+      // exact step the funnel exists to reach.
       //
-      // Undefined when the variable is unset, which makes the mechanic card fall
-      // back to its sign-in prompt rather than offering a link that goes nowhere.
-      // A missing button is recoverable; a button that 404s is not.
-      requestServiceHref={
-        process.env['NEXT_PUBLIC_CUSTOMER_WEB_URL']
-          ? `${process.env['NEXT_PUBLIC_CUSTOMER_WEB_URL'].replace(/\/$/, '')}/service-and-repairs/request-service`
-          : undefined
-      }
+      // 🔴 THIS DECISION USED TO BE INLINE HERE, AND THAT IS WHY IT FAILED. It
+      // read `NEXT_PUBLIC_CUSTOMER_WEB_URL`, which was set on neither the Render
+      // service nor the image build — so the owner's "Request repair service"
+      // button, and "Request for Service" on every mechanic card, could not
+      // render at all while every gate reported the feature shipped. It is now a
+      // tested function with the refusals asserted; the reasoning lives there.
+      requestServiceHref={requestServiceHrefFrom(process.env)}
       basketHref="/basket"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />

@@ -40,6 +40,10 @@ on:
         description: 'Public base URL of the deployed API (server-side calls from Next)'
         required: false
         default: 'https://autoworkshop-api.onrender.com'
+      customer_web_url:
+        description: 'Public base URL of the customer app (the Request for Service form lives there)'
+        required: false
+        default: 'https://autoworkshop-customer.onrender.com'
 
 permissions:
   contents: read
@@ -58,6 +62,7 @@ jobs:
       AUTH_URL: ${{ inputs.auth_url }}
       REALM: ${{ inputs.realm }}
       API_BASE_URL: ${{ inputs.api_base_url }}
+      CUSTOMER_WEB_URL: ${{ inputs.customer_web_url }}
       CONFIRM: ${{ inputs.confirm }}
 
     steps:
@@ -109,6 +114,38 @@ jobs:
             *) echo "::error::/api/v1/me returned $me to an anonymous caller"; exit 1 ;;
           esac
 
+      # THE SAME RULE AGAIN, FOR THE CUSTOMER APP. The landing's primary call to
+      # action — "Request repair service", the owner's request of 2026-08-07 —
+      # renders ONLY when this variable resolves to an absolute url, and the
+      # form it opens lives on that other host. On 2026-08-07 the button shipped
+      # green and could not appear at all, because the variable was set on
+      # neither the service nor the build. Pointing it at a host that does not
+      # answer would replace an invisible button with a broken one, and both
+      # look like "nothing happened" to whoever presses it.
+      #
+      # The exact FORM path is checked, not just the origin: a customer app that
+      # is up but does not serve this route is the failure this button cannot
+      # survive, and the origin answering 200 would hide it.
+      - name: Prove the customer app serves the Request for Service form
+        run: |
+          set -euo pipefail
+          URL="${CUSTOMER_WEB_URL%/}/service-and-repairs/request-service"
+          for i in $(seq 1 6); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$URL" || echo 000)"
+            # 401/403/302 are FINE: the form is behind sign-in, and a redirect to
+            # the identity provider proves the route exists and is wired. Only
+            # 404 and 5xx mean there is nothing worth pointing at.
+            case "$code" in
+              200|301|302|303|307|401|403) break ;;
+            esac
+            echo "  ${code} (cold start? attempt ${i})"
+          done
+          echo "customer form -> ${code}"
+          case "$code" in
+            200|301|302|303|307|401|403) ;;
+            *) echo "::error::${URL} returned ${code} — refusing to point the landing at a form that is not there"; exit 1 ;;
+          esac
+
       - name: Read the current variables and merge
         run: |
           set -euo pipefail
@@ -146,6 +183,13 @@ jobs:
               # deliberately no NEXT_PUBLIC_ twin — the access token is used
               # server-side only and must not cross to the client.
               'API_BASE_URL': os.environ['API_BASE_URL'],
+              # Where the customer app is, so the apex can link INTO it. Read at
+              # RUNTIME by a server component, which is why it carries no
+              # `NEXT_PUBLIC_` prefix: that prefix means Next inlines the value
+              # into the browser bundle at BUILD time, so changing this URL would
+              # have required a rebuild. `API_BASE_URL` above is named on the
+              # same reasoning.
+              'CUSTOMER_WEB_URL': os.environ['CUSTOMER_WEB_URL'],
           }
 
           changed = [k for k, v in want.items() if cur.get(k) != v]
