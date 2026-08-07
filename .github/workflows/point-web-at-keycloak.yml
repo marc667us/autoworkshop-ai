@@ -129,6 +129,31 @@ jobs:
       - name: Prove the customer app serves the Request for Service form
         run: |
           set -euo pipefail
+
+          # 🔴 VALIDATE BEFORE PROBING, with the SAME rules the app applies
+          # (`requestServiceHrefFrom` in packages/marketplace-ui). Codex raised
+          # this on 2026-08-07: a workflow that only checks the URL RESPONDS can
+          # happily persist a value the app then refuses — and the symptom is an
+          # invisible button with a green deploy behind it, which is the exact
+          # failure this whole change exists to end.
+          python3 - <<'PY'
+          import os, sys
+          from urllib.parse import urlsplit
+          raw = (os.environ.get('CUSTOMER_WEB_URL') or '').strip()
+          if not raw:
+              sys.exit('::error::customer_web_url is blank')
+          u = urlsplit(raw)
+          if u.scheme not in ('http', 'https'):
+              sys.exit(f'::error::customer_web_url scheme {u.scheme!r} is not http/https')
+          if not u.hostname:
+              sys.exit('::error::customer_web_url has no host')
+          if u.username or u.password:
+              sys.exit('::error::customer_web_url carries credentials')
+          if u.query or u.fragment:
+              sys.exit('::error::customer_web_url has a query or fragment; a path cannot be appended to it')
+          print(f'customer_web_url accepted: {u.scheme}://{u.hostname}{u.path or ""}')
+          PY
+
           URL="${CUSTOMER_WEB_URL%/}/service-and-repairs/request-service"
           for i in $(seq 1 6); do
             code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$URL" || echo 000)"

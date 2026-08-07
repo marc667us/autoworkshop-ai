@@ -57,4 +57,35 @@ describe('requestServiceHrefFrom', () => {
     expect(requestServiceHrefFrom({ CUSTOMER_WEB_URL: 'javascript:alert(1)' })).toBeUndefined();
     expect(requestServiceHrefFrom({ CUSTOMER_WEB_URL: 'mailto:someone@example.test' })).toBeUndefined();
   });
+
+  // ── The four below came from Codex's review of this very file, 2026-08-07 ──
+
+  it('falls back to the older name when the new one is DECLARED BUT BLANK', () => {
+    // `??` would not: it falls back only on null/undefined. A variable added to
+    // Render without a value reads as '', so the rename would have broken the
+    // environments it promised to keep working.
+    expect(
+      requestServiceHrefFrom({
+        CUSTOMER_WEB_URL: '',
+        NEXT_PUBLIC_CUSTOMER_WEB_URL: 'https://old.test',
+      }),
+    ).toBe(`https://old.test${REQUEST_SERVICE_PATH}`);
+  });
+
+  it('refuses credentials in the url — that is a phishing shape, not a configuration', () => {
+    expect(requestServiceHrefFrom({ CUSTOMER_WEB_URL: 'https://user:pass@example.test' }))
+      .toBeUndefined();
+  });
+
+  it('refuses a base with a query or fragment, which cannot have a path appended', () => {
+    // 'https://example.test?x' + the path yields 'https://example.test?x/service…'
+    // — a broken link that a check of the ORIGIN alone would never catch.
+    expect(requestServiceHrefFrom({ CUSTOMER_WEB_URL: 'https://example.test?x' })).toBeUndefined();
+    expect(requestServiceHrefFrom({ CUSTOMER_WEB_URL: 'https://example.test#x' })).toBeUndefined();
+  });
+
+  it('allows a path PREFIX, for a customer app mounted behind a reverse proxy', () => {
+    expect(requestServiceHrefFrom({ CUSTOMER_WEB_URL: 'https://example.test/customer/' }))
+      .toBe(`https://example.test/customer${REQUEST_SERVICE_PATH}`);
+  });
 });

@@ -52,21 +52,55 @@ export const REQUEST_SERVICE_PATH = '/service-and-repairs/request-service';
  * Build the absolute href of the Request for Service form, or `undefined` when
  * the customer app's location is not usably configured.
  *
+ * ⚠️ THIS READS THE ENVIRONMENT AT RUNTIME, and that is only true because the
+ * page that calls it declares `export const dynamic = 'force-dynamic'`
+ * (`apps/workshop-web/app/page.tsx`). Remove that and Next would prerender the
+ * route at BUILD time, freezing whatever the builder's environment held —
+ * which is nothing — and the button would silently vanish again. Codex raised
+ * exactly this on 2026-08-07 and it is the one line that keeps the fix working.
+ *
  * @param env - the environment to read; pass `process.env` at the call site so
  *              this stays a pure function and can be asserted against.
  */
 export function requestServiceHrefFrom(
   env: Record<string, string | undefined>,
 ): string | undefined {
-  const raw = env['CUSTOMER_WEB_URL'] ?? env['NEXT_PUBLIC_CUSTOMER_WEB_URL'];
-  if (typeof raw !== 'string') return undefined;
+  // FIRST NON-BLANK, not `??`. Nullish coalescing falls back only on
+  // null/undefined, so a CUSTOMER_WEB_URL that is DECLARED AND EMPTY — exactly
+  // what Render returns for a variable added without a value — would suppress a
+  // perfectly good NEXT_PUBLIC_ value that was already working. The migration
+  // from the old name would then break the very environments it promised not to.
+  const raw = [env['CUSTOMER_WEB_URL'], env['NEXT_PUBLIC_CUSTOMER_WEB_URL']]
+    .find((v) => typeof v === 'string' && v.trim() !== '');
+  if (raw === undefined) return undefined;
 
-  const base = raw.trim().replace(/\/+$/, '');
-  if (base === '') return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    // Not absolute at all — a relative path, or nonsense. Both would produce a
+    // same-host link that 404s on the apex while looking configured.
+    return undefined;
+  }
 
-  // Absolute only. `new URL` is not used here: it accepts far more than a web
-  // origin (`mailto:`, `javascript:`), and this value ends up in an anchor.
-  if (!/^https?:\/\/[^/]+/i.test(base)) return undefined;
+  // `new URL` happily parses `javascript:` and `mailto:`, and this value is
+  // interpolated into an anchor. An explicit allow-list is the only safe read.
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+  if (url.hostname === '') return undefined;
 
+  // `https://user:pass@host` parses and renders as a link to `host`. Nothing in
+  // this project needs credentials in a service URL, and a link carrying them
+  // is a phishing shape rather than a configuration.
+  if (url.username !== '' || url.password !== '') return undefined;
+
+  // A base carrying a query or a fragment cannot have a path appended to it:
+  // `https://host?x` + `/service…` yields `https://host?x/service…`, which is a
+  // broken link that no test of the origin alone would catch.
+  if (url.search !== '' || url.hash !== '') return undefined;
+
+  // A path PREFIX is allowed — a reverse proxy may legitimately mount the
+  // customer app under one — but the trailing slash is dropped so the joined
+  // path never doubles up.
+  const base = `${url.origin}${url.pathname}`.replace(/\/+$/, '');
   return `${base}${REQUEST_SERVICE_PATH}`;
 }
