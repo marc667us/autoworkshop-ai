@@ -146,12 +146,35 @@ ALTER TABLE comms.notifications FORCE ROW LEVEL SECURITY;
 -- member of a workshop read every other member's and every customer's messages,
 -- which is the 45-screen leak again, one layer further down.
 --
--- The DRAIN does not read through this policy: it runs as a definer function
--- below, because a background sender legitimately has no user context at all.
+-- 🔴 `app.notify` IS ON THIS POLICY TOO, AND LEAVING IT OFF BROKE EVERYTHING.
+--
+-- The first version said "the DRAIN does not read through this policy: it runs
+-- as a definer function". That is wrong twice. A SECURITY DEFINER function runs
+-- as the function's OWNER, and the owner of this table is `autoworkshop`, which
+-- ON RENDER IS NOT A SUPERUSER (migration 037's header records exactly this) —
+-- and the table is FORCE ROW LEVEL SECURITY, which is precisely the setting
+-- that stops the owner being exempt. So the drain DOES read through this
+-- policy, with no `app.user_id` set, and both disjuncts above are false.
+--
+-- MEASURED, not reasoned: as `autoworkshop_app` with no user context this table
+-- returned 0 rows — and still 0 with `app.notify=on`, because the flag was on
+-- INSERT and UPDATE and not here. `claim_pending_notifications` selects inside a
+-- CTE and `record_notification_result` matches `WHERE id = p_id`; both need
+-- SELECT. The consequence was total: every drain would report `claimed: 0` for
+-- ever, no email would ever be sent, and a *successfully sent* message could
+-- never be recorded as sent — so it would be reclaimed after its lease and
+-- delivered to the customer again, indefinitely.
+--
+-- Found by the Supervisor. It passed locally for the one reason this repository
+-- has been burned by more than any other: the local role is a superuser and
+-- bypasses RLS entirely.
 DROP POLICY IF EXISTS notification_select ON comms.notifications;
 CREATE POLICY notification_select ON comms.notifications FOR SELECT USING (
   identity.is_platform_admin()
   OR recipient_id = identity.current_user_id()
+  -- The drain's door, open only inside a transaction one of the definer
+  -- functions below has opened.
+  OR current_setting('app.notify', true) = 'on'
 );
 
 -- ── INSERT: ONLY THROUGH THE FUNCTION ─────────────────────────────────────
@@ -276,18 +299,33 @@ BEGIN
     -- The door, open for THIS TRANSACTION ONLY.
     PERFORM set_config('app.notify', 'on', true);
 
+    -- 🔴 AN IN-APP NOTIFICATION HAS NO TRANSPORT, so it is DELIVERED the moment
+    -- it is written and must say so. Left `pending` it would sit in the drain's
+    -- partial index for the life of the row — a permanently growing backlog of
+    -- "work that is owed" which nothing will ever do, making the one metric an
+    -- operator would check meaningless (Supervisor, 2026-08-07).
     INSERT INTO comms.notifications (
         tenant_id, organization_id, recipient_id, event_key, channel,
-        subject, body, to_address, resource_type, resource_id, dedupe_key
+        subject, body, to_address, resource_type, resource_id, dedupe_key,
+        status, sent_at
     ) VALUES (
         p_tenant_id, p_organization_id, p_recipient_id, p_event_key, p_channel,
-        p_subject, p_body, p_to_address, p_resource_type, p_resource_id, p_dedupe_key
+        p_subject, p_body, p_to_address, p_resource_type, p_resource_id, p_dedupe_key,
+        CASE WHEN p_channel = 'in_app' THEN 'sent' ELSE 'pending' END,
+        CASE WHEN p_channel = 'in_app' THEN now() ELSE NULL END
     )
     -- The duplicate is not an error: the event genuinely happened twice, and
     -- the caller wants to know the message is already owed, not to crash.
     ON CONFLICT ON CONSTRAINT uq_notification_dedupe DO NOTHING
     RETURNING id INTO v_id;
 
+    -- 🔴 SHUT THE DOOR. `SET LOCAL` already scopes it to the transaction, but a
+    -- business transaction continues after this returns — so every later
+    -- statement in the customer's request would still satisfy the notification
+    -- policies. `register_workshop` (038) and `memberships_for_subject` (039)
+    -- both close their own doors for this reason; leaving it open here was an
+    -- inconsistency the Supervisor was right to name.
+    PERFORM set_config('app.notify', 'off', true);
     RETURN v_id;
 END;
 $$;
@@ -467,6 +505,14 @@ GRANT EXECUTE ON FUNCTION comms.notify_user(
 -- ⚠️ AND A LEASE, because a drain that dies mid-send would otherwise strand its
 -- rows in `sending` for ever — swapping a double-send for a silent never-send.
 -- Anything claimed longer ago than the lease is fair game again.
+--
+-- 🔴 THE LEASE MUST OUTLAST THE WORST-CASE BATCH, or a drain reclaims rows the
+-- previous drain is STILL SENDING and the customer gets two copies — the very
+-- fault this function was rewritten to fix, reintroduced through the timeout.
+-- 45 minutes against a batch capped at 50 messages × a 20s socket timeout
+-- (~17 minutes worst case), and the API stops sending at 10 minutes anyway.
+-- It was 15 minutes with a default batch of 200, i.e. up to ~66 minutes of work
+-- against a 15-minute lease (Supervisor, 2026-08-07).
 CREATE OR REPLACE FUNCTION comms.claim_pending_notifications(p_limit integer)
 RETURNS TABLE (
     id uuid, organization_id uuid, recipient_id uuid, channel TEXT,
@@ -486,7 +532,7 @@ BEGIN
            AND (
                  n.status = 'pending'
                  -- Reclaimed: a previous drain took it and never reported back.
-                 OR (n.status = 'sending' AND n.claimed_at < now() - interval '15 minutes')
+                 OR (n.status = 'sending' AND n.claimed_at < now() - interval '45 minutes')
                )
            -- Five attempts, then `record_notification_result` marks it failed
            -- and it stops costing time on every drain for ever.
@@ -503,6 +549,7 @@ BEGIN
      WHERE n.id = picked.id
     RETURNING n.id, n.organization_id, n.recipient_id, n.channel,
               n.subject, n.body, n.to_address, n.attempts;
+    PERFORM set_config('app.notify', 'off', true);
 END;
 $$;
 
@@ -536,6 +583,7 @@ BEGIN
            claimed_at = NULL,
            updated_at = now()
      WHERE id = p_id;
+    PERFORM set_config('app.notify', 'off', true);
 END;
 $$;
 

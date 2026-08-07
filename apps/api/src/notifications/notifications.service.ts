@@ -183,6 +183,7 @@ export class NotificationsService {
     claimed: number;
     sent: number;
     failed: number;
+    abandoned: number;
   }> {
     const transport = this.mail.describe();
 
@@ -191,7 +192,7 @@ export class NotificationsService {
     // outage that was never the provider's fault.
     if (!this.mail.isConfigured()) {
       this.log.warn(`drain skipped — ${transport}`);
-      return { configured: false, transport, claimed: 0, sent: 0, failed: 0 };
+      return { configured: false, transport, claimed: 0, sent: 0, failed: 0, abandoned: 0 };
     }
 
     const claimed = await this.db.queryWithoutTenant<ClaimedRow>(
@@ -201,7 +202,25 @@ export class NotificationsService {
 
     let sent = 0;
     let failed = 0;
+    // 🔴 STOP WELL INSIDE THE LEASE. The database reclaims a row 45 minutes
+    // after it was claimed, so a batch that ran longer than that would have its
+    // earliest rows reclaimed and RE-SENT by the next drain while this one was
+    // still working through them. Ten minutes is far short of the lease and
+    // still shorter than the workflow's own timeout, so whichever limit bites
+    // first, no message is in flight twice (Supervisor, 2026-08-07).
+    const deadline = Date.now() + 10 * 60 * 1000;
+    let abandoned = 0;
     for (const row of claimed) {
+      if (Date.now() > deadline) {
+        // Left in `sending`; the lease returns them to the queue in due course.
+        // Deliberately NOT recorded as failures — nothing was attempted, and
+        // counting an attempt would spend a retry on work never begun.
+        abandoned = claimed.length - sent - failed;
+        this.log.warn(
+          `drain hit its 10-minute deadline; ${abandoned} message(s) left for the next run`,
+        );
+        break;
+      }
       // The SQL claim returns only `email` rows today. Asserted here anyway,
       // because "the query only returns X" is a contract in another file and
       // this loop's only behaviour is to SEND — a future channel appearing in
@@ -233,9 +252,20 @@ export class NotificationsService {
     }
 
     if (claimed.length > 0) {
-      this.log.log(`drain: ${sent} sent, ${failed} failed of ${claimed.length}`);
+      this.log.log(
+        `drain: ${sent} sent, ${failed} failed, ${abandoned} deferred of ${claimed.length}`,
+      );
     }
-    return { configured: true, transport, claimed: claimed.length, sent, failed };
+    return {
+      configured: true,
+      transport,
+      claimed: claimed.length,
+      sent,
+      failed,
+      // Reported rather than hidden: a run that keeps deferring is a signal the
+      // batch size or the relay is wrong, and it is invisible from sent/failed.
+      abandoned,
+    };
   }
 
   /**
@@ -249,10 +279,24 @@ export class NotificationsService {
    * tests caught it only because they had to guess which was which.
    */
   private async record(id: string, sent: boolean, error: string | null): Promise<void> {
-    await this.db.queryWithoutTenant(
-      `SELECT comms.record_notification_result($1::uuid, $2::boolean, $3::text)`,
-      [id, sent, error],
-    );
+    try {
+      await this.db.queryWithoutTenant(
+        `SELECT comms.record_notification_result($1::uuid, $2::boolean, $3::text)`,
+        [id, sent, error],
+      );
+    } catch (err) {
+      // 🔴 NEVER LET BOOKKEEPING ABORT THE BATCH. This used to be unguarded, so
+      // one transient database error after a SUCCESSFUL send would throw out of
+      // `drain` entirely: every remaining claimed row stayed `sending` until its
+      // lease expired, and the message just delivered was never recorded as
+      // sent — so it was delivered AGAIN (Supervisor, 2026-08-07).
+      //
+      // Logged at error level rather than swallowed: a row whose outcome could
+      // not be written WILL be resent after the lease, and that is worth seeing.
+      this.log.error(
+        `could not record the outcome of ${id} (sent=${sent}) — it will be retried after the lease: ${String(err)}`,
+      );
+    }
   }
 
   /**
@@ -267,12 +311,20 @@ export class NotificationsService {
   /**
    * Tell the workshop's staff. Returns how many notifications were written.
    *
-   * 🔴 THE RECIPIENTS ARE RESOLVED IN THE DATABASE, not here, and that is the
-   * whole point. The caller is usually a CUSTOMER, and in a customer's session
-   * `identity.memberships` returns only their own rows (migration 039) — so
-   * resolving staff in TypeScript would find nobody and the workshop would
-   * never be told, silently. Loosening that policy to make it work would hand
-   * every customer the workshop's staff list and their email addresses.
+   * 🔴 THE RECIPIENTS ARE RESOLVED IN THE DATABASE, not here.
+   *
+   * ⚠️ CORRECTED 2026-08-07: this comment used to claim `identity.memberships`
+   * "restricts a caller to their own rows (migration 039)". IT DOES NOT. The
+   * base policy is `tenant_isolation` from migration 001 — TENANT-scoped, not
+   * user-scoped — and 039 added a NARROWER ADDITIONAL door for the subject
+   * lookup without restricting it. The Supervisor caught the false premise, and
+   * this repository has a standing lesson about a comment that asserts a rule
+   * which does not exist.
+   *
+   * The design is still right, for the reason that survives: a customer's
+   * request has no business loading the workshop's staff list AND THEIR EMAIL
+   * ADDRESSES into application memory merely to send a notification. Resolving
+   * it here means the request causes an address to be used and never sees one.
    *
    * So the addresses never enter the customer's request at all: it causes a row
    * to be written and never sees who it went to.

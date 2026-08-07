@@ -248,6 +248,18 @@ BEGIN
         'service_request', NULL, 'verify060-claim:' || gen_random_uuid()::text);
     IF nid IS NULL THEN RAISE EXCEPTION 'verify/060 #14: could not enqueue the claim fixture'; END IF;
 
+    -- 🔴 THE DRAIN HAS NO USER, SO NEITHER DOES THIS CHECK.
+    --
+    -- The first version left `app.user_id` set to `me` and enqueued the fixture
+    -- TO `me`, so the claim passed the SELECT policy as the RECIPIENT — a reason
+    -- the real drain never has. It would have reported 15/15 under live
+    -- rehearsal while the production drain claimed nothing at all, which is this
+    -- repository's "a check that walks through its own gap" lesson exactly.
+    -- Clearing the user is what makes checks 14 and 15 test the drain
+    -- (Supervisor, 2026-08-07).
+    PERFORM set_config('app.user_id', '', true);
+    PERFORM set_config('app.current_role', '', true);
+
     SELECT count(*) INTO n FROM comms.claim_pending_notifications(100) c WHERE c.id = nid;
     IF n <> 1 THEN RAISE EXCEPTION 'verify/060 #14: the first claim did not return the pending row'; END IF;
 
@@ -271,6 +283,10 @@ BEGIN
     SELECT count(*) INTO n FROM comms.claim_pending_notifications(100) c WHERE c.id = nid;
     IF n <> 0 THEN RAISE EXCEPTION 'verify/060 #15: an exhausted message was claimed again'; END IF;
     passed := passed + 1;
+
+    -- Restore the caller for the cleanup below.
+    PERFORM set_config('app.user_id', me::text, true);
+    PERFORM set_config('app.current_role', 'reception_staff', true);
 
     DELETE FROM comms.notifications WHERE dedupe_key LIKE 'verify060%';
     DELETE FROM comms.notifications WHERE recipient_id = other_user;

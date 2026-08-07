@@ -71,6 +71,18 @@ jobs:
       DB_NAME: ${{ inputs.database }}
       KC_URL: ${{ inputs.keycloak_url }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/autoworkshop-api
+      # Notification delivery (migration 060). Absent secrets are simply not
+      # written — see the env-var build step for why they must live HERE and
+      # not in the Render dashboard.
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      # Deliberately the SAME name the API reads. The KEYCLOAK port is separate
+      # (`SMTP_PORT_FOR_KC`) because the two run in different network contexts
+      # and there is no reason for them to agree.
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      NOTIFICATIONS_DRAIN_TOKEN: ${{ secrets.NOTIFICATIONS_DRAIN_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -385,8 +397,8 @@ jobs:
           "
 
           python3 - > /tmp/envvars.json <<PY
-          import json
-          print(json.dumps([
+          import json, os
+          vars = [
             {"key": "DATABASE_URL", "value": open('/tmp/appdsn').read()},
             {"key": "KEYCLOAK_URL", "value": "${KC_URL}"},
             {"key": "KEYCLOAK_REALM", "value": "autoworkshop"},
@@ -394,8 +406,34 @@ jobs:
             # value is visible in the Render dashboard rather than implied.
             {"key": "KEYCLOAK_AUDIENCE", "value": "autoworkshop-api"},
             {"key": "NODE_ENV", "value": "production"},
-          ]))
+          ]
+
+          # 🔴 THE NOTIFICATION VARIABLES BELONG IN THIS SET, and leaving them
+          # out would have quietly broken the feature on its FIRST deploy. The
+          # PUT below is a WHOLE-SET write — it owns this service's entire
+          # environment — so anything configured by hand in the Render dashboard
+          # is DELETED by the next deploy. Someone would set the SMTP details,
+          # watch mail work, deploy an unrelated change, and find the drain
+          # answering 403 and the mailer falling back to "not configured" at
+          # boot, with nothing in the diff to explain it (Supervisor,
+          # 2026-08-07).
+          #
+          # Sourced from repository secrets and written ONLY when set, so an
+          # unconfigured platform does not gain a set of empty keys that read
+          # like a broken configuration rather than an absent one.
+          for key in ('SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS',
+                      'SMTP_FROM', 'NOTIFICATIONS_DRAIN_TOKEN'):
+              value = os.environ.get(key, '')
+              if value:
+                  vars.append({"key": key, "value": value})
+
+          # Key names only — this log is not a vault.
+          print(json.dumps(vars))
           PY
+          python3 -c "
+          import json
+          print('env keys to be written:', sorted(v['key'] for v in json.load(open('/tmp/envvars.json'))))
+          "
 
           if [ -z "$EXISTING" ]; then
             echo "creating ${SERVICE_NAME}"

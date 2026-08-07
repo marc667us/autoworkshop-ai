@@ -10,8 +10,9 @@
 # 🔴 GITHUB DELIVERS ~0.6 RUNS PER HOUR WHATEVER THE SCHEDULE ASKS FOR. Measured
 # across 8 workflows on the sibling project: 12/h and 2/h both arrived at ~0.6/h.
 # So this asks for every 15 minutes and EXPECTS roughly hourly, and the design
-# that copes is do-more-per-run rather than ask-more-often: each run drains up to
-# 200 messages, not a handful. Tightening the cron would change nothing.
+# that copes is do-more-per-run rather than ask-more-often. The batch is capped
+# at 50 because the database lease that stops a message being sent twice is 45
+# minutes, and 50 sends is comfortably inside it. Tightening the cron does nothing.
 #
 # ── ⚠️ IT IS NOT AN ERROR FOR THIS TO SEND NOTHING ────────────────────────
 #
@@ -29,16 +30,17 @@ on:
       limit:
         description: 'Maximum messages to send in this run'
         required: false
-        default: '200'
+        default: '50'
 
 permissions:
   contents: read
 
 concurrency:
-  # Two drains overlapping is safe at the DATABASE level — `claim_pending_
-  # notifications` uses FOR UPDATE SKIP LOCKED precisely so they cannot select
-  # the same rows — but there is no value in paying for two, and cancelling one
-  # mid-send would abandon a message it had already claimed.
+  # Two drains overlapping is safe at the DATABASE level — claiming MOVES a row
+  # to `sending`, which the next drain does not select (a row LOCK could not do
+  # this: it dies with the statement, long before the mail is sent). But there
+  # is no value in paying for two, and cancelling one mid-send would strand
+  # messages it had already claimed until their lease expired.
   group: drain-notifications
   cancel-in-progress: false
 
@@ -51,7 +53,7 @@ jobs:
         env:
           API_BASE_URL: https://autoworkshop-api.onrender.com
           DRAIN_TOKEN: ${{ secrets.NOTIFICATIONS_DRAIN_TOKEN }}
-          LIMIT: ${{ inputs.limit || '200' }}
+          LIMIT: ${{ inputs.limit || '50' }}
         run: |
           set -euo pipefail
           if [ -z "${DRAIN_TOKEN}" ]; then
@@ -102,9 +104,16 @@ jobs:
               print(f"claimed   : {d.get('claimed')}")
               print(f"sent      : {d.get('sent')}")
               print(f"failed    : {d.get('failed')}")
-              # A run where EVERY message failed is a provider problem worth
-              # seeing, not a quiet statistic in a log nobody opens.
-              if d.get('claimed') and d.get('sent') == 0:
-                  print('::error::every message in this batch failed to send')
+              print(f"deferred  : {d.get('abandoned')}")
+              # A run where EVERY message failed is worth seeing — but ONE
+              # permanently undeliverable message (a recipient with no address)
+              # would otherwise make claimed=1, sent=0 and turn this job red on
+              # every run until its retries ran out, which is exactly how a red
+              # build stops meaning anything. Only a MULTI-message total failure
+              # looks like a provider outage (Supervisor, 2026-08-07).
+              if d.get('claimed', 0) > 1 and d.get('sent') == 0:
+                  print('::error::every message in this batch failed to send — this looks like the relay, not the recipients')
                   raise SystemExit(1)
+              if d.get('failed'):
+                  print(f"::warning::{d.get('failed')} message(s) failed; see last_error on the rows")
           PY
