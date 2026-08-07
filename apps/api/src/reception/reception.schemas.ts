@@ -85,3 +85,46 @@ export const RespondToFeedbackBody = z
   .object({ response: requiredText(4000) })
   .strict();
 export type RespondToFeedbackBody = z.infer<typeof RespondToFeedbackBody>;
+
+/**
+ * The customer's Request for Service — the owner's value chain, step 5.
+ *
+ * ⚠️ NO `requestedBy`, AND THAT IS THE POINT. The author is taken from the
+ * validated token subject in the service. Accepting it here would let anyone
+ * file a request in somebody else's name, and the workshop would ring the wrong
+ * person about a car that is not theirs.
+ *
+ * `organizationId` IS accepted, because the customer is choosing a workshop from
+ * a public directory — it is the one field that legitimately names something
+ * outside the caller's own organisation. It is the deliberate exception, and the
+ * migration's INSERT policy is written to permit exactly it.
+ *
+ * The vehicle is free text for the same reason a walk-in's is: at this moment
+ * neither the person nor the car is on file at that workshop.
+ */
+export const CreateServiceRequestBody = z
+  .object({
+    organizationId: z.string().uuid(),
+    vehicleId: z.string().uuid().optional(),
+    vehicleDescription: requiredText(500),
+    registrationNumber: optionalText(40),
+    complaint: requiredText(2000),
+    preferredContact: optionalText(200),
+  })
+  .strict();
+export type CreateServiceRequestBody = z.infer<typeof CreateServiceRequestBody>;
+
+/**
+ * Reception's decision on an incoming request.
+ *
+ * `declineReason` is not optional when declining — the database refuses that
+ * combination too (`ck_service_request_declined`). Both layers, because
+ * "Declined" with no reason is the message the customer actually receives.
+ */
+export const DecideServiceRequestBody = z
+  .object({
+    status: z.enum(['accepted', 'declined']),
+    declineReason: optionalText(1000),
+  })
+  .strict();
+export type DecideServiceRequestBody = z.infer<typeof DecideServiceRequestBody>;

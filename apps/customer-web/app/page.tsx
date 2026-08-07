@@ -119,6 +119,9 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // ⚠️ SUPPLIED BY THIS APP, not imported by the package. The basket is
       // customer-web's own client-side store; the shared landing must not know
       // it exists, or it could not be mounted anywhere else.
+      // Same host, so a relative path. The apex mount is the one that needs an
+      // absolute URL — see `NEXT_PUBLIC_CUSTOMER_WEB_URL` there.
+      requestServiceHref="/service-and-repairs/request-service"
       basketHref="/parts-and-warranty/parts-orders"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />

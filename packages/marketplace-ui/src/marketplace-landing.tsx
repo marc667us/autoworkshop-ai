@@ -172,6 +172,17 @@ export interface MarketplaceLandingProps {
    * The two props are passed together or neither is.
    */
   basketHref?: string;
+
+  /**
+   * Where "Request for Service" on a mechanic card goes — the owner's value
+   * chain, step 4. The chosen workshop is appended as `?workshop=<id>`.
+   *
+   * ⚠️ ABSOLUTE WHEN THE FORM IS ON ANOTHER HOST. This landing is mounted
+   * twice: on the apex (workshop-web) and in customer-web. The request form
+   * lives in customer-web, so the apex must pass a full URL. Omitted, the card
+   * falls back to the sign-in prompt rather than linking somewhere that 404s.
+   */
+  requestServiceHref?: string;
 }
 
 export function MarketplaceLanding({
@@ -188,6 +199,7 @@ export function MarketplaceLanding({
   renderAddToBasket,
   viewer = null,
   basketHref,
+  requestServiceHref,
   // 🔴 WHO OWNS THE `<main>` LANDMARK.
   //
   // customer-web mounts this at `/` OUTSIDE its shell — its root layout is only
@@ -795,7 +807,17 @@ export function MarketplaceLanding({
                 </span>
               </div>
             ) : (
-              mechanics.map((m) => <MechanicCard key={m.id} mechanic={m} />)
+              mechanics.map((m) => (
+                  <MechanicCard
+                    key={m.id}
+                    mechanic={m}
+                    requestServiceHref={requestServiceHref}
+                    // The SESSION decides, not `/me` — a cold API must not turn a
+                    // signed-in customer back into a stranger on the one card that
+                    // converts. Same reasoning as the landing's dashboard button.
+                    signedIn={viewer !== null && viewer !== undefined}
+                  />
+                ))
             )}
           </div>
         </section>
@@ -1157,7 +1179,22 @@ function PartCard({
   );
 }
 
-function MechanicCard({ mechanic }: { mechanic: PublicMechanic }) {
+function MechanicCard({
+  mechanic,
+  requestServiceHref,
+  signedIn,
+}: {
+  mechanic: PublicMechanic;
+  /**
+   * Where "Request for Service" goes, with the chosen workshop appended. Passed
+   * in because the two mounts of this landing live on DIFFERENT HOSTS: the apex
+   * is workshop-web, and the customer's request form is in customer-web. A
+   * hardcoded relative path would 404 on one of them, silently, on the exact
+   * step the whole funnel exists to reach.
+   */
+  requestServiceHref?: string;
+  signedIn: boolean;
+}) {
   return (
     // Same rule as `PartCard`: the optional rows are unconditional so every
     // mechanic card is the same size as every other one, and as every part card.
@@ -1180,14 +1217,35 @@ function MechanicCard({ mechanic }: { mechanic: PublicMechanic }) {
       </div>
 
       {/*
-        THE GATE. Not a hidden field — the contact details are genuinely absent
-        from the response that built this card, so there is nothing here to reveal
-        with a devtools inspector. Signing in is what fetches them.
+        🔴 THE STEP THE FUNNEL EXISTS TO REACH — the owner's value chain, step 4:
+        "clicks on link of his prefered and click on request for service".
+
+        This card previously offered only "Sign in to contact", which ends the
+        journey at a phone number. Searching for a mechanic is the free feature
+        that brings someone here; asking that mechanic for help is the thing the
+        business runs on, and there was no way to do it from the card that had
+        just persuaded them.
+
+        THE GATE IS UNCHANGED. Contact details are genuinely absent from the
+        response that built this card, so there is nothing here for a devtools
+        inspector; and the owner is explicit that the request is filed AFTER
+        signing in. A signed-out visitor is therefore sent to sign in — but told
+        what for, because "Sign in" with no reason is a wall, and this one now
+        has a purpose on the other side of it.
       */}
-      {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- route handler, see hero */}
-      <a href="/api/auth/signin" style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}>
-        Sign in to contact
-      </a>
+      {signedIn && requestServiceHref ? (
+        <a
+          href={`${requestServiceHref}?workshop=${encodeURIComponent(mechanic.id)}`}
+          style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}
+        >
+          Request for Service
+        </a>
+      ) : (
+        /* eslint-disable-next-line @next/next/no-html-link-for-pages -- route handler, see hero */
+        <a href="/api/auth/signin" style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}>
+          Sign in to request service
+        </a>
+      )}
     </article>
   );
 }

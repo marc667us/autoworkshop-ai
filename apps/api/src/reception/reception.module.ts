@@ -7,6 +7,8 @@ import {
   WalkInController,
 } from './reception.controller';
 import { ReceptionService } from './reception.service';
+import { ServiceRequestController } from './service-request.controller';
+import { ServiceRequestService } from './service-request.service';
 
 /**
  * The `reception` domain — the front of the workshop (slice 2).
@@ -25,8 +27,11 @@ import { ReceptionService } from './reception.service';
     WalkInController,
     ServiceBayController,
     CustomerFeedbackController,
+    // The customer's Request for Service (owner's value chain, step 5). It lives
+    // in reception because reception is where it ARRIVES.
+    ServiceRequestController,
   ],
-  providers: [ReceptionService],
-  exports: [ReceptionService],
+  providers: [ReceptionService, ServiceRequestService],
+  exports: [ReceptionService, ServiceRequestService],
 })
 export class ReceptionModule {}

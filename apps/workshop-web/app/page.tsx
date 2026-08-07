@@ -205,6 +205,20 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       basePath="/"
       // Owner request 2026-08-06. Two mounts, one component, and the basket now
       // works on the address people actually visit.
+      // 🔴 ABSOLUTE, AND ONLY WHEN CONFIGURED. The Request for Service form is a
+      // CUSTOMER-WEB route, and this landing is served from the APEX
+      // (workshop-web) — a different host. A relative path here would 404 on the
+      // exact step the funnel exists to reach, and it would do so silently,
+      // because the link only appears to signed-in visitors.
+      //
+      // Undefined when the variable is unset, which makes the mechanic card fall
+      // back to its sign-in prompt rather than offering a link that goes nowhere.
+      // A missing button is recoverable; a button that 404s is not.
+      requestServiceHref={
+        process.env['NEXT_PUBLIC_CUSTOMER_WEB_URL']
+          ? `${process.env['NEXT_PUBLIC_CUSTOMER_WEB_URL'].replace(/\/$/, '')}/service-and-repairs/request-service`
+          : undefined
+      }
       basketHref="/basket"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
