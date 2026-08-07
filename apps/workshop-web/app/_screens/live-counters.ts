@@ -45,7 +45,13 @@ export async function liveCounters(signedIn: boolean): Promise<LiveCounters> {
   // be a guaranteed 401 on every public page load.
   if (!signedIn) return EMPTY;
 
-  const inbox = await apiGet<InboxItem[]>('workshop', '/comms/inbox');
+  // Fetched together. The service-request count comes from its own endpoint
+  // rather than `/comms/inbox`, because that inbox aggregates COMMUNICATION and
+  // a request for service is work waiting, not a message.
+  const [inbox, requests] = await Promise.all([
+    apiGet<InboxItem[]>('workshop', '/comms/inbox'),
+    apiGet<{ id: string }[]>('workshop', '/service-requests/inbox?status=new'),
+  ]);
   if (!inbox.ok) return EMPTY;
 
   const by = new Map(inbox.data.map((i) => [i.kind, i.count]));
@@ -61,6 +67,18 @@ export async function liveCounters(signedIn: boolean): Promise<LiveCounters> {
 
   const approvals = by.get('approvals') ?? 0;
   if (approvals > 0) counters['workshop.approvals.pending'] = approvals;
+
+  // 🔴 THE BADGE THAT MAKES THE INBOX GET READ. `workshop.serviceRequests.new`
+  // was declared as a counterKey when the nav entry landed and nothing fed it,
+  // so the menu item sat unannotated — and a request from a stranger who found
+  // this workshop in the public directory is exactly the thing that must not
+  // wait unnoticed. It is a COUNT, not a warning: it is work queued, not a
+  // condition.
+  //
+  // Allowed to fail quietly: a missing badge is a smaller failure than a shell
+  // that will not render, and this runs on every page load.
+  const newRequests = requests.ok ? requests.data.length : 0;
+  if (newRequests > 0) counters['workshop.serviceRequests.new'] = newRequests;
 
   // A reorder level reached is a WARNING rather than a count: it is not work
   // waiting in a queue, it is a condition that wants attention.

@@ -1,5 +1,6 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
 import { RepairJourneyScreen } from '../../../_screens/repair-journey-screen';
+import { MyServiceRequests } from '../../../_screens/my-service-requests';
 
 /**
  * /service-and-repairs/service-requests — `01 (1).txt` §33, the customer workspace.
@@ -18,5 +19,16 @@ export const dynamic = 'force-dynamic';
 export default async function Page() {
   // FIRST STATEMENT, BEFORE ANY DATA ACCESS.
   await requireNavRoute('customer', '/service-and-repairs/service-requests');
-  return <RepairJourneyScreen view="all" />;
+  // 🔴 BOTH, AND IN THIS ORDER. A "service request" is what the CUSTOMER sent —
+  // and until now this route showed only job cards, so somebody who filed a
+  // request through the public directory had nowhere to learn whether it had
+  // even been read. The repair list stays because a request that has been
+  // converted becomes one of those, and losing it would trade one gap for
+  // another.
+  return (
+    <>
+      <MyServiceRequests />
+      <RepairJourneyScreen view="all" />
+    </>
+  );
 }
