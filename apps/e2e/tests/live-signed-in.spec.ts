@@ -51,13 +51,22 @@ async function signIn(page: Page): Promise<void> {
 
   // The shell's own control, scoped — the page body may carry its own sign-in
   // affordance and an unscoped locator fails Playwright's strict mode.
+  // 🔴 THE EARLY RETURN REQUIRES A VISIBLE `Sign out`, NOT merely an ABSENT
+  // `Sign in`. The first version returned whenever the sign-in control was
+  // missing, justified as "already signed in from a previous test in this
+  // serial file" — which is FALSE: Playwright gives every test a fresh browser
+  // context even in serial mode, so a session is never carried over. The branch
+  // could therefore only fire when the shell failed to render its control, and
+  // the test then continued ANONYMOUSLY and passed — turning a file whose whole
+  // purpose is observing what a signed-in owner sees into an assertion about a
+  // logged-out page. Supervisor, 2026-08-09.
+  if (await page.getByRole('button', { name: /Sign out/ }).count()) return;
+
   const shellSignIn = page.getByLabel('Global actions').getByRole('link', { name: 'Sign in' });
-  if (await shellSignIn.count()) {
-    await shellSignIn.first().click();
-  } else {
-    // Already signed in from a previous test in this serial file.
-    return;
-  }
+  // No sign-out AND no sign-in means the shell did not render. That is a
+  // finding, not a reason to carry on and assert against whatever is there.
+  await shellSignIn.first().waitFor({ state: 'visible', timeout: 60_000 });
+  await shellSignIn.first().click();
 
   const providerButton = page.getByRole('button', { name: /Keycloak/i });
   if (await providerButton.count()) await providerButton.first().click();

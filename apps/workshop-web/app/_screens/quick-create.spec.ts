@@ -82,6 +82,37 @@ describe('quick-create targets', () => {
     );
   });
 
+  /**
+   * 🔴 "New job card" RENDERS FOR RECEPTION AND FOR NOBODY ELSE, and that is
+   * pinned here rather than left to be discovered.
+   *
+   * `JobQueueScreen` gained an Add-new button on 2026-08-09 at the owner's
+   * request. `create-job-card` appears in exactly ONE tree —
+   * `workshopReceptionGroups` — so `quickCreateHref` returns null for the
+   * owner, the manager, the technician and the default tree, and the button
+   * silently does not render for them.
+   *
+   * That is the CORRECT fail-safe (a button to a route the viewer's tree does
+   * not advertise would 404), but it is not obviously the intended PRODUCT: the
+   * person who asked for the button is the workshop owner, who cannot see it.
+   * Widening it means adding the route to more trees, and `CLAUDE.md`'s
+   * prohibited list names "changing approved navigation without review" — so it
+   * is a decision to take deliberately, not a line to slip in.
+   *
+   * This test exists so that decision is made on purpose. If the route is later
+   * added to another tree, this fails and the reason gets written down.
+   */
+  it('New job card resolves for reception only — every other tree gets no button', () => {
+    expect(resolve('reception', 'create-job-card')).toBe('/vehicle-intake/create-job-card');
+    for (const role of ['owner', 'manager', 'technician'] as const) {
+      expect(
+        resolve(role, 'create-job-card', ['organization.admin', 'platform.admin']),
+        `${role} unexpectedly resolves create-job-card — the nav model changed`,
+      ).toBeNull();
+    }
+    expect(resolve(undefined, 'create-job-card', ['organization.admin'])).toBeNull();
+  });
+
   it('proves the resolver can return null at all', () => {
     // Injecting the failure: a slug nothing advertises must not resolve to
     // something merely because the loop fell through oddly.

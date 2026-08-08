@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { validatedBody } from '../common/validation/validated-body';
@@ -31,8 +42,21 @@ type StatusBody = z.infer<typeof StatusBody>;
 export class LeadsController {
   constructor(private readonly leads: LeadsService) {}
 
+  /**
+   * ⚠️ `status` IS VALIDATED, NOT FORWARDED RAW. It used to go straight to the
+   * service, which meant an unrecognised value returned an EMPTY pipeline —
+   * indistinguishable on screen from "this workshop has no leads" — and
+   * `?status[]=a&status[]=b` handed node-pg an array for a `$1::text`
+   * parameter. Supervisor, 2026-08-09. A filter that silently matches nothing
+   * is the quietest way to hide a workshop's whole sales pipeline from it.
+   */
   @Get()
   async list(@Req() req: AuthenticatedRequest, @Query('status') status?: string) {
+    if (status !== undefined && !(LEAD_STATUSES as readonly string[]).includes(status)) {
+      throw new BadRequestException(
+        `Unknown lead status "${String(status)}". Use one of: ${LEAD_STATUSES.join(', ')}.`,
+      );
+    }
     return this.leads.list(req.tenantContext, { status });
   }
 

@@ -1,9 +1,10 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { ApiFailure, apiGet, viewerRole } from '@autoworkshop/next-shell';
+import { ApiFailure, apiGet, quickCreateHref, viewerRole } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, StatusBadge, DataTable } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
+import { QuickCreateButton } from './quick-create-button';
 import { jobCardDetailHrefFor } from './job-card-detail-href';
 
 /**
@@ -91,10 +92,34 @@ function toneFor(stage: string): 'draft' | 'active' | 'complete' | 'attention' |
 }
 
 export async function JobQueueScreen({ route, queue }: { route: string; queue: JobQueue }) {
-  const title = await navLabelFor('workshop', route, 'Job queue');
+  // Resolved together: the heading, and where THIS viewer may open a new job
+  // card. `create-job-card` sits under a different group in every role tree, so
+  // the href is read out of the viewer's own visible navigation rather than
+  // written down a second time — the same reasoning as `CustomersScreen`.
+  const [title, addHref] = await Promise.all([
+    navLabelFor('workshop', route, 'Job queue'),
+    quickCreateHref('workshop', 'create-job-card'),
+  ]);
   return (
     <>
-      <PageHeader title={title} description={queue.description} />
+      <PageHeader
+        title={title}
+        description={queue.description}
+        /*
+          Owner, 2026-08-09: *"in views do add addnew button so new entry can be
+          created."* Opening a job card is the workshop's core action, and until
+          now the only way to it was a menu whose wording AND path differ per
+          role.
+
+          ⚠️ RENDERS NOTHING when the viewer's tree has no such route —
+          `quickCreateHref` resolves from the viewer's own visible navigation
+          and returns null otherwise, so a technician is not handed a button
+          that 404s. It is a convenience, never a control: the target page calls
+          `requireNavRoute` itself and the API re-derives every rule
+          (CLAUDE.md §8).
+        */
+        actions={<QuickCreateButton href={addHref} label="New job card" />}
+      />
       <Suspense fallback={<LoadingState label="Loading jobs…" />}>
         <QueueTable queue={queue} />
       </Suspense>

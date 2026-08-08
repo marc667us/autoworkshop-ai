@@ -454,6 +454,27 @@ BEGIN
     SELECT count(*) INTO v_total FROM identity.memberships
      WHERE role_name = 'platform_administrator' AND status = 'active';
 
+    -- 🔴 `CREATE ROLE` NEEDS `CREATEROLE`, AND THE PREMISE OF THIS WHOLE FILE
+    -- IS THAT RENDER'S MIGRATION ROLE IS NOT A SUPERUSER.
+    --
+    -- Without the attribute this block raises, the transaction rolls back, and
+    -- migrations 067-072 never apply — ON PRODUCTION ONLY, while passing
+    -- locally where the owner is `rolsuper=t`. A verification step that can
+    -- break the deploy it is verifying is worse than no verification step, and
+    -- the failure mode is exactly the local-vs-Render asymmetry this file was
+    -- written about. Supervisor, 2026-08-09.
+    --
+    -- Degraded to a NOTICE rather than a failure: the check is a belt-and-
+    -- braces assertion about a policy, not a schema change anything depends on.
+    IF v_total > 0 AND NOT (SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user) THEN
+        RAISE NOTICE
+            'SKIPPED the negative-arm RLS check: % lacks CREATEROLE, so a throwaway '
+            'NOBYPASSRLS role cannot be created here. The admin_lookup door is NOT '
+            'verified by this run — check it with the rehearsal in /tmp/render_shape.sql.',
+            current_user;
+        v_total := 0;
+    END IF;
+
     IF v_total > 0 THEN
         CREATE ROLE migration_071_norls NOLOGIN NOBYPASSRLS;
         GRANT USAGE ON SCHEMA identity TO migration_071_norls;

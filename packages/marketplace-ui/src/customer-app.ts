@@ -125,11 +125,23 @@ export function supplierRegisterHrefFrom(
 ): string | undefined {
   const base = siblingAppBaseFrom(env, ['SUPPLIER_WEB_URL', 'NEXT_PUBLIC_SUPPLIER_WEB_URL']);
   if (base === undefined) return undefined;
+
   // `/home/dashboard` on supplier-web shows the "register your supplier" screen
   // to a signed-in person with no membership — the same shape workshop-web uses
   // for `CreateWorkshopScreen`. One destination whether they are new or
   // returning, so the button never has to guess which.
-  return `${base}/api/auth/signin?callbackUrl=${encodeURIComponent('/home/dashboard')}`;
+  //
+  // 🔴 THE CALLBACK CARRIES THE BASE'S PATH PREFIX, and the first version did
+  // not. `siblingAppBaseFrom` deliberately PRESERVES a mount prefix ("a reverse
+  // proxy may legitimately mount an app under one"), so with
+  // `SUPPLIER_WEB_URL=https://host/supplier` a literal `/home/dashboard`
+  // callback sent the visitor to `https://host/home/dashboard` after a
+  // successful login — a 404 at the very end of the funnel this function exists
+  // to protect. `requestServiceHrefFrom` never had the bug because it appends
+  // its path to the base; this one builds two strings and only one of them was
+  // prefixed. Supervisor, 2026-08-09.
+  const prefix = new URL(base).pathname.replace(/\/+$/, '');
+  return `${base}/api/auth/signin?callbackUrl=${encodeURIComponent(`${prefix}/home/dashboard`)}`;
 }
 
 /**

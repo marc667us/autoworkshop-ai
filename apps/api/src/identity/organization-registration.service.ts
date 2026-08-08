@@ -110,6 +110,31 @@ function assertPlatformAdmin(ctx: TenantContext, what: string): void {
   }
 }
 
+/**
+ * Who may read their OWN organisation's verification status.
+ *
+ * The people who run the business, not everybody inside it. A technician has no
+ * reason to know, and since migration 061 a `customer` is any signed-up
+ * stranger enrolled at the workshop — whose active organisation IS the
+ * workshop's, so organisation-scoped RLS cannot tell them apart from staff.
+ * That is the same structural gap 062, 066 and 067 each closed on another
+ * table, and the reason this check exists in the application layer.
+ */
+const MAY_READ_OWN_REGISTRATION = new Set([
+  'platform_administrator',
+  'workshop_owner',
+  'workshop_manager',
+  'supplier_owner',
+]);
+
+function assertMayReadOwnRegistration(ctx: TenantContext): void {
+  if (!MAY_READ_OWN_REGISTRATION.has(ctx.activeRole)) {
+    throw new ForbiddenException(
+      'Only the owner or a manager of this business can see its verification status. Ask one of them if you need to know where the registration stands.',
+    );
+  }
+}
+
 @Injectable()
 export class OrganizationRegistrationService {
   constructor(
@@ -157,6 +182,19 @@ export class OrganizationRegistrationService {
    * organisation, so this is the app-layer half of the same rule.
    */
   async mine(ctx: TenantContext): Promise<RegistrationRow | null> {
+    // 🔴 GATED, AND IT WAS NOT. Supervisor, 2026-08-09: 069's SELECT policy
+    // admits the whole ORGANISATION, not the registrant — so RLS does not
+    // narrow this at all, and every write on this table is gated twice while
+    // this read was gated nowhere. Since migration 061 a `customer` is any
+    // stranger who enrolled, and their active organisation IS the workshop's,
+    // so a customer could read the submitter's name and email and the platform
+    // administrator's rejection note.
+    //
+    // ⚠️ NOT `assertPlatformAdmin` — this method exists FOR the registrant. The
+    // audience is whoever runs the business: the roles that can create an
+    // organisation in the first place (`organization.service.ts`'s
+    // `CAN_CREATE_ORG`), plus the manager who would chase the verification.
+    assertMayReadOwnRegistration(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT ${SELECT_COLUMNS}
@@ -183,6 +221,16 @@ export class OrganizationRegistrationService {
     id: string,
     decision: 'approved' | 'rejected',
     note: string | undefined,
+    /**
+     * The status the caller believes this registration currently has —
+     * optimistic concurrency, defaulting to a first decision.
+     *
+     * ⚠️ SUPPLIED BY THE CALLER AND THAT IS SAFE, because it can only ever make
+     * the UPDATE match FEWER rows. It is not an authorization input: who may
+     * decide is `assertPlatformAdmin` plus 069's policy on both USING and WITH
+     * CHECK, and neither reads this.
+     */
+    expectedStatus: RegistrationStatus = 'pending',
   ): Promise<RegistrationRow> {
     assertPlatformAdmin(ctx, 'Deciding a registration');
     const trimmed = note?.trim();
@@ -193,21 +241,50 @@ export class OrganizationRegistrationService {
     }
 
     return this.db.withTenant(ctx, async (client) => {
-      // A single conditional UPDATE rather than read-then-write: two
-      // administrators pressing Approve and Reject at the same moment must
-      // produce one decision, not last-writer-wins. Same shape as
-      // `AgentProposalService.decide`.
+      // 🔴 THE STATUS PREDICATE IS THE GUARD, AND IT WAS MISSING WHILE THIS
+      // COMMENT CLAIMED IT. The first version said "a single conditional UPDATE
+      // ... two administrators pressing Approve and Reject at the same moment
+      // must produce one decision, not last-writer-wins. Same shape as
+      // `AgentProposalService.decide`" — and the WHERE clause was `r.id = $1`
+      // with no condition at all, i.e. exactly last-writer-wins. The cited
+      // model really does carry `AND p.status IN (...)`; this did not.
+      //
+      // Found by the Supervisor, 2026-08-09. Recorded rather than quietly
+      // corrected because "a comment that claims a safety net which does not
+      // exist" is this repository's most expensive recurring defect and this is
+      // the fifth instance. A confident comment stops the next reader checking.
+      //
+      // ⚠️ `IS NOT DISTINCT FROM` IS NOT USED — a re-decision IS allowed, and
+      // deliberately: the header promises that reversing an approval takes the
+      // listing down. What must not happen is two SIMULTANEOUS first decisions
+      // both reporting success. So the predicate pins the row to the status the
+      // caller was LOOKING AT, which is the honest version of the rule.
       const res = await client.query(
         `UPDATE identity.organization_registrations r
             SET status = $2, decided_by = $3, decided_at = now(), decision_note = $4
           WHERE r.id = $1
+            AND r.status = $5
           RETURNING r.id, r.organization_id, r.kind`,
-        [id, decision, ctx.userId, trimmed ?? null],
+        [id, decision, ctx.userId, trimmed ?? null, expectedStatus],
       );
       const updated = res.rows[0] as
         | { id: string; organization_id: string; kind: RegistrationKind }
         | undefined;
-      if (!updated) throw new NotFoundException('That registration was not found.');
+      if (!updated) {
+        // Told apart with a second read so the message is actionable. "Not
+        // found" for a registration a colleague decided a second earlier is the
+        // kind of answer that sends somebody hunting for a bug.
+        const existing = await client.query<{ status: string }>(
+          `SELECT status FROM identity.organization_registrations WHERE id = $1`,
+          [id],
+        );
+        if (existing.rows[0]) {
+          throw new BadRequestException(
+            `This registration is now ${existing.rows[0].status} — a colleague decided it while this page was open. Reload to see the current state.`,
+          );
+        }
+        throw new NotFoundException('That registration was not found.');
+      }
 
       // ── THE REGISTRIES ─────────────────────────────────────────────────
       // 🔴 IN THIS TRANSACTION. A decision that commits without the

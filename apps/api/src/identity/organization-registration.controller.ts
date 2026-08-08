@@ -23,6 +23,16 @@ import { OrganizationRegistrationService } from './organization-registration.ser
 
 const DecisionBody = z.object({
   decision: z.enum(['approved', 'rejected']),
+  /**
+   * The status the screen was showing when the button was pressed — optimistic
+   * concurrency. Omitted means "I believe this is undecided", which is what a
+   * first decision is.
+   *
+   * ⚠️ THIS IS NOT AN AUTHORIZATION INPUT. It can only narrow the UPDATE's
+   * WHERE clause, never widen it; who may decide is asserted in the service and
+   * again by migration 069's policy on both USING and WITH CHECK.
+   */
+  expectedStatus: z.enum(['pending', 'approved', 'rejected']).optional(),
   // Optional in the schema, REQUIRED for a rejection in the service. The rule
   // lives there because it is conditional on another field, and expressing it
   // here would split one rule across two files.
@@ -66,6 +76,12 @@ export class OrganizationRegistrationController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body(validatedBody(DecisionBody)) body: DecisionBody,
   ) {
-    return this.registrations.decide(req.tenantContext, id, body.decision, body.note);
+    return this.registrations.decide(
+      req.tenantContext,
+      id,
+      body.decision,
+      body.note,
+      body.expectedStatus ?? 'pending',
+    );
   }
 }
