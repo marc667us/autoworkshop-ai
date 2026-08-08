@@ -154,4 +154,66 @@ test.describe('sign-out revokes the Keycloak session (T-0005 finding 5)', () => 
     await page.waitForURL(/\/realms\/.*\/protocol\/openid-connect\/auth/, { timeout: 30_000 });
     await expect(page.locator('#username')).toBeVisible({ timeout: 15_000 });
   });
+
+  /**
+   * 🔴 THE OWNER'S BUG, ASSERTED DIRECTLY — reported twice.
+   *
+   * 2026-08-07: "still customer page showup for every role user login".
+   * 2026-08-08, after the first fix shipped: "still same problem its customer
+   * app that comes up".
+   *
+   * MECHANISM. `aw.activeRole` is read by `activeRoleName()` and sent to the
+   * API as `x-role-name`. `resolveTenantContext` treats that as a REQUEST and
+   * FILTERS to that role before anything else — so a stored `customer` value
+   * bypasses role precedence entirely. The 07 fix made the DEFAULT the
+   * strongest role held, which does nothing when a role is explicitly
+   * requested, and a cookie always requests one. The value outlived the
+   * session, the sign-out and the deploy.
+   *
+   * ⚠️ THIS TEST EXISTS BECAUSE THE FIX IS THE KIND THAT CAN BE INERT. Clearing
+   * a cookie from an Auth.js `events.signIn` handler either works or silently
+   * does nothing depending on where the handler runs, and "it typechecks" says
+   * which of those is true exactly as well as a coin does. So this plants the
+   * bad value, signs in for real, and reads the jar back.
+   */
+  test('a stale aw.activeRole cookie does NOT survive a fresh sign-in', async ({ page, context }) => {
+    // Plant exactly the state the owner's browser was in: pinned to customer,
+    // path `/`, as `set-role-action.ts` writes it.
+    await context.addCookies([
+      {
+        name: 'aw.activeRole',
+        value: 'customer',
+        // `domain` + `path`, not `url` — Playwright rejects `url` alongside
+        // `path`, and the PATH is the point: `set-role-action.ts` writes this
+        // at `/`, and a delete whose path does not match expires nothing.
+        domain: new URL(CUSTOMER_WEB).hostname,
+        path: '/',
+      },
+    ]);
+
+    const before = (await context.cookies()).find((c) => c.name === 'aw.activeRole');
+    expect(before?.value, 'the fixture did not plant the cookie').toBe('customer');
+
+    await page.goto(`${CUSTOMER_WEB}/home/dashboard`);
+    await anySignIn(page).click();
+    const providerButton = page.getByRole('button', { name: /Keycloak/i });
+    if (await providerButton.count()) await providerButton.first().click();
+
+    await page.waitForURL(/\/realms\/.*\/protocol\/openid-connect\/auth/, { timeout: 30_000 });
+    await page.fill('#username', USER);
+    await page.fill('#password', PASSWORD);
+    await page.click('#kc-login');
+    // A predicate rather than a hand-escaped RegExp — the app's own base URL is
+    // the thing being waited for, and building a pattern out of it is three
+    // escaping mistakes waiting to happen.
+    await page.waitForURL((url) => url.href.startsWith(CUSTOMER_WEB), { timeout: 30_000 });
+
+    // THE ASSERTION. A fresh login must start from role precedence, not from
+    // whatever the last session left behind.
+    const after = (await context.cookies()).find((c) => c.name === 'aw.activeRole');
+    expect(
+      after?.value ?? null,
+      'aw.activeRole survived a fresh sign-in — the account is still pinned to the role a previous session chose, which is the defect reported twice',
+    ).toBeNull();
+  });
 });

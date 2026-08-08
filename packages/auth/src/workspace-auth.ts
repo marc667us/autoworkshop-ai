@@ -5,6 +5,7 @@ import { headers } from 'next/headers';
 import type { WorkspaceId } from '@autoworkshop/navigation';
 import { apiBaseUrl, authSecret, clientIdForWorkspace, keycloakIssuer } from './config';
 import { keycloakSignOutUrl } from './logout-url';
+import { clearWorkspacePreferences } from './workspace-preferences';
 import {
   isExpired,
   refreshAccessToken,
@@ -369,6 +370,45 @@ export function createWorkspaceAuth(workspaceId: WorkspaceId | string): Workspac
       async session({ session, token }) {
         if (token.error) session.error = token.error;
         return session;
+      },
+    },
+
+    events: {
+      /**
+       * 🔴 A FRESH SIGN-IN STARTS FROM ROLE PRECEDENCE, NOT FROM WHATEVER THE
+       * LAST SESSION LEFT IN A COOKIE.
+       *
+       * THE DEFECT, reported by the owner twice — 2026-08-07 ("still customer
+       * page showup for every role user login") and again 2026-08-08 after the
+       * first fix ("still same problem its customer app that comes up"):
+       *
+       *   `aw.activeRole` is read by `activeRoleName()` and sent to the API as
+       *   `x-role-name`. `resolveTenantContext` treats that as a REQUEST and
+       *   **filters to that role before anything else** — deliberately, so the
+       *   switcher can never be silently ignored. But that means a stored
+       *   `customer` value BYPASSES role precedence completely. The 2026-08-07
+       *   fix made the DEFAULT the strongest role held; it does nothing at all
+       *   when a role is explicitly requested, and a cookie always requests one.
+       *
+       *   So an account holding workshop_owner + customer, whose browser once
+       *   stored `customer`, resolved as a customer on every request for ever.
+       *   The cookie outlived the session, the sign-out and the deploy.
+       *
+       * ⚠️ CLEARING ON SIGN-OUT WAS NOT ENOUGH, and that is why the owner saw
+       * it "come back". `performSignOut` does clear these — but only for
+       * somebody who signs out THROUGH the app after that code shipped. A
+       * browser already holding the value never passed through it. Fixing the
+       * mechanism does not retroactively clear what it was supposed to prevent,
+       * the same shape as the `verifyEmail` trap: clearing the flag did not
+       * free the users already caught by it.
+       *
+       * Clearing here makes each LOGIN authoritative: precedence picks the
+       * strongest role held, and the switcher is how you go the other way —
+       * which is what the switcher is for. The choice lasts the session rather
+       * than becoming a permanent, invisible property of the browser.
+       */
+      async signIn() {
+        await clearWorkspacePreferences();
       },
     },
   }));
