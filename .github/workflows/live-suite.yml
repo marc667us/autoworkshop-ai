@@ -197,8 +197,14 @@ jobs:
           check('served forms carry a submit control', served_forms_have_submit)
 
           # ── ROUTES EXIST: 401 IS THE PROOF, 404 IS THE FAILURE ─────────────
+          # ⚠️ THESE PATHS ARE REAL ROUTES, VERIFIED IN THE CONTROLLERS. The first
+          # run of this suite asserted `/plan-work/board`, which has never
+          # existed — `planning.controller.ts` serves find-parts, tools, bays and
+          # bookings — and reported a FAILURE against a healthy product. A live
+          # suite that cries wolf is worse than none, because the next real
+          # failure is read as another bad assertion.
           for path in ['/service-requests', '/supplier-requests', '/notifications',
-                       '/plan-work/board', '/learning/materials']:
+                       '/plan-work/bays', '/plan-work/tools', '/learning/materials']:
               def run(p=path):
                   s, _ = fetch(f'{API}/api/v1{p}')
                   # 401/403 = the route is deployed and refuses anonymous callers.
