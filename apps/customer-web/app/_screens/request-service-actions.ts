@@ -36,6 +36,41 @@ export async function requestServiceAction(formData: FormData): Promise<ActionRe
     return { error: 'Choose a workshop first — open this form from a workshop in the directory.' };
   }
 
+  // 🔴 ENROL FIRST, OR THE REQUEST BELOW 401s — AND `POST /registration/customer`
+  // HAD NO CALLER AT ALL UNTIL THIS LINE.
+  //
+  // Measured 2026-08-08: `identity.memberships` has only two writers in the
+  // product — `register_workshop` (grants workshop_owner) and the admin-only
+  // `MembershipService.grant()`. Neither can produce a `customer`. So a real
+  // Keycloak sign-up reached this form holding NO membership, and
+  // `POST /service-requests` — which is behind `TenantGuard` — refused them.
+  // The whole funnel ended on a wall.
+  //
+  // Migration 061 and `POST /registration/customer` were built to fix that, and
+  // then nothing called them: the route was deployed, gated, tested and
+  // unreachable. That is the "complete service with no reachable caller" defect
+  // this repository has already shipped once, found here by grepping for a
+  // caller rather than by trusting that building the route was the job.
+  //
+  // ⚠️ ON SUBMIT, NOT ON RENDER, AND THAT IS THE CONSENT BOUNDARY. Enrolling
+  // when the page loads would give somebody a membership at every workshop
+  // whose form they merely opened. Pressing Send is the act that says "I am
+  // becoming this garage's customer".
+  //
+  // ⚠️ ITS FAILURE IS NOT FATAL HERE. The API refuses an unpublished workshop
+  // and an account that already holds a staff role there, and both of those
+  // deserve the request's own error handling below rather than a second,
+  // differently-worded wall. It is idempotent by design (migration 061), so a
+  // customer who is already enrolled simply gets their existing membership back.
+  const enrolment = await apiPost<{ created: boolean }>('customer', '/registration/customer', {
+    organizationId,
+  });
+  if (!enrolment.ok && enrolment.reason === 'unauthenticated') {
+    // Said here rather than after the request, because at this point NOTHING
+    // has been sent and the person can still recover what they typed.
+    return { error: 'Your session has ended. Sign in again, then resend — nothing has been sent.' };
+  }
+
   const result = await apiPost<{ id: string }>('customer', '/service-requests', {
     organizationId,
     vehicleId: read('vehicleId'),
