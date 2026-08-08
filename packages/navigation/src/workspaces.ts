@@ -502,6 +502,18 @@ const adminGroups: NavGroup[] = [
     'Directory',
     'users',
     [
+      // 🔴 FIRST IN THE GROUP, because it is the only entry here that is a
+      // QUEUE — a business has registered and cannot be seen by anybody until
+      // an administrator acts. Everything else in Directory is a list you
+      // consult; this is work that is waiting. Owner, 2026-08-09: "the admin is
+      // alerted to verify and approve and update the registries."
+      //
+      // ⚠️ NO `counterKey`. Every counter in this file is populated from a
+      // named source, and there is no registrations counter yet — a key with
+      // nothing behind it renders a permanent zero beside a queue that has ten
+      // items in it, which is worse than no badge at all. Add the key and the
+      // source together, or neither.
+      ['registrations', 'Registrations'],
       ['users', 'Users'],
       ['organizations', 'Organizations'],
       ['workshops', 'Workshops'],

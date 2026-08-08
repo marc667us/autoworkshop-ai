@@ -168,9 +168,29 @@ describe('workspace trees match the specification', () => {
     expect(workspaces.towing.groups[0]?.items).toHaveLength(10);
   });
 
-  it('platform administration covers all 25 entries of 02.txt §58', () => {
+  /**
+   * ⚠️ 26, NOT §58's 25 — AND THE EXTRA ONE IS NAMED HERE RATHER THAN THE
+   * NUMBER QUIETLY BUMPED.
+   *
+   * `Registrations` was added on 2026-08-09 at the owner's request: *"when [a
+   * new] workshop or supplier [registers] the admin is alerted to verify and
+   * approve and update the registries."* Self-service business registration did
+   * not exist when `02.txt` §58 was written — migrations 068/069 created it —
+   * so the spec has no entry for the queue it produces.
+   *
+   * 🔴 THE ASSERTION IS KEPT EXACT, and that is the point of it. Its job is to
+   * notice when the admin tree changes, so every future change has to arrive
+   * with a reason written down beside it. Loosening it to
+   * `toBeGreaterThanOrEqual(25)` would turn a guard into a formality and let
+   * the next entry appear with no explanation at all.
+   */
+  it('platform administration covers §58’s 25 entries plus the registration queue', () => {
     const items = workspaces.admin.groups.flatMap((g) => g.items);
-    expect(items).toHaveLength(25);
+    expect(items).toHaveLength(26);
+    // The addition is asserted by NAME too, so a future change that removes
+    // Registrations and adds something else still fails on the count being
+    // right for the wrong reason.
+    expect(items.map((i) => i.id)).toContain('registrations');
   });
 
   /**
