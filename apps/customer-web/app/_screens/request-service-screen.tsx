@@ -1,6 +1,15 @@
 import { Suspense } from 'react';
 import { apiGet } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, FormShell, Field, Select, TextInput, EmptyState } from '@autoworkshop/ui';
+import {
+  PageHeader,
+  LoadingState,
+  FormShell,
+  Field,
+  Select,
+  TextInput,
+  EmptyState,
+  SubmitButton,
+} from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { requestServiceAction } from './request-service-actions';
 
@@ -90,6 +99,50 @@ async function RequestForm({ workshopId }: { workshopId?: string }) {
       action={requestServiceAction}
       successPrefix="Sent — your request reference is"
       successHref={{ href: '/service-and-repairs/service-requests', label: 'See your requests' }}
+      /*
+        Owner, 2026-08-07: "the submit must have preview".
+        🔴 `organizationId` is rendered through the workshop's NAME, never its
+        uuid. This is a stranger's first contact with a workshop, and the one
+        thing they most need to check is that they are about to send it to the
+        right garage — a review panel showing `a3f1…` answers that question
+        with nothing.
+      */
+      preview={{
+        title: 'Check this before you send it',
+        description:
+          'This goes straight to the workshop’s front desk. You can go back and change anything.',
+        confirmLabel: 'Send request',
+        fields: [
+          {
+            name: 'organizationId',
+            label: 'Workshop',
+            render: (id) => {
+              const w = workshops.find((x) => x.organizationId === id);
+              if (!w) {
+                // Reached when the visitor arrived from a mechanic card, so the
+                // id is in a hidden field and the public directory may not
+                // contain it. Saying so beats printing a uuid.
+                return 'The workshop you came from';
+              }
+              return w.city ? `${w.tradingName} — ${w.city}` : w.tradingName;
+            },
+          },
+          {
+            name: 'vehicleId',
+            label: 'Vehicle on file',
+            render: (id) => {
+              const v = mine.find((x) => x.id === id);
+              return v
+                ? `${v.registrationNumber} — ${v.make}${v.model ? ` ${v.model}` : ''}`
+                : 'Described below instead';
+            },
+          },
+          { name: 'vehicleDescription', label: 'The car' },
+          { name: 'registrationNumber', label: 'Registration number' },
+          { name: 'complaint', label: 'What is wrong' },
+          { name: 'preferredContact', label: 'How to reach you' },
+        ],
+      }}
     >
       {/*
         The chosen workshop when they came from a mechanic card; a question when
@@ -183,6 +236,23 @@ async function RequestForm({ workshopId }: { workshopId?: string }) {
       >
         <TextInput id="preferredContact" name="preferredContact" maxLength={200} />
       </Field>
+
+      {/*
+        🔴 THIS WAS MISSING ENTIRELY, AND THE FORM COULD NOT BE SENT.
+        Owner, 2026-08-07: "the customer request for service form dont have
+        submit butoom". Correct — `FormShell` renders the `<form>` and the
+        outcome banner but NOT a submit control; every other form in this
+        repository supplies its own `SubmitButton`, and of 49 that use
+        `FormShell` this one and `parts-requests-screen` were the only two that
+        did not. So the owner's primary funnel ended at a page nobody could
+        submit, and `service_request.created` — which notifies the front desk
+        that routes and assigns the job — could never fire, because nothing
+        ever created a request.
+        `packages/ui/src/form-has-submit.spec.ts` now fails if any form loses
+        its submit control again — verified by removing this line and watching
+        it go red, because a guard nobody has seen fail is not known to work.
+      */}
+      <SubmitButton>Review request</SubmitButton>
     </FormShell>
   );
 }

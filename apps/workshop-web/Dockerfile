@@ -79,6 +79,25 @@ COPY --from=builder --chown=node:node /repo/apps/workshop-web/.next/static ./app
 
 # Render assigns the port and routes to it. A server listening on a hardcoded
 # port fails every health check while its own logs look completely healthy.
+# 🔴 CAP THE HEAP, BECAUSE V8 DOES NOT KNOW HOW BIG THIS BOX IS.
+#
+# `autoworkshop-customer` was oomKilled at 512Mi on 2026-08-07. Uncapped, V8
+# grows its old space toward whatever it believes is available and the KERNEL
+# ends the process — the container just disappears, `reason: {oomKilled}` is the
+# only evidence, and nothing is logged by the app itself. Capped, V8 collects
+# harder as it approaches the ceiling and, if it genuinely cannot free enough,
+# throws a JavaScript heap OOM WITH A STACK TRACE. That is the difference
+# between a diagnosable failure and a vanished container.
+#
+# 384, not 512: the cap governs the JS heap only. Node's own baseline, the
+# standalone server, and any native allocation (libvips is installed above) all
+# live OUTSIDE it, so a cap equal to the container limit still gets killed.
+#
+# ⚠️ THIS IS NOT A LEAK FIX AND MUST NOT BE RECORDED AS ONE. Measured: ONE kill
+# in 4 days 4 hours, with no traffic for the 12 minutes before it. That is not
+# the shape of a leak. This makes the failure visible and less likely; if kills
+# start recurring on a rhythm, `Diagnose Render memory` counts the intervals.
+ENV NODE_OPTIONS=--max-old-space-size=384
 ENV PORT=3000 HOSTNAME=0.0.0.0
 EXPOSE 3000
 

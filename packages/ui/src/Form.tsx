@@ -157,20 +157,84 @@ export interface ActionResult {
  * attribute, so its RETURN VALUE is available here — that is what carries the
  * API's rejection message back to the person who can fix it.
  */
+/**
+ * An OPT-IN review step between pressing the button and the action running.
+ *
+ * ── WHY THIS IS A PROP AND NOT THE DEFAULT ────────────────────────────────
+ *
+ * Owner, 2026-08-07: "the submit must have preview". That is right for the
+ * request-for-service form, which is a stranger's first contact with a workshop
+ * and the one place in the funnel where a mistake is embarrassing rather than
+ * merely inconvenient — a wrong registration or the wrong workshop chosen.
+ *
+ * It is NOT right for the other 47 forms in this repository. Putting a
+ * confirmation in front of "add a service bay" would add a press to every
+ * routine edit an operator makes all day, which is how a safety step becomes
+ * something people click through without reading. So it is requested per form.
+ */
+export interface FormPreview {
+  /** Heading on the review panel. */
+  title: string;
+  /** Sentence under the heading. */
+  description?: string;
+  /** Label for the button that finally sends it. */
+  confirmLabel: string;
+  /**
+   * Which fields to show, in the order a person should check them.
+   *
+   * ⚠️ NAMED EXPLICITLY rather than derived by walking the FormData: a form
+   * carries hidden fields and opaque ids (`organizationId`) that mean nothing
+   * to the reader, and a preview showing a uuid is worse than no preview
+   * because it looks like the product is confused. `render` exists so a select
+   * can show the label the person actually chose rather than its value.
+   */
+  fields: Array<{
+    name: string;
+    label: string;
+    render?: (value: string) => string;
+  }>;
+}
+
 export function FormShell({
   action,
   children,
   successPrefix,
   successHref,
+  preview,
 }: {
   action: (formData: FormData) => Promise<ActionResult>;
   children: React.ReactNode;
   successPrefix: string;
   successHref?: { href: string; label: string };
+  preview?: FormPreview;
 }) {
   const [pending, setPending] = React.useState(false);
   const [result, setResult] = React.useState<ActionResult | null>(null);
   const formRef = React.useRef<HTMLFormElement>(null);
+  // Non-null only while the review panel is open. Holds the FormData captured
+  // at the moment of the first press.
+  const [reviewing, setReviewing] = React.useState<FormData | null>(null);
+
+  /** Actually call the action. Shared by the plain path and the confirm path. */
+  async function send(formData: FormData) {
+    setPending(true);
+    setResult(null);
+    try {
+      const outcome = await action(formData);
+      setResult(outcome);
+      if (outcome.created) {
+        formRef.current?.reset();
+        // The review panel must close on success, or the person is left staring
+        // at a summary of something already sent, next to a button that would
+        // send it again.
+        setReviewing(null);
+      }
+    } catch {
+      setResult({ error: 'The request could not be completed. Nothing has been saved.' });
+    } finally {
+      setPending(false);
+    }
+  }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -191,20 +255,25 @@ export function FormShell({
       return;
     }
 
-    setPending(true);
-    setResult(null);
-    try {
-      const outcome = await action(new FormData(event.currentTarget));
-      setResult(outcome);
-      // Cleared only on SUCCESS, so a rejected submission keeps every value.
-      if (outcome.created) formRef.current?.reset();
-    } catch {
-      // The action itself failing (a network drop mid-call) must not leave the
-      // button stuck on "Saving…" with no explanation.
-      setResult({ error: 'The request could not be completed. Nothing has been saved.' });
-    } finally {
-      setPending(false);
+    const data = new FormData(event.currentTarget);
+
+    // 🔴 THE REVIEW STEP INTERCEPTS THE FIRST PRESS ONLY.
+    //
+    // `reviewing` is set, the panel renders, and the SECOND press — the confirm
+    // button, which submits this same form — finds it already set and falls
+    // through to `send`. Validation above has already run, so nobody is asked
+    // to review a form they have not finished filling in.
+    if (preview && !reviewing) {
+      setReviewing(data);
+      setResult(null);
+      return;
     }
+
+    // The captured copy is preferred over a fresh read: it is exactly what was
+    // shown on the panel. Re-reading the form here would send whatever the
+    // fields hold NOW, so anything changed behind the open panel would be sent
+    // unreviewed — a confirmation that confirms something else.
+    await send(reviewing ?? data);
   }
 
   return (
@@ -257,7 +326,104 @@ export function FormShell({
           </p>
         ) : null}
 
-        {children}
+        {/*
+          🔴 THE FIELDS STAY MOUNTED WHILE THE PANEL IS OPEN.
+          Hidden with `display: none`, never unmounted. These are uncontrolled
+          inputs whose values live in the DOM, so unmounting them would empty
+          every one — and "Back to edit" would hand the person a blank form.
+          Losing what somebody typed at the last step of this exact funnel is a
+          defect this repository has already shipped once (2026-08-07 pt2).
+        */}
+        {/*
+          🔴 THE WRAPPER EXISTS ONLY WHEN A PREVIEW DOES. An unconditional
+          `<div>` would put every one of the 47 forms that never asked for this
+          feature behind a new element — and a direct-child CSS or layout
+          selector written against `form > *` would silently stop matching.
+          A shared component must be byte-identical for callers that opted out;
+          Codex was right to call this a regression even though nothing has
+          broken yet (2026-08-07).
+        */}
+        {preview ? (
+          <div
+            style={reviewing ? { display: 'none' } : undefined}
+            aria-hidden={reviewing ? true : undefined}
+          >
+            {children}
+          </div>
+        ) : (
+          children
+        )}
+
+        {preview && reviewing ? (
+          <div
+            // `role="group"` + the heading association, so a screen reader
+            // announces this as a distinct step rather than more of the form.
+            role="group"
+            aria-labelledby="form-preview-title"
+            style={{
+              border: `1px solid ${themeVar.borderDefault}`,
+              borderRadius: primitive.radius.md,
+              padding: primitive.space[4],
+              background: themeVar.backgroundPrimary,
+            }}
+          >
+            <h3
+              id="form-preview-title"
+              style={{ margin: `0 0 ${primitive.space[2]} 0`, fontSize: primitive.fontSize.base }}
+            >
+              {preview.title}
+            </h3>
+            {preview.description ? (
+              <p style={{ margin: `0 0 ${primitive.space[4]} 0`, color: themeVar.textSecondary }}>
+                {preview.description}
+              </p>
+            ) : null}
+
+            <dl style={{ margin: `0 0 ${primitive.space[4]} 0` }}>
+              {preview.fields.map((f) => {
+                const raw = reviewing.get(f.name);
+                const value = typeof raw === 'string' ? raw : '';
+                // An OPTIONAL field left blank is shown as "Not given" rather
+                // than omitted: a row that vanishes leaves the reader unsure
+                // whether they skipped it or the form lost it.
+                const shown = value ? (f.render ? f.render(value) : value) : 'Not given';
+                return (
+                  <div key={f.name} style={{ marginBottom: primitive.space[2] }}>
+                    <dt style={{ fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
+                      {f.label}
+                    </dt>
+                    <dd style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{shown}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+
+            <div style={{ display: 'flex', gap: primitive.space[3], flexWrap: 'wrap' }}>
+              {/* FIRST in the DOM so keyboard order reaches "go back" before
+                  "send" — the reversible choice should not be the one a person
+                  tabs onto last, after the irreversible one. */}
+              <button
+                type="button"
+                onClick={() => setReviewing(null)}
+                disabled={pending}
+                style={{
+                  padding: `${primitive.space[3]} ${primitive.space[6]}`,
+                  fontSize: primitive.fontSize.base,
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  color: themeVar.textPrimary,
+                  background: 'transparent',
+                  border: `1px solid ${themeVar.borderDefault}`,
+                  borderRadius: primitive.radius.md,
+                  cursor: pending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Back to edit
+              </button>
+              <SubmitButton>{preview.confirmLabel}</SubmitButton>
+            </div>
+          </div>
+        ) : null}
       </form>
     </PendingContext.Provider>
   );

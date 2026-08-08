@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import {
   PageHeader, LoadingState, EmptyState, StatusBadge, FormShell, Field, Select, TextInput,
+  SubmitButton,
 } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { askSupplierAction, decideSupplierRequestAction } from './ask-supplier-actions';
@@ -129,6 +130,18 @@ async function Body() {
             <Field label="Anything else?" hint="Optional — VIN, engine code, or a photo reference." htmlFor="notes">
               <TextInput id="notes" name="notes" maxLength={2000} />
             </Field>
+
+            {/*
+              🔴 MISSING, SO THIS FORM COULD NOT BE SENT EITHER.
+              Found by sweeping every `FormShell` user while fixing the
+              customer request-for-service form (owner, 2026-08-07). `FormShell`
+              renders the `<form>` and the outcome banner but NOT a submit
+              control, and these two screens were the only ones of 49 that
+              never supplied a `SubmitButton`. Nobody had reported this one,
+              which is precisely why the sweep was worth doing rather than
+              fixing only the screen that was complained about.
+            */}
+            <SubmitButton>Send request</SubmitButton>
           </FormShell>
         </section>
       ) : (
