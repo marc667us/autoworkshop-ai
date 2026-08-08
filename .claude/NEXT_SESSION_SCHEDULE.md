@@ -1,136 +1,143 @@
 # Next session — start here
 
-**Rewritten 2026-08-08 at session close. Tip `c586e38` on `master`, pushed.**
-All four services deployed on it. **Live suite 21 passed / 0 failed / 0 skipped.**
-CI + Security CI + Release green. Migrations **6 applied / 59 skipped** on live.
+**Rewritten 2026-08-09 at session close. Tip `1576d62` on `master`, pushed.**
+Working tree clean. 9 commits this session.
+
+▶ **FIRST TWO COMMANDS:**
+```bash
+bash scripts/start-session.sh          # kills stale servers, applies local migrations
+bash scripts/record-live-state.sh      # NEW — photographs what is actually deployed
+```
 
 Owner policy: five slices + issue resolution every session. Never the scheduler.
 **Codex and the Supervisor only — no Stitch, no Google ADK.**
 
-▶ **FIRST COMMAND:** `bash scripts/start-session.sh`
+---
+
+# ═══ EVERYTHING IS DEPLOYED AND VERIFIED ═══
+
+Unusually for this repository, there is **nothing broken on production** at
+close. Measured, not assumed:
+
+| | |
+|---|---|
+| **Live suite** | **25 passed / 0 failed / 0 skipped** (anonymous) |
+| | **0 / 0 / 4 SKIPPED** (signed-in — no credentials, see A1) |
+| **Playwright** | **138 passed / 0 failed / 2 skipped** |
+| **Unit** | 17/17 tasks, API 908 passed / 0 failed / 1 skipped |
+| **Lint** | 16/16 · nav coverage 0 gaps |
+| **Migrations** | **072 of 072 applied to production** (`6 applied, 65 skipped`) |
+| **Services** | five, all answering: apex · customer · **supplier (NEW)** · api · keycloak |
+
+Both of the owner's buttons are in the served apex HTML, and the supplier one
+signs in at the supplier app's **own origin** with a path-only callback.
 
 ---
 
-# ═══ 🔴 THE ONE THING STILL BROKEN — START HERE ═══
+# ═══ WHAT SHIPPED 2026-08-09 ═══
 
-## The owner signs in and gets a customer page. Reported FOUR times.
+## 🔴 The `supplier_owner` role could not exist in production
 
-**I diagnosed it wrong three times. Do not guess a fourth.**
+Before building the button, the 08-08 question was asked of the role: *which
+production code path WRITES this membership?* **None.** `identity.memberships`
+had exactly two writers — `register_workshop` (always `workshop_owner`) and the
+admin-only `grant()`. The role was in `ROLE_PRECEDENCE`, the permission matrix,
+the supplier nav tree and the whole `supplier-web` app, and nothing could
+create one. Shipping the button first would have produced accounts that sign in
+and are refused by every supplier route — **the customer-role defect of 08-08,
+one week later** — and it would have passed every test, because
+`seed-dev-identity.sh` writes that membership with raw SQL.
 
-▶ **ASK FOR THE URL BAR FIRST.** What the address bar says at the moment the
-wrong page appears is the single fact that settles it, and I never got it. Three
-rounds were spent on theories the data later refuted.
+Migration **068** is the missing path. The button came second.
 
-### Measured — do NOT re-derive
-- `Diagnose identity RLS` (live, run twice): `marc667us@yahoo.com` holds
-  **exactly ONE membership — `workshop_owner`** — and resolves through the same
-  function `/me` calls. **Nothing is mis-resolving.** A stale cookie asking for
-  `customer` would 401, because the account holds no customer membership.
-- The apex IS workshop-web (serves `/customer-reception/service-requests`, does
-  NOT serve `/marketplace`).
-- **`/home/dashboard` on the apex renders the CORRECT workshop tree** — read
-  from the live HTML. The dashboard is not the problem.
-- The deployed apex carries exactly two sign-in links, both now correct:
-  `/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard`, and the customer funnel's
-  one pointing at customer-web's OWN origin.
+## Verification, not a free-for-all (069 · 070 · 071 · 072)
 
-### The three wrong diagnoses (all real bugs; none was the symptom)
-1. Role precedence by UUID (fixed 08-07)
-2. `aw.activeRole` surviving sign-in (fixed, proven red/green with Playwright)
-3. Sign-in returning to the landing (fixed)
+A registrant works inside their own organisation immediately and is **not** in
+the public registries until a platform administrator approves. The registries
+already default to invisible, so **approval is what publishes**. The alert is a
+**trigger**, so it commits with the registration rather than in a second
+autocommit statement a crash can lose. Admin queue at
+`/directory/registrations`.
 
-### ⚠️ CHECK THIS BEFORE CHANGING ANYTHING
-A mechanic card's **"Sign in to request service" goes to the customer app BY
-DESIGN** — it is the customer funnel and its label says so. If that is what the
-owner is clicking, there is no bug. The owner's way in is the **top-right Sign
-in**.
+## Six HIGH defects, across two gates, neither sufficient alone
 
-### Next diagnostic step if it persists
-Drive a real signed-in session against LIVE with Playwright. The identity config
-(`apps/e2e/playwright.identity.config.ts`) already does a genuine Keycloak
-login; point it at production with owner credentials in a GH secret. That is the
-only thing left that observes what the owner actually sees.
+**Codex found 3** (fixed in 071) · **the Supervisor then found 3 more Codex
+missed** (fixed in 072). The two worth carrying:
 
----
+1. 🔴 **`SECURITY DEFINER` DOES NOT EXEMPT ANYTHING FROM FORCE RLS.** The admin
+   alert was inert on Render. Measured: local owner (`rolbypassrls=t`) sees
+   **2** administrators, a NOBYPASSRLS role sees **0**. My rehearsal ran as the
+   bypassing owner so it could not have caught it — while quoting that exact
+   scar in the migration's header.
+2. 🔴 **A workshop could publish ITSELF**, bypassing the entire verification
+   gate. `DirectoryService.setPublication` never consulted the queue.
 
-# ═══ WHAT SHIPPED 2026-08-08 ═══
-
-## 🔴 The `customer` role could not exist in production
-Only `register_workshop` (workshop_owner) and the admin-only `grant()` ever
-wrote memberships. Every customer route is behind `TenantGuard`, so a real
-sign-up got 401 on everything.
-🔴 **It survived every test because `seed-dev-identity.sh` INSERTs that
-membership with raw SQL.** Ask of any green proof: *could the PRODUCT have
-produced this fixture?*
-
-- **061** `enrol_as_customer` + `POST /registration/customer` — rehearsed **8/8
-  under Render's privilege shape**; that rehearsal caught a runtime-only
-  `ON CONFLICT` ambiguity and a raw-`app.bootstrap` door that reopened
-  migration 038's hole.
-- **063** one customer record per person per workshop.
-- 🔴 **The route had NO CALLER for hours** — deployed, gated, tested, 401ing on
-  live, called by nothing. Now wired into `request-service-actions.ts` **on
-  submit, not on render**.
-
-## Six leaks closed (each red-without-fix)
-`finance/revenue` · `media` GET **and DELETE link** · `supplier-requests`
-(059 had the clause on INSERT/UPDATE, not SELECT) · `pricing` · `settings`
-(draft catalogue **with prices**) · `directory` (private phone).
-
-## A phantom role in seven lists
-`quality_controller` does not exist — it is `quality_control_inspector`. Failed
-CLOSED. `authz/role-vocabulary.spec.ts` now scans the source.
-
-## The agent layer — 064, ADR-019, `services/agent-host`
-Triage proposes priority/category/summary/technician; two scrapers propose
-suppliers-parts and leads. **An agent proposes; a human decides.** No ADK. The
-host holds no DB credential (asserted). Runs with no host configured at all.
-`scrapegraph-ai` 2.1.6, **101/101** host tests.
-⚠️ Ollama here is ~95–150s/generation, so triage falls back to `rules` locally.
-🔴 **Lead discovery was INERT** — snake_case vs camelCase, both suites green.
-`agent-host.contract.spec.ts` pins the wire shape now.
-
-## Technician assignment — both halves
-`convert()` dropped the technician; and `assigned_technician_id` was
-**WRITE-ONCE** (no assign route existed at all). Added
-`PATCH /job-cards/:id/assignment`.
-
-## Proof that now exists
-- `customer-value-chain.integration.spec.ts` — **35 passed**, real Postgres, two
-  customers, every assertion as `autoworkshop_app`.
-- **Playwright 138 passed / 2 skipped** + **identity journey 3 passed** (the
-  identity config had NEVER run — `testIgnore` in the main config).
-- Monorepo ~**1,193 passed / 0 failed / 1 skipped**.
+## Also shipped
+`GET /leads` (crm.leads had a writer and no reader since 064) · migration 067
+(five more settings tables admitted a customer: **1/1/1/1 → 0/0/0/0**) ·
+signed-in live-suite job · admin verification screen · `.dockerignore`
+(verified: image builds, context 2.75 MB) · `New job card` quick-create.
 
 ---
 
-# ═══ OUTSTANDING ═══
+# ═══ 🔴 FIVE TRAPS THIS SESSION ADDED TO THE RECORD ═══
+
+1. **`it.runIf(x)` IS EVALUATED AT COLLECTION TIME**, before `beforeAll` — nine
+   tests could never have run and reported "skipped" against a healthy
+   database. Use a runtime `ctx.skip()`.
+2. **PIPING TO `tail` MASKS THE REAL EXIT CODE.** Bit three times in one day:
+   a Docker build reported "exit 0" having produced no image; `pnpm build` and
+   Playwright the same. **Capture `$?` separately, and read the COUNT.**
+3. **THE DRIFT CHECK I BUILT TO CATCH SILENT FAILURES WAS SILENTLY FAILING.**
+   It printed `PENDING 0 — production matches` four lines below the runner's own
+   `6 pending`, because it grepped for `apply` and a dry run prints `PENDING`.
+   **And I "verified it against real output" — locally, where nothing was
+   pending, so 0 was right for the wrong reason.** Testing a detector only
+   against the negative case proves nothing.
+4. **MIGRATIONS APPLIED ≠ FEATURE LIVE.** Production got the schema and the API
+   was not redeployed; four new routes 404'd. Found only because the new
+   route checks were added. **Deploying the DB and the code are two acts.**
+5. **A GREEN SUITE MEASURED AGAINST AN EMPTY SHOP.** Playwright's 138/2 baseline
+   was taken while the marketplace had no stock, hiding a *serious*
+   colour-contrast violation on a button that only renders when there is stock,
+   and a nav test that could never have caught the defect it is named for.
+
+---
+
+# ═══ OPEN WORK, RANKED ═══
 
 | # | Item |
 |---|---|
-| A1 | 🔴 **The sign-in symptom above.** |
-| A2 | **`GET /leads` endpoint is owed** — the Leads screen reads candidates out of proposal payloads. |
-| A3 | **Live checks are all ANONYMOUS.** 401 proves a route is deployed, not that the schema landed or that a signed-in user sees the right thing. A token-holding live check is the real gap. |
-| A4 | **I11** — 057's `knowledge.diagnostic_trees` + `learning.course_materials` applied and EMPTY. |
-| A5 | Root **`.dockerignore`**; migration **065 unused** (harmless, do not renumber). |
-| A6 | The other five 045 tables still have role-free `org_select`. |
-| B | **Blocked on R1 (the MX record):** I1 060-on-live, I2 drain cron, I3 password reset, I4 email verification, Solar Brevo→Resend. **SPF TXT is live; only the MX is missing.** |
-| C | **Owner only:** R1 MX · KC password in PUBLIC git history · `RENDER_API_KEY` unrotated · Resend keys in plain text · **ScrapeGraph key pasted into a transcript 2026-08-08** (not in git; rotate when convenient). |
+| **A1** | 🔴 **`LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD` are not set**, so the signed-in half of the live suite SKIPS 4 and **nothing verifies what a real owner sees on production** — the gap that cost four misdiagnoses on 08-08. `gh secret set LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD`. Owner-only (real credentials). |
+| **A2** | **Nobody has driven the supplier funnel end to end on live.** Everything is deployed and probed anonymously; no human has actually registered a supplier through the button. That is the first thing to do next session. |
+| **A3** | **"Add new" buttons: 2 of ~40 list screens have one.** `New job card` was added, but it renders for **reception only** — `create-job-card` is in one nav tree, so the OWNER who asked for it cannot see it. Widening is a navigation change and needs review (`CLAUDE.md` forbids changing approved navigation silently). Pinned in `quick-create.spec.ts`. **The real gap is that most entities have no create screen at all.** |
+| **A4** | **A fifth Render service now shares the free instance-hour pool.** It ran out once (2026-07-28) and suspended everything. If services start suspending, `autoworkshop-supplier` is the newest consumer. |
+| **A5** | 057's `knowledge.diagnostic_trees` + `learning.course_materials` applied and EMPTY. |
+| **A6** | Migration **065 unused** (harmless, do not renumber). |
+| **B** | **Blocked on the MX record:** email delivery, password reset, email verification. **SPF TXT is live; only the MX is missing.** |
+| **C** | **Owner only:** the A1 secrets · KC password in PUBLIC git history · `RENDER_API_KEY` unrotated · ScrapeGraph key pasted into a transcript 2026-08-08. |
 
 ---
 
-# ═══ TRAPS ═══
+# ═══ DEPLOY CHAIN — FIVE LINKS NOW ═══
 
-1. 🔴 **A FIXTURE THE PRODUCT CANNOT PRODUCE PROVES NOTHING.**
-2. 🔴 **A ROUTE WITH NO CALLER IS NOT SHIPPED** — grep for the caller.
-3. 🔴 **THE API COULD NOT BOOT** while tsc, 855 tests, lint and both nav audits
-   were green — none start the DI container. Run the server.
-4. 🔴 **TWO SERVICES CAN EACH BE GREEN AND NEVER MEET** — contract-test the wire.
-5. 🔴 **A LOCAL RLS TEST PROVES NOTHING** — rehearse under Render's privileges.
-6. 🔴 **AN ANONYMOUS PROBE OF ROLE-GATED ROUTES 404s BY DESIGN.** I wrote one
-   that reported 60 false failures and deleted it.
-7. 🔴 **NO DATABASE MUST BE A SKIP, NEVER A FAILURE** — my spec turned Release
-   red for having no Postgres. Second instance.
-8. 🔴 **Codex can produce ZERO findings and exit 0** — inline the context.
-9. **`-f confirm=APPLY`** or deploys skip everything and report SUCCESS.
-10. **`Release` deploys workshop-web ONLY.**
+```bash
+# 🔴 EVERY ONE NEEDS -f confirm=APPLY OR IT DOES NOTHING AND GOES GREEN.
+gh workflow run apply-migrations.yml    -f confirm=APPLY   # database
+gh workflow run deploy-api.yml          -f confirm=APPLY   # API
+gh workflow run deploy-customer-web.yml -f confirm=APPLY   # customer
+gh workflow run deploy-supplier-web.yml -f confirm=APPLY   # supplier (NEW)
+#   apex (workshop-web) deploys on push to master, via Release
+gh workflow run point-web-at-keycloak.yml -f confirm=APPLY # apex env: it OWNS
+                                                           # the whole set
+gh workflow run live-suite.yml                             # THEN THIS. ALWAYS.
+```
+
+⚠️ **`apply-migrations.yml` now also runs itself after every Release** as an
+inspection, reporting IN REPO / APPLIED / PENDING and going **red** when
+production is behind. It cannot apply on that path (`inputs` is null on a
+`workflow_run`, so confirm falls back to empty).
+
+⚠️ **Render drops the first connection after a firewall change** —
+`SSL connection has been closed unexpectedly` is not a TLS fault, it is the
+allow-list not having propagated. **Retry once** before diagnosing.
