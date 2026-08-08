@@ -21,6 +21,13 @@ import { decideServiceRequestAction, convertServiceRequestAction } from './servi
  */
 export const dynamic = 'force-dynamic';
 
+/** Mirrors `create-job-card-screen.tsx` — the same `/memberships` payload. */
+interface StaffOption {
+  userId: string;
+  displayName: string;
+  roleName: string;
+}
+
 interface WorkshopVehicle {
   id: string;
   registrationNumber: string;
@@ -73,10 +80,20 @@ async function Inbox() {
   // The workshop's vehicles, so an ACCEPTED request can be converted without
   // typing a uuid. Allowed to fail: the inbox is still readable and decidable
   // without it, and only the convert control depends on it.
-  const [result, vehicles] = await Promise.all([
+  // ⚠️ THE STAFF LIST IS ALLOWED TO FAIL, exactly like the vehicle list above.
+  // Assigning at conversion is OPTIONAL, so a failure here must cost the
+  // picker and nothing else — the request must still be convertible.
+  const [result, vehicles, staff] = await Promise.all([
     apiGet<ServiceRequest[]>('workshop', '/service-requests/inbox'),
     apiGet<WorkshopVehicle[]>('workshop', '/vehicles'),
+    apiGet<StaffOption[]>('workshop', '/memberships'),
   ]);
+
+  // Only technicians may be assigned work — `JobCardService.create` refuses
+  // anything else, so offering the whole staff list would build a control whose
+  // choices the server rejects. Same filter as `create-job-card-screen.tsx`,
+  // which is the screen this mirrors.
+  const technicians = staff.ok ? staff.data.filter((m) => m.roleName === 'technician') : [];
 
   if (!result.ok) {
     return <ApiFailure reason={result.reason} workspaceId="workshop" />;
@@ -245,6 +262,51 @@ async function Inbox() {
                     </option>
                   ))}
                 </select>
+
+                {/*
+                  🔴 THE FIELD WHOSE ABSENCE LEFT EVERY CONVERTED CARD UNASSIGNED.
+                  `JobCardService.create` has always accepted and validated
+                  `assignedTechnicianId`; `convert()` simply never passed one on,
+                  and there is no separate assign endpoint to follow up with — so
+                  the owner's "assign technicians, get job started" stopped at the
+                  job card. Proved by `customer-value-chain.integration.spec.ts`,
+                  which asserted that gap before this closed it.
+
+                  ⚠️ RENDERED ONLY WHEN THERE IS SOMEBODY TO ASSIGN. An empty
+                  dropdown labelled "Technician" reads as a broken control.
+                  Optional either way: reception books the car in, the floor
+                  decides who works on it.
+                */}
+                {technicians.length > 0 ? (
+                  <>
+                    <label
+                      htmlFor={`tech-${r.id}`}
+                      style={{ fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}
+                    >
+                      Assign to
+                    </label>
+                    <select
+                      id={`tech-${r.id}`}
+                      name="assignedTechnicianId"
+                      defaultValue=""
+                      style={{
+                        height: '2.25rem',
+                        padding: `0 ${primitive.space[2]}`,
+                        border: `1px solid ${themeVar.borderDefault}`,
+                        borderRadius: primitive.radius.md,
+                        background: themeVar.backgroundPrimary,
+                        color: themeVar.textPrimary,
+                      }}
+                    >
+                      <option value="">Leave unassigned</option>
+                      {technicians.map((t) => (
+                        <option key={t.userId} value={t.userId}>
+                          {t.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                ) : null}
                 <button
                   type="submit"
                   style={{

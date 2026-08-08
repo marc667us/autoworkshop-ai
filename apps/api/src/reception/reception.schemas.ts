@@ -150,6 +150,25 @@ export const ConvertServiceRequestBody = z
   .object({
     vehicleId: z.string().uuid(),
     priority: optionalText(40),
+    /**
+     * 🔴 THE FIELD WHOSE ABSENCE BROKE "assign technicians, get job started".
+     *
+     * `JobCardService.create` has always accepted `assignedTechnicianId` and
+     * validated it properly — it refuses a customer, and it refuses an id that
+     * is not an active technician of THIS organisation. `convert()` simply
+     * never passed one through, so every card reception produced from a
+     * customer's request arrived UNASSIGNED, and there is no dedicated assign
+     * endpoint to follow up with. The capability existed one layer down and
+     * only the plumbing was missing (proved by
+     * `customer-value-chain.integration.spec.ts`, which asserted the gap before
+     * this closed it).
+     *
+     * OPTIONAL, deliberately. Reception often takes a car in before deciding
+     * who works on it, and forcing the choice at conversion would make the
+     * common case harder to serve the rarer one. Unassigned remains a valid,
+     * expressible state.
+     */
+    assignedTechnicianId: z.string().uuid().optional(),
   })
   .strict();
 export type ConvertServiceRequestBody = z.infer<typeof ConvertServiceRequestBody>;

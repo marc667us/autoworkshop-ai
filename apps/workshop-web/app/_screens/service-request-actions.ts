@@ -50,7 +50,16 @@ export async function convertServiceRequestAction(formData: FormData): Promise<v
   const vehicleId = String(formData.get('vehicleId') ?? '').trim();
   if (!id || !vehicleId) return;
 
-  await apiPost('workshop', `/service-requests/${id}/convert`, { vehicleId });
+  // ⚠️ OMITTED WHEN EMPTY, never sent as ''. The API's schema is `.strict()`
+  // with `assignedTechnicianId: uuid().optional()`, so an empty string is a
+  // VALIDATION FAILURE rather than "nobody" — and reception choosing "Leave
+  // unassigned" would have had the whole conversion rejected.
+  const assignedTechnicianId = String(formData.get('assignedTechnicianId') ?? '').trim();
+
+  await apiPost('workshop', `/service-requests/${id}/convert`, {
+    vehicleId,
+    ...(assignedTechnicianId ? { assignedTechnicianId } : {}),
+  });
   revalidatePath('/customer-reception/service-requests');
   revalidatePath('/requests/service-requests');
   revalidatePath('/requests-and-reception/service-requests');

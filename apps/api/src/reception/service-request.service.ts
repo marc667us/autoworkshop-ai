@@ -379,6 +379,18 @@ export class ServiceRequestService {
         // all, so reception cannot rewrite what was reported on the way through.
         complaint: claimed.complaint,
         priority: input.priority,
+        // ⚠️ PASSED STRAIGHT THROUGH, AND VALIDATED ONE LAYER DOWN — not here.
+        // `JobCardService.create` refuses a customer outright and refuses an id
+        // that is not an active `technician` of THIS organisation. Re-checking
+        // in this file would be a second authority that can drift from the
+        // first; the reason this line exists at all is that the value was being
+        // DROPPED, not that it was unchecked.
+        //
+        // A refusal from there throws, and the `catch` below RELEASES THE CLAIM
+        // — so a bad technician id leaves the request `accepted` and reception
+        // can try again, rather than stranding it in `converting` where no
+        // screen offers a way out.
+        assignedTechnicianId: input.assignedTechnicianId,
       });
     } catch (error) {
       // RELEASE THE CLAIM. The card was not opened, so the request must go back
