@@ -241,9 +241,45 @@ jobs:
           # pending, so "the workflow was green" has never meant "production
           # matches the repository". This repository lost two days to a suite
           # that exited 0 having run zero tests; the same rule applies here.
+          # 🔴 PARSED FROM THE RUNNER'S OWN SUMMARY LINE, NOT FROM ITS PER-FILE
+          # PREFIXES — AND THE FIRST VERSION OF THIS GOT IT WRONG IN THE WORST
+          # POSSIBLE WAY.
+          #
+          # It counted lines matching `^  *apply `. A DRY RUN does not print
+          # `apply`; it prints `PENDING <name> (dry run - not applied)`. So the
+          # count was ALWAYS ZERO and this block always concluded "Production
+          # matches this commit" — on run 31282826280 it printed PENDING 0 four
+          # lines below the runner's own `==> dry run: 6 pending`.
+          #
+          # 🔴 AND IT WAS "VERIFIED AGAINST REAL OUTPUT". Locally, where nothing
+          # was pending, 0 was the correct answer for the wrong reason. A check
+          # that cannot fail, confirmed by a test that could not distinguish it
+          # from one that works. Exactly the class this whole file exists to
+          # catch, walked into while building the catcher.
+          #
+          # The summary line is authoritative in BOTH modes:
+          #   dry:  ==> dry run: 6 pending, 65 already applied. Nothing was written.
+          #   real: ==> done: 1 applied, 65 skipped
           IN_REPO="$(ls infrastructure/migrations/*.sql | wc -l | tr -d ' ')"
-          PENDING="$(grep -c '^  *apply ' /tmp/dryrun.txt || true)"
-          APPLIED="$(grep -c '^  *skip '  /tmp/dryrun.txt || true)"
+          SUMMARY="$(grep -E '^==> (dry run|done):' /tmp/dryrun.txt | tail -1)"
+
+          # ⚠️ NO SILENT DEFAULT. If the summary is missing or its wording
+          # changes, this FAILS rather than reporting zero — a parser that
+          # falls back to 0 reports "all clear" for every future format change.
+          if [ -z "${SUMMARY}" ]; then
+            echo "::error::could not find run.sh's summary line in its output."                 "The drift numbers cannot be trusted, so this run fails rather"                 "than reporting a clean bill of health it did not measure."
+            exit 1
+          fi
+          echo "runner summary: ${SUMMARY}"
+
+          PENDING="$(printf '%s' "$SUMMARY" | grep -oE '[0-9]+ pending'      | grep -oE '[0-9]+' || echo 0)"
+          APPLIED="$(printf '%s' "$SUMMARY" | grep -oE '[0-9]+ already'      | grep -oE '[0-9]+' || echo 0)"
+          # A real (non-dry) run words it differently.
+          [ -n "${PENDING}" ] || PENDING=0
+          if printf '%s' "$SUMMARY" | grep -q '^==> done:'; then
+            PENDING=0
+            APPLIED="$(printf '%s' "$SUMMARY" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)"
+          fi
           echo
           echo "=============================================================="
           echo "  MIGRATIONS   IN REPO ${IN_REPO}   APPLIED ${APPLIED}   PENDING ${PENDING}"
