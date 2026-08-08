@@ -324,10 +324,64 @@ test.describe('nav and router agree — defect 3: two literals in two files', ()
   }
 
   test('workshop: links rendered in the DOM match what the model advertises', async ({ page }) => {
-    await gotoShell(page, WORKSHOP.port);
-    const domHrefs = await page.locator('nav a[href^="/"]').evaluateAll((els) =>
-      els.map((e) => (e as HTMLAnchorElement).getAttribute('href')!),
-    );
+    /*
+     * 🔴 A MODULE ROUTE, NOT `/`. This navigated to the workshop shell's root,
+     * and the apex serves the PUBLIC MARKETPLACE LANDING there — a page whose
+     * side nav renders no workspace links at all for a signed-out viewer.
+     *
+     * So the comparison below had nothing from the real navigation to compare:
+     * the only hrefs the old `nav a[href^="/"]` selector ever collected on this
+     * page were the landing's eight category-filter chips. The test could
+     * therefore never have caught the defect it is named for — a nav link the
+     * permission model has not heard of — and the moment the marketplace had
+     * stock it started failing on the chips instead.
+     *
+     * Pointed at the first route the model itself advertises, so the nav is
+     * fully rendered and the assertion has something real to check. Derived
+     * from the model rather than hardcoded: a literal path here would be the
+     * second-literal-in-a-second-file this very test exists to forbid.
+     */
+    const firstModule = advertisedHrefs('workshop')[0];
+    expect(
+      firstModule,
+      'the workshop model advertises no routes at all, so this test has nothing to verify',
+    ).toBeTruthy();
+    await gotoShell(page, WORKSHOP.port, firstModule);
+    /*
+     * 🔴 SCOPED TO THE SHELL'S OWN NAVIGATION, not to every `<nav>` on the page.
+     *
+     * The selector was `nav a[href^="/"]`, which matches ANY navigation
+     * landmark — and the apex now serves the public marketplace landing at `/`,
+     * whose category filter row is a perfectly correct
+     * `<nav aria-label="Filter parts by category">`. Its eight chips
+     * (`/?category=brakes` …) were counted as strays and failed this test.
+     *
+     * ⚠️ THIS NARROWS THE SELECTOR WITHOUT WEAKENING THE ASSERTION, which is
+     * the only reason it is the right fix. The rule being enforced is stated
+     * below: a link the permission-filtered MODEL has never heard of cannot
+     * have been permission-checked. That rule is about the WORKSPACE tree
+     * `SideNav` renders from. A public category filter on a public landing page
+     * is page content — it is not permission-gated and must not be, so holding
+     * it to the nav model was asking the wrong question of the right test.
+     *
+     * ⚠️ AND IT ONLY SURFACED WHEN THE SHOP HAD STOCK. The chips render from
+     * `fetchFacets()`, so with an unreachable API there were no chips and no
+     * strays — which is why the suite last reported 138/2 against an EMPTY
+     * shopfront. Same reason the axe contrast violation on the Add-to-basket
+     * button stayed hidden. Both were found by this run, not by this change.
+     */
+    const domHrefs = await page
+      .locator('nav[aria-label="Main navigation"] a[href^="/"]')
+      .evaluateAll((els) => els.map((e) => (e as HTMLAnchorElement).getAttribute('href')!));
+
+    // 🔴 THE SELECTOR MUST STILL FIND SOMETHING. Narrowing a locator is one
+    // typo away from matching nothing, and an empty list satisfies
+    // `toEqual([])` perfectly — the shape of "a green gate that runs nothing".
+    expect(
+      domHrefs.length,
+      'no links found inside nav[aria-label="Main navigation"] — the selector is wrong, ' +
+        'so the stray check below would pass vacuously',
+    ).toBeGreaterThan(0);
     const model = new Set(advertisedHrefs('workshop'));
     // Every nav link in the DOM must be one the model knows about. A link the
     // model has never heard of cannot have been permission-checked.

@@ -1,0 +1,83 @@
+# What must never enter a Docker build context.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 🔴 THIS IS NOT ONLY ABOUT SIZE. All three application Dockerfiles do
+# `COPY . .` after installing dependencies, so without this file the HOST's
+# `node_modules`, `.next` and `dist` are copied over the ones the image just
+# built.
+#
+# That is the "stale artifact" defect this repository has a scar from: three
+# leftover `next start` servers faked product defects for an hour on 2026-07-30,
+# and six apps' stale `.next` builds produced `UntrustedHost` errors that read
+# exactly like a live configuration fault. The same bytes reaching a container
+# would be harder to see, not easier — the image would be built from a mixture
+# of a clean install and whatever happened to be on the machine that ran the
+# build, and it would differ between a developer's laptop and CI.
+#
+# 🔴 pnpm's `node_modules` IS THE WORST CASE. It is a tree of SYMLINKS into a
+# content-addressed store that does not exist inside the image. Copying it in
+# produces dangling links that resolve at build time on the host and fail at
+# runtime in the container — which is precisely why `apps/api/Dockerfile`'s
+# header explains it uses `pnpm deploy` rather than copying `node_modules`. That
+# reasoning only holds if the host's copy cannot sneak in behind it.
+#
+# ⚠️ AN EXCLUSION HERE IS NOT A SECRET CONTROL. `.env` is listed because it must
+# not be baked into a layer, but a file that has already been committed is in
+# git history and this changes nothing about that. Secrets come from the
+# platform's environment; this only stops a local one being copied in.
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── build output and dependencies: rebuilt inside the image, always ─────────
+node_modules
+**/node_modules
+.pnpm-store
+dist
+**/dist
+.next
+**/.next
+out
+**/out
+build
+**/build
+.turbo
+**/.turbo
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# ── version control and CI: a container never needs its own history ─────────
+# `.git` is usually the single largest thing in the context.
+.git
+.gitignore
+.github
+
+# ── local environment and credentials ───────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── editor, OS and tooling noise ────────────────────────────────────────────
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+.claude
+
+# ── tests, fixtures and reports: not shipped, and they carry fixtures ───────
+# ⚠️ `apps/e2e` HOLDS LIVE-SUITE CREDENTIALS AT RUNTIME and Playwright traces
+# after a failure. Neither belongs in an image that gets pushed to a registry.
+apps/e2e
+apps/storybook
+**/playwright-report
+**/test-results
+**/coverage
+**/*.spec.ts
+**/*.test.ts
+
+# ── documentation and working notes ─────────────────────────────────────────
+docs
+reviews
+ai-coworkers
+*.md
+!README.md

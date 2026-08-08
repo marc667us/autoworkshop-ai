@@ -8,6 +8,7 @@ import { primitive, themeVar } from '@autoworkshop/design-tokens';
 // `position: absolute` needs a positioned ancestor; the part card supplies one.
 import { visuallyHidden } from '@autoworkshop/ui';
 import { addToBasket, readBasket } from './basket';
+import { BUTTON_PRIMARY } from './solar-theme';
 
 /**
  * "Add to basket" on a public marketplace card.
@@ -77,15 +78,36 @@ export function AddToBasket({
           addToBasket(partId, 1);
           setAnnounced(true);
         }}
+        /*
+         * 🔴 WHITE ON GOLD FAILS CONTRAST, AND THE FILE NEXT DOOR ALREADY SAID SO.
+         *
+         * This was `background: themeVar.actionPrimary` with
+         * `color: primitive.color.grey[0]`. Inside the Solar theme — which is
+         * where this component always renders —— `--aw-action-primary` is
+         * remapped to `SOLAR.gold` (#f59e0b), so those two tokens resolved to
+         * white-on-amber at roughly 2:1, against the 4.5:1 axe requires.
+         * `solar-theme.tsx`'s own `BUTTON_PRIMARY` carries the warning verbatim:
+         * "Solar puts dark text on the gold deliberately: white on #f59e0b
+         * fails contrast badly. Do not 'fix' this to white." This button did
+         * exactly that, one file away.
+         *
+         * ⚠️ THE VIOLATION WAS INVISIBLE UNTIL THE SHOP HAD STOCK. It only
+         * renders on a part card, so with an unreachable API the landing had no
+         * cards, axe found nothing, and the suite reported 138/2 — a clean bill
+         * of health measured against an EMPTY SHOPFRONT. That is the same
+         * defect as the 24 live browser checks that once passed against a shop
+         * with no products in it, this time in the local suite.
+         *
+         * ⚠️ REUSING `BUTTON_PRIMARY` RATHER THAN HAND-PICKING A DARK INK, so
+         * there is ONE definition of "a primary button on this page" and this
+         * cannot drift away from it again. Only the size is overridden: the
+         * shared style is page-hero sized and this sits inside a card grid.
+         */
         style={{
+          ...BUTTON_PRIMARY,
           padding: `${primitive.space[1]} ${primitive.space[3]}`,
-          borderRadius: primitive.radius.md,
-          border: 'none',
-          background: themeVar.actionPrimary,
-          color: primitive.color.grey[0],
-          fontWeight: 700,
           fontSize: primitive.fontSize.sm,
-          cursor: 'pointer',
+          borderRadius: primitive.radius.md,
         }}
       >
         {/* The accessible name carries the PART, because "Add" repeated forty
