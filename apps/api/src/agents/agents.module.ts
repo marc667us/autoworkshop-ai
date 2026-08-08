@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { IdentityModule } from '../identity/identity.module';
 import { AgentsController } from './agents.controller';
 import { AgentProposalService } from './agent-proposal.service';
 import { DiscoveryAgent } from './discovery.agent';
@@ -36,6 +37,30 @@ import { AgentHost, HttpAgentHost, UnconfiguredAgentHost } from './agent-host.cl
  * test of the failure case is also a test of the no-agent case.
  */
 @Module({
+  /**
+   * 🔴 `IdentityModule` IS NOT OPTIONAL, AND OMITTING IT STOPPED THE API
+   * BOOTING AT ALL.
+   *
+   * `AgentsController` is `@UseGuards(TenantGuard)`, and Nest constructs a
+   * guard in the CONSUMING module's injector — so `TenantGuard`'s own
+   * dependency, `MembershipRepository`, has to be resolvable from here.
+   * Without this import the application died on startup with
+   *
+   *     Nest can't resolve dependencies of the TenantGuard
+   *     (KeycloakJwtService, ?) ... available in the AgentsModule context
+   *
+   * ⚠️ AND NOTHING CAUGHT IT. `tsc` was clean, 855 unit tests passed, lint
+   * passed, the nav and menu audits passed — because not one of them starts the
+   * DI container. It surfaced only when the server was actually run, which is
+   * this repository's recorded lesson stated as plainly as it gets: A GREEN
+   * BUILD PROVES THE CODE COMPILES, NOT THAT THE APPLICATION RUNS.
+   *
+   * Every other module using `TenantGuard` already imports `IdentityModule` —
+   * `finance`, `parts`, `reception`. This one was written without checking, and
+   * `reception` importing `AgentsModule` is what turned a missing import into a
+   * whole-application boot failure rather than one broken route.
+   */
+  imports: [IdentityModule],
   controllers: [AgentsController],
   providers: [
     AgentProposalService,

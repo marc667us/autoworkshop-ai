@@ -49,18 +49,63 @@ test.describe('sign-out revokes the Keycloak session (T-0005 finding 5)', () => 
     test.skip(!realmUp, `Keycloak realm "${REALM}" is not reachable at ${KEYCLOAK}`);
   });
 
+  /**
+   * ⚠️ SCOPED TO THE SHELL'S OWN CONTROL, and that is the assertion this test
+   * always meant to make.
+   *
+   * An unscoped `getByRole('link', { name: 'Sign in' })` now matches TWO
+   * elements and fails on Playwright's strict mode:
+   *
+   *   1) the shell's global-actions control, and
+   *   2) one inside `#main-content` — the signed-out dashboard's own
+   *      "sign in and continue" affordance, added when the funnel was fixed so
+   *      a visitor stops being dropped anonymously onto a form.
+   *
+   * Both are correct and both should exist. The regression this test locks is
+   * in the SHELL — its own comment says so: "a display label doubling as an
+   * authentication fact put a Sign out button in front of users who had no
+   * session at all." That defect lives in `viewerLabels`, not in the page body.
+   *
+   * So the locator is narrowed to the region the test is about. This makes the
+   * assertion MORE precise, not weaker: it still requires a visible Sign in and
+   * still requires ZERO Sign out buttons anywhere on the page. The unscoped
+   * version passed only because there happened to be exactly one match, which
+   * is a coincidence of layout rather than a statement about authentication.
+   */
+  const shellSignIn = (page: import('@playwright/test').Page) =>
+    page.getByLabel('Global actions').getByRole('link', { name: 'Sign in' });
+
+  /**
+   * ⚠️ AFTER SIGN-OUT THERE IS NO SHELL TO SCOPE TO, and that is correct
+   * behaviour rather than a gap.
+   *
+   * `performSignOut` ends the Keycloak SSO session and Keycloak returns the
+   * browser to `/` — the PUBLIC LANDING PAGE, which is a marketing layout with
+   * no `Global actions` region at all. Measured from the failure snapshot: the
+   * post-sign-out page offers "Request repair service", "Create a free
+   * account", "Browse parts now" and "Sign in", none of them inside a shell.
+   *
+   * So the post-sign-out assertion uses a page-level locator with `.first()`.
+   * It is still a real assertion — a Sign IN link must be present and, below,
+   * `/api/auth/session` must name nobody — it simply stops assuming the visitor
+   * is returned to an application shell they no longer have a session for.
+   */
+  const anySignIn = (page: import('@playwright/test').Page) =>
+    page.getByRole('link', { name: 'Sign in' }).first();
+
   test('an anonymous viewer is offered Sign in, never Sign out', async ({ page }) => {
     await page.goto(`${CUSTOMER_WEB}/home/dashboard`);
 
-    await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
+    await expect(shellSignIn(page)).toBeVisible();
     // The regression this locks: a display label doubling as an authentication
     // fact put a Sign out button in front of users who had no session at all.
+    // Deliberately UNSCOPED — a Sign out button is wrong ANYWHERE on this page.
     await expect(page.getByRole('button', { name: /Sign out/ })).toHaveCount(0);
   });
 
   test('signing out ends the local session AND the Keycloak SSO session', async ({ page }) => {
     await page.goto(`${CUSTOMER_WEB}/home/dashboard`);
-    await page.getByRole('link', { name: 'Sign in' }).click();
+    await shellSignIn(page).click();
 
     // Auth.js's default sign-in page lists the providers; with exactly one it
     // still requires the click, and the button carries the provider's name.
@@ -88,8 +133,14 @@ test.describe('sign-out revokes the Keycloak session (T-0005 finding 5)', () => 
 
     await signOut.click();
 
-    // 1. The local session is gone: the shell is back to its signed-out state.
-    await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible({ timeout: 30_000 });
+    // 1. The local session is gone. Keycloak's logout returns the browser to
+    // the PUBLIC LANDING page, so this asserts a signed-out affordance rather
+    // than a shell — see `anySignIn`. The session check on the next line is the
+    // load-bearing half; this one proves a human has a way back in.
+    await expect(anySignIn(page)).toBeVisible({ timeout: 30_000 });
+    // And no Sign OUT anywhere, which is the original regression restated for
+    // the page the visitor actually ends up on.
+    await expect(page.getByRole('button', { name: /Sign out/ })).toHaveCount(0);
     const after = await (await page.request.get(`${CUSTOMER_WEB}/api/auth/session`)).json();
     expect(after?.user).toBeFalsy();
 
@@ -97,7 +148,7 @@ test.describe('sign-out revokes the Keycloak session (T-0005 finding 5)', () => 
     // With the Keycloak session still alive, clicking Sign in again completes
     // without any prompt and lands straight back inside the account. Reaching
     // the login FORM is the proof that the SSO session was ended too.
-    await page.getByRole('link', { name: 'Sign in' }).click();
+    await anySignIn(page).click();
     const provider = page.getByRole('button', { name: /Keycloak/i });
     if (await provider.count()) await provider.first().click();
     await page.waitForURL(/\/realms\/.*\/protocol\/openid-connect\/auth/, { timeout: 30_000 });
