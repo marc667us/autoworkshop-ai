@@ -1,7 +1,10 @@
 # Next session — start here
 
-**Written 2026-08-07 (pt2) at session close. Tip `1ef94de` on `master`, pushed,
-tree clean. CI + Security CI + Release green.**
+**Rewritten 2026-08-07 (pt3) at session close. Tip `63127e4` on `master`,
+pushed, tree clean. CI + Security CI + Release + Live suite ALL GREEN.**
+**Live suite: 16 passed / 0 failed / 0 skipped** against the deployed site.
+
+▶ **The next session starts with PLAYWRIGHT — see the first section below.**
 
 Owner policy: **five slices + issue resolution every session. Never the
 scheduler. Codex and the Supervisor only — no Stitch.** Google ADK is permitted
@@ -9,6 +12,75 @@ for **Phase 8 only** (owner, 2026-08-07, ADR-018 amendment).
 
 ▶ **FIRST COMMAND:** `bash scripts/start-session.sh`
 ▶ Then `.claude/CURRENT_TASK.md` (the resume detail), then this file.
+
+---
+
+# ═══ ▶ START HERE NEXT SESSION: PLAYWRIGHT ═══
+
+**Owner instruction at 08-07 pt3 close: the next session STARTS by running and
+fixing Playwright.** It has not been run since **2026-07-29** — the single
+largest unmeasured surface in this repository, and it has been deferred for
+nine days.
+
+```bash
+bash scripts/start-session.sh          # kills stale servers; pkill does NOT work here
+cd apps/e2e && ./node_modules/.bin/playwright test
+```
+
+🔴 **READ THE COUNT, NEVER THE EXIT CODE.** This suite once exited 0 while
+collecting **ZERO** tests for two days. Baseline to beat: **138 passed /
+2 skipped**. If the number is far below that, the suite is not running — that
+is the bug, before any test failure is.
+
+⚠️ It needs a running stack (API 4000 + web 3001) and seeded identities. Three
+stale `next start` servers once faked product defects for an hour, so prove the
+server is YOURS before believing any failure:
+```bash
+powershell.exe -NoProfile -Command "Get-NetTCPConnection -LocalPort 3001 -State Listen | ForEach-Object { Get-Process -Id $_.OwningProcess | Select-Object Id,StartTime }"
+```
+
+⚠️ Expect real breakage: the login default role changed (strongest role now
+wins, not lowest org uuid), sign-out now clears the switcher cookies, and the
+request-service form gained a **preview step** — any test that submitted that
+form in one press now needs two.
+
+---
+
+# ═══ OUTSTANDING WORK — EVERYTHING OPEN, 08-07 pt3 close ═══
+
+## A. Claude can do these now
+| # | Item | Note |
+|---|---|---|
+| **A1** | ▶ **Playwright** — see above | **START HERE** |
+| A2 | **I9** — 059's supplier-visibility checks SKIP on live | no `supplier_users` row to act as |
+| A3 | **I11** — 057's `knowledge.diagnostic_trees` + `learning.course_materials` are applied and EMPTY | needs an authoring screen or a seed; ask which |
+| A4 | Root **`.dockerignore`** — 3 Dockerfiles do `COPY . .` with no ignore file | Codex suggestion, 08-07 |
+| A5 | **Watch for a SECOND OOM** before concluding "leak" | one kill in 4d4h is not a rhythm; `Diagnose Render memory` counts intervals |
+| A6 | **`purchase_order` approval scope** | needs a PRICED purchase order (schema change) — `purchase_requisitions` has NO price column and `purchase-orders` has only a LIST endpoint |
+
+## B. Blocked on R1 (the one MX record)
+| # | Item |
+|---|---|
+| B1 | **I1** — migration **060 is LOCAL ONLY**; not rehearsed or applied to live |
+| B2 | **I2** — drain cron `schedule:` still commented out (re-enable LAST, only after a manual dispatch returns 200) |
+| B3 | **I3** — password reset is a dead end; the page promises mail Keycloak cannot send |
+| B4 | **I4** — email verification is OFF on the live realm (sign-up works; ownership unproven) |
+| B5 | **I12 on LIVE** — closed LOCALLY only; needs 060 applied + API redeployed |
+| B6 | **Solar: Brevo → Resend** — owner deferred to its own session. Scoping is DONE, do not re-derive: the app ALREADY supports Resend (`api_manager.py:831`), the chain tries dead Brevo FIRST and its docstring denies it, and 8 workflow send sites bypass `api_manager` entirely. See memory `project_solar_email_brevo_to_resend`. |
+
+## C. Owner only — Claude cannot do these
+| # | Item |
+|---|---|
+| C1 | 🔴 **R1 — the MX record.** host `send`, `feedback-smtp.us-east-1.amazonses.com`, pri 10. NO Namecheap API credentials exist on this machine; the API also needs account-level enablement + an IP allow-list. **Do not re-derive this.** |
+| C2 | 🔴 **I5 — the live Keycloak password is in the PUBLIC repo's git history.** `a0022ff` removed it from the file only. **Rotation is the only thing that ends it.** |
+| C3 | **I6** — `RENDER_API_KEY` unrotated since 2026-07-27 |
+| C4 | **I7** — Resend keys in plain text at `Documentsutoworkshop app\send 33.txt` / `send 44.txt` (44 is FULL ACCESS). Rotate or delete once email works. |
+
+## D. Standing rules that bit this session
+- 🔴 **`-f confirm=APPLY`** or `deploy-api` / `deploy-customer-web` skip every deploy step and still report SUCCESS.
+- 🔴 **Run `Live suite` after EVERY deploy** (owner policy, all projects). Last run: 16/0/0.
+- 🔴 **`Release` deploys workshop-web ONLY** — api and customer-web each need their own dispatch.
+- 🔴 **Check Codex produced FINDINGS, not its exit code** — it once read files for 9 minutes, produced nothing and exited 0.
 
 ---
 
