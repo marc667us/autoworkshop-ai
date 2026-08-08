@@ -162,6 +162,18 @@ const SELECT_JOB = `
  * references a job card, so the rules about who may see one live here and are
  * inherited rather than restated.
  */
+/**
+ * ⚠️ ONE DEFINITION OF "may this person be given a job", used by BOTH the
+ * create path and the reassign path below.
+ *
+ * Two copies would drift, and the drift would be silent: a card assigned to
+ * somebody who is not a technician appears on NO technician's "My Assigned
+ * Work", so the job does not fail loudly — it simply never gets picked up.
+ */
+const ACTIVE_TECHNICIAN_SQL = `SELECT 1 FROM identity.memberships
+            WHERE user_id = $1 AND organization_id = $2
+              AND status = 'active' AND role_name = 'technician'`;
+
 @Injectable()
 export class JobCardService {
   constructor(
@@ -338,9 +350,7 @@ export class JobCardService {
         // that says it is theirs. The job does not fail loudly; it simply never
         // gets picked up.
         const member = await client.query(
-          `SELECT 1 FROM identity.memberships
-            WHERE user_id = $1 AND organization_id = $2
-              AND status = 'active' AND role_name = 'technician'`,
+          ACTIVE_TECHNICIAN_SQL,
           [assignedTechnicianId, ctx.organizationId],
         );
         if (member.rows.length === 0) {
@@ -629,6 +639,89 @@ export class JobCardService {
   }
 
   /** Re-read through the same join the list uses, so one shape serves both. */
+  /**
+   * ASSIGN, REASSIGN OR UNASSIGN the technician on an existing job card.
+   *
+   * ══════════════════════════════════════════════════════════════════════════
+   * 🔴 UNTIL THIS EXISTED, `assigned_technician_id` WAS WRITE-ONCE.
+   *
+   * Grepped, not assumed (2026-08-08): every other reference to that column in
+   * the API is a READ. Its only writer was the INSERT in `create`, and there
+   * was no assign route of any kind. So:
+   *
+   *   · a card opened or converted WITHOUT a technician — which is the DEFAULT,
+   *     and a state the product deliberately allows — could never be assigned
+   *     afterwards. "Leave unassigned" was a one-way door;
+   *   · a technician who left, went off sick or was simply the wrong choice
+   *     could never be changed.
+   *
+   * That made "assign technicians, get job started" half a feature: conversion
+   * could name somebody, and nothing could ever name somebody later.
+   * ══════════════════════════════════════════════════════════════════════════
+   *
+   * ⚠️ `null` MEANS UNASSIGN, and it is distinct from "field omitted". The
+   * schema uses `.nullable().optional()` so a caller can say "put this back in
+   * the queue" — a floor that cannot hand a job back has only half a control.
+   */
+  async reassign(
+    ctx: TenantContext,
+    id: string,
+    assignedTechnicianId: string | null,
+  ): Promise<JobCard> {
+    // Staff only. A customer may not hand their own job to anybody, which is
+    // the same rule `create` enforces and for the same reason (`07.txt` pt2
+    // §47 puts assignment under the manager).
+    if (ctx.activeRole === 'customer') {
+      throw new ForbiddenException('a customer may not assign a technician');
+    }
+
+    return this.db.withTenant(ctx, async (client) => {
+      if (assignedTechnicianId) {
+        // ⚠️ THE SAME CHECK AS `create`, from the SAME constant. A second
+        // hand-written copy would drift, and a card assigned to a non-technician
+        // fails SILENTLY — it appears on no technician's list and is simply
+        // never picked up.
+        const member = await client.query(ACTIVE_TECHNICIAN_SQL, [
+          assignedTechnicianId,
+          ctx.organizationId,
+        ]);
+        if (member.rows.length === 0) {
+          throw new BadRequestException(
+            'the assigned user is not an active technician in this organisation',
+          );
+        }
+      }
+
+      // ⚠️ A SINGLE CONDITIONAL UPDATE, and the stage predicate is IN IT.
+      // Reading the card, checking its stage and then updating would let two
+      // reassignments race, and would let a card complete between the read and
+      // the write. One statement or the rule is advisory.
+      //
+      // Refused once the work is finished: reassigning a completed card
+      // rewrites who did the job, and this column is what `My Assigned Work`,
+      // the technician-scoped reads and the productivity reports all key on.
+      const res = await client.query(
+        `UPDATE repair.job_cards
+            SET assigned_technician_id = $4::uuid
+          WHERE id = $1 AND tenant_id = $2 AND organization_id = $3
+            AND stage NOT IN ('completed', 'warranty_follow_up')
+        RETURNING id`,
+        [id, ctx.tenantId, ctx.organizationId, assignedTechnicianId],
+      );
+
+      if (res.rows.length === 0) {
+        // One message for both causes — not found in this workshop, or finished.
+        // Distinguishing them would confirm the existence of a card the caller
+        // may not read.
+        throw new NotFoundException(
+          'That job card was not found, or the work is already finished.',
+        );
+      }
+
+      return this.findByIdInTransaction(client, ctx, id);
+    });
+  }
+
   private async findByIdInTransaction(
     client: { query: (t: string, v: unknown[]) => Promise<{ rows: unknown[] }> },
     ctx: TenantContext,

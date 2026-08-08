@@ -815,6 +815,65 @@ describe('the customer value chain, end to end, through the real services', () =
 
   // ══ STEP 7 — THE CUSTOMER READS THEIR OWN WORK, AND ONLY THEIRS ══════════
 
+  dbIt('🔴 step 6 — a card that opened UNASSIGNED can now be assigned afterwards', async () => {
+    // ══════════════════════════════════════════════════════════════════════
+    // Until `PATCH /job-cards/:id/assignment` existed,
+    // `assigned_technician_id` was WRITE-ONCE. Grepped, not assumed: every
+    // other reference to that column in the API is a READ, and its only writer
+    // was the INSERT in `JobCardService.create`.
+    //
+    // So "Leave unassigned" — the DEFAULT, and a state the product deliberately
+    // allows — was a ONE-WAY DOOR. The card from step 5 named nobody and could
+    // never be given to anybody. A technician who left could never be replaced
+    // either. Closing the conversion-time hole did not create a way to assign
+    // LATER, which is most of what a workshop floor actually does.
+    // ══════════════════════════════════════════════════════════════════════
+    const before = await jobCards.findById(ctxFor(receptionUserId, 'reception_staff'), jobCardId);
+    expect(before.assignedTechnicianId, 'step 5 card should still be unassigned').toBeNull();
+
+    const after = await jobCards.reassign(
+      ctxFor(receptionUserId, 'reception_staff'),
+      jobCardId,
+      technicianUserId,
+    );
+    expect(after.assignedTechnicianId).toBe(technicianUserId);
+    expect(after.assignedTechnicianName).toBe('Tina Technician');
+  });
+
+  dbIt('step 6 — and it can be handed back to the queue', async () => {
+    // `null` is the UNASSIGN. A floor that can take a job but never hand it
+    // back has half a control — the technician goes off sick and the card is
+    // stuck on their name.
+    const back = await jobCards.reassign(
+      ctxFor(receptionUserId, 'reception_staff'),
+      jobCardId,
+      null,
+    );
+    expect(back.assignedTechnicianId).toBeNull();
+
+    // ⚠️ AND IT IS LEFT UNASSIGNED, DELIBERATELY. Step 7 asserts the technician
+    // sees the card assigned to them and NOT the one that is not — leaving this
+    // card on their name would give them two and silently destroy that wall.
+    // A fixture that quietly changes what a later test is measuring is the same
+    // class of defect as a check that walks through its own gap.
+  });
+
+  dbIt('step 6 — reassigning to a NON-technician is refused', async () => {
+    // The same check as `create`, from the same constant — because a card
+    // assigned to a non-technician appears on NO technician's list and simply
+    // never gets picked up. It fails silently, which is why one definition
+    // matters more here than tidiness.
+    await expect(
+      jobCards.reassign(ctxFor(receptionUserId, 'reception_staff'), jobCardId, userA),
+    ).rejects.toThrow(/not an active technician/i);
+  });
+
+  dbIt('step 6 — a customer may not reassign their own job', async () => {
+    await expect(
+      jobCards.reassign(ctxFor(userA, 'customer'), jobCardId, technicianUserId),
+    ).rejects.toThrow(/customer may not assign/i);
+  });
+
   dbIt('step 7 — customer A reads their OWN job card', async () => {
     const list = await jobCards.list(ctxFor(userA, 'customer'));
     expect(list.map((c) => c.id)).toContain(jobCardId);

@@ -32,6 +32,7 @@ import {
   AddResourceBody,
   ApproveCriticalOverrideBody,
   ChangeStageBody,
+  ReassignJobCardBody,
   CompleteExecutionBody,
   CreateJobCardBody,
   DecisionBody,
@@ -147,6 +148,30 @@ export class JobCardController {
     @Body(validatedBody(ChangeStageBody)) body: ChangeStageBody,
   ) {
     return this.jobCards.changeStage(req.tenantContext, id, body);
+  }
+
+  /**
+   * Assign, reassign or unassign the technician on a job card.
+   *
+   * 🔴 THE ROUTE WHOSE ABSENCE MADE `assigned_technician_id` WRITE-ONCE.
+   * Grepped 2026-08-08: every other reference to that column in the API is a
+   * READ, and its only writer was the INSERT in `JobCardService.create`. So a
+   * card opened or converted WITHOUT a technician — which is the DEFAULT, and a
+   * state the product deliberately allows — could never be assigned to anybody
+   * afterwards, and a technician who left could never be replaced.
+   *
+   * `PATCH` rather than `POST`: this edits one field of a card that already
+   * exists. Separate from `:id/stage` because who does the work and how far
+   * along it is are independent facts, changed by different people at different
+   * times.
+   */
+  @Patch(':id/assignment')
+  reassign(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(validatedBody(ReassignJobCardBody)) body: ReassignJobCardBody,
+  ) {
+    return this.jobCards.reassign(req.tenantContext, id, body.assignedTechnicianId);
   }
 
   /**

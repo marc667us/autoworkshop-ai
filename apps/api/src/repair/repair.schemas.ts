@@ -413,3 +413,18 @@ export type OpenQualityInspectionBody = z.infer<typeof OpenQualityInspectionBody
 
 export const ReviewVariationBody = z.object({ send: z.boolean().optional() });
 export type ReviewVariationBody = z.infer<typeof ReviewVariationBody>;
+
+/**
+ * `PATCH /job-cards/:id/assignment`.
+ *
+ * ⚠️ `.nullable()` IS THE UNASSIGN, and it is why this is not just a uuid.
+ * `null` puts the card back in the queue for the floor to pick up; omitting the
+ * field entirely is rejected by `.strict()` plus the required key, so a caller
+ * cannot accidentally clear an assignment by sending `{}`.
+ */
+export const ReassignJobCardBody = z
+  .object({
+    assignedTechnicianId: z.string().uuid().nullable(),
+  })
+  .strict();
+export type ReassignJobCardBody = z.infer<typeof ReassignJobCardBody>;
