@@ -2,7 +2,10 @@ import { Suspense } from 'react';
 import { ApiFailure, apiGet, requireNavRoute } from '@autoworkshop/next-shell';
 import { DataTable, EmptyState, LoadingState, PageHeader, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
-import { RegistrationDecision } from '../../_screens/registration-decision';
+import {
+  RegistrationDecision,
+  type RegistrationStatus,
+} from '../../_screens/registration-decision';
 
 /**
  * `/directory/registrations` — the verification queue.
@@ -30,7 +33,7 @@ interface ApiRegistration {
   organizationId: string;
   organizationName: string | null;
   kind: 'workshop' | 'supplier';
-  status: 'pending' | 'approved' | 'rejected';
+  status: RegistrationStatus;
   submittedByName: string | null;
   submittedByEmail: string | null;
   submittedAt: string;

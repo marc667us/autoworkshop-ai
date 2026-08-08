@@ -1,5 +1,6 @@
 import { needsWorkshop, registrationStatus, renderModulePage, viewerGrants } from '@autoworkshop/next-shell';
 import { CreateSupplierScreen } from '../../_screens/create-supplier-screen';
+import { VerificationStatus } from '../../_screens/verification-status';
 
 /**
  * `/home/dashboard` — supplier-web's front door, and the ONE destination the
@@ -56,5 +57,19 @@ export default async function Page() {
     return <CreateSupplierScreen displayName={status?.displayName} />;
   }
 
-  return renderModulePage('supplier', ['home', 'dashboard'], await viewerGrants('supplier'));
+  // Registered, so the dashboard renders — with the verification banner above
+  // it, which is what gives `GET /registrations/mine` a caller and makes
+  // `CreateSupplierScreen`'s "your listing goes live once you are verified"
+  // into a promise the product actually keeps.
+  //
+  // ⚠️ ABOVE THE MODULE PAGE, NOT INSIDE IT. `renderModulePage` is the shared
+  // catch-all renderer used by every workspace; threading a supplier-only
+  // banner through it would put supplier logic in a component six other apps
+  // render (§0.3).
+  return (
+    <>
+      <VerificationStatus />
+      {renderModulePage('supplier', ['home', 'dashboard'], await viewerGrants('supplier'))}
+    </>
+  );
 }

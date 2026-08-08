@@ -5,6 +5,9 @@ import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { visuallyHidden } from '@autoworkshop/ui';
 import { decideRegistrationAction } from './registration-actions';
 
+/** The three states migration 069's CHECK constraint permits. */
+export type RegistrationStatus = 'pending' | 'approved' | 'rejected';
+
 /**
  * Approve or reject one registration.
  *
@@ -28,7 +31,11 @@ export function RegistrationDecision({
   label,
 }: {
   registrationId: string;
-  status: string;
+  // 🔴 THE UNION, NOT `string`. It was `string`, and that is what let
+  // `localStatus` be handed to an action expecting the union — the compiler
+  // caught it only once the value started travelling to the server. A screen
+  // that types a server enum as `string` will eventually send it one.
+  status: RegistrationStatus;
   label: string;
 }) {
   const noteId = useId();
@@ -54,7 +61,10 @@ export function RegistrationDecision({
   async function decide(decision: 'approved' | 'rejected') {
     setBusy(decision === 'approved' ? 'approving' : 'rejecting');
     setError(null);
-    const result = await decideRegistrationAction(registrationId, decision, note);
+    // The status THIS SCREEN was showing. The API pins its UPDATE to it, so a
+    // colleague who decided while this page was open produces a clear "it moved,
+    // reload" rather than a silent overwrite.
+    const result = await decideRegistrationAction(registrationId, decision, note, localStatus);
     setBusy(null);
     if (!result.ok) {
       setError(result.message);
@@ -64,16 +74,58 @@ export function RegistrationDecision({
     setOutcome(result.message);
   }
 
-  if (localStatus !== 'pending') {
-    return (
-      <p style={{ margin: 0, fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
-        {outcome ?? `Already ${localStatus}.`}
-      </p>
-    );
-  }
+  /**
+   * 🔴 A DECIDED REGISTRATION CAN BE RE-DECIDED, AND IT COULD NOT BE.
+   *
+   * The first version returned a bare sentence and NO CONTROLS once the status
+   * left `pending` — while `OrganizationRegistrationService`'s own header
+   * promised "un-publishing on a re-rejection IS handled, because an approval
+   * that is later reversed must actually take the listing down". That path
+   * existed in the API and was unreachable by clicking, so an approval given in
+   * error could only be withdrawn from a database console. Supervisor,
+   * 2026-08-09 — the same "a rule whose escape hatch is unreachable is a wall"
+   * shape this repository has recorded before.
+   *
+   * ⚠️ THE REVERSAL IS DELIBERATELY QUIETER THAN THE FIRST DECISION: the state
+   * is stated plainly and the controls sit under a disclosure, so the common
+   * case (reading a decided row) is not cluttered by the rare one, and nobody
+   * flips a live listing by reflex.
+   */
+  const decided = localStatus !== 'pending';
 
   return (
     <div style={{ display: 'grid', gap: primitive.space[2] }}>
+      {decided ? (
+        <>
+          <p style={{ margin: 0, fontSize: primitive.fontSize.sm, color: themeVar.textSecondary }}>
+            {outcome ?? `Already ${localStatus}.`}
+          </p>
+          <details>
+            <summary
+              style={{
+                cursor: 'pointer',
+                fontSize: primitive.fontSize.xs,
+                color: themeVar.textSecondary,
+              }}
+            >
+              {localStatus === 'approved'
+                ? 'Withdraw this approval'
+                : 'Reconsider this rejection'}
+            </summary>
+            <p
+              style={{
+                margin: `${primitive.space[2]} 0`,
+                fontSize: primitive.fontSize.xs,
+                color: themeVar.textSecondary,
+              }}
+            >
+              {localStatus === 'approved'
+                ? 'Rejecting now takes the public listing straight back down.'
+                : 'Approving now publishes the business.'}
+            </p>
+          </details>
+        </>
+      ) : null}
       <label htmlFor={noteId} style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary }}>
         Reason — required to reject, kept with the decision
       </label>
@@ -92,7 +144,11 @@ export function RegistrationDecision({
           onClick={() => void decide('approved')}
           style={{ ...control, cursor: 'pointer', fontWeight: 600 }}
         >
-          {busy === 'approving' ? 'Approving…' : 'Approve and publish'}
+          {busy === 'approving'
+            ? 'Approving…'
+            : decided
+              ? 'Approve and publish instead'
+              : 'Approve and publish'}
           {/* ⚠️ `visuallyHidden`, NOT `className="sr-only"` — that class is not
               defined anywhere in this repository, so the text would render in
               full and the button would read twice as long on screen. */}
@@ -104,7 +160,7 @@ export function RegistrationDecision({
           onClick={() => void decide('rejected')}
           style={{ ...control, cursor: 'pointer' }}
         >
-          {busy === 'rejecting' ? 'Rejecting…' : 'Reject'}
+          {busy === 'rejecting' ? 'Rejecting…' : decided ? 'Reject and unpublish' : 'Reject'}
           <span style={visuallyHidden}> {label}</span>
         </button>
       </div>

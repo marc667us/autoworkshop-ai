@@ -520,6 +520,38 @@ BEGIN
                 'Nothing has been applied.', v_admins;
         END IF;
     END IF;
+
+    -- ── THE POSITIVE ARM ───────────────────────────────────────────────────
+    --
+    -- 🔴 THE NEGATIVE ARM ALONE PROVES THE WRONG HALF. It shows the door does
+    -- not open for a stranger — but the claim this migration exists to
+    -- establish is that it DOES open for the alert function's owner. If
+    -- `in_admin_lookup()`'s `regprocedure` literal ever stops matching, or a
+    -- later migration drops `admin_lookup_select`, the file would still commit
+    -- green and every registration would alert nobody, emitting only the
+    -- non-fatal NOTICE. That is the identical silent failure 071 was written to
+    -- close. Supervisor, 2026-08-09.
+    --
+    -- ⚠️ AND IT IS ONLY MEANINGFUL ON RENDER, WHICH IS STATED RATHER THAN
+    -- GLOSSED. Locally the owner is `rolbypassrls=t`, so it would see the rows
+    -- with or without the policy and passes for the wrong reason. On Render the
+    -- migration role is not a superuser and FORCE RLS binds it, so there the
+    -- policy is the only thing that can make this succeed — which is exactly
+    -- where the assertion needs to bite.
+    IF v_total > 0 THEN
+        PERFORM set_config('app.admin_lookup', 'on', true);
+        SELECT count(*) INTO v_admins FROM identity.memberships
+         WHERE role_name = 'platform_administrator' AND status = 'active';
+        PERFORM set_config('app.admin_lookup', '', true);
+
+        IF v_admins < v_total THEN
+            RAISE EXCEPTION
+                'the admin-lookup door does NOT open for %: it sees % of % active '
+                'platform administrators. alert_admins_of_registration would write '
+                'zero alerts and raise only a NOTICE. Nothing has been applied.',
+                current_user, v_admins, v_total;
+        END IF;
+    END IF;
 END $$;
 
 COMMIT;

@@ -42,6 +42,16 @@ export async function decideRegistrationAction(
   registrationId: string,
   decision: 'approved' | 'rejected',
   note: string,
+  /**
+   * The status the screen was showing when the button was pressed.
+   *
+   * 🔴 THIS IS WHAT MAKES A RE-DECISION POSSIBLE AND A RACE IMPOSSIBLE. The API
+   * pins its UPDATE to this value, so two administrators deciding at the same
+   * moment produce ONE decision and the loser is told the row moved — rather
+   * than both being told they succeeded and the registry flag landing on
+   * whichever committed last.
+   */
+  expectedStatus: 'pending' | 'approved' | 'rejected',
 ): Promise<ActionOutcome> {
   const trimmed = note.trim();
   // Checked here as well as in the API, because this message is read by a
@@ -56,6 +66,7 @@ export async function decideRegistrationAction(
 
   const result = await apiPost<unknown>('admin', `/registrations/${registrationId}/decision`, {
     decision,
+    expectedStatus,
     ...(trimmed ? { note: trimmed } : {}),
   });
 
@@ -66,7 +77,13 @@ export async function decideRegistrationAction(
     ok: true,
     message:
       decision === 'approved'
-        ? 'Approved — the business is now listed publicly.'
-        : 'Rejected. Nothing has been published, and the business keeps its account.',
+        ? // ⚠️ "LISTED" IS NOT PROMISED UNCONDITIONALLY ANY MORE. Approval
+          // publishes the registry row, and migration 072 guarantees one
+          // exists — but a workshop that has not filled in its city still
+          // shows a placeholder. Saying what happened, not what it looks like.
+          'Approved and published. The business appears publicly once its own profile is complete.'
+        : // Reversal is reachable, so say so — otherwise an administrator who
+          // rejects by mistake goes looking for support.
+          'Rejected. Nothing is published, the business keeps its account, and you can approve it later if that changes.',
   };
 }

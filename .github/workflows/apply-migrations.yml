@@ -37,6 +37,25 @@ on:
         description: 'Render Postgres service name'
         required: false
         default: 'autoworkshop-postgres'
+  # ══════════════════════════════════════════════════════════════════════════
+  # 🔴 IT ALSO RUNS ITSELF AFTER EVERY RELEASE, AS AN INSPECTION.
+  #
+  # Owner, 2026-08-09: *"production must match up with local in deployment."*
+  #
+  # The inspection already existed and was purely manual, so nobody looked —
+  # and "migrations are LOCAL ONLY" has appeared in this repository's session
+  # notes for weeks, which is what invisible drift looks like written down. A
+  # dry run after each Release turns that from something somebody has to
+  # remember into a number on every deploy.
+  #
+  # ⚠️ `inputs` IS NULL ON A `workflow_run`, so both env values below fall back.
+  # `CONFIRM` therefore resolves to '' and this path CANNOT APPLY ANYTHING —
+  # the automatic trigger inspects and reports, and applying stays a deliberate
+  # human act with `confirm=APPLY`.
+  # ══════════════════════════════════════════════════════════════════════════
+  workflow_run:
+    workflows: ['Release']
+    types: [completed]
 
 permissions:
   contents: read
@@ -46,8 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      DB_NAME: ${{ inputs.database }}
-      CONFIRM: ${{ inputs.confirm }}
+      DB_NAME: ${{ inputs.database || 'autoworkshop-postgres' }}
+      CONFIRM: ${{ inputs.confirm || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -211,13 +230,39 @@ jobs:
           export PSQL_BIN="${PSQL_BIN}"
 
           echo "::group::pending migrations"
-          DRY_RUN=1 bash infrastructure/migrations/run.sh
+          # Captured as well as shown: the counts below are parsed from THIS
+          # output, so the report cannot disagree with what the runner did.
+          DRY_RUN=1 bash infrastructure/migrations/run.sh 2>&1 | tee /tmp/dryrun.txt
           echo "::endgroup::"
+
+          # ── PRODUCTION vs THIS COMMIT, AS THREE NUMBERS ────────────────────
+          #
+          # 🔴 NOT AN EXIT CODE. `run.sh` exits 0 whether or not anything is
+          # pending, so "the workflow was green" has never meant "production
+          # matches the repository". This repository lost two days to a suite
+          # that exited 0 having run zero tests; the same rule applies here.
+          IN_REPO="$(ls infrastructure/migrations/*.sql | wc -l | tr -d ' ')"
+          PENDING="$(grep -c '^  *apply ' /tmp/dryrun.txt || true)"
+          APPLIED="$(grep -c '^  *skip '  /tmp/dryrun.txt || true)"
+          echo
+          echo "=============================================================="
+          echo "  MIGRATIONS   IN REPO ${IN_REPO}   APPLIED ${APPLIED}   PENDING ${PENDING}"
+          echo "=============================================================="
 
           if [ "${CONFIRM}" != "APPLY" ]; then
             echo
             echo "INSPECT ONLY — nothing was written."
-            echo "Re-run with confirm=APPLY to apply the pending migrations above."
+            if [ "${PENDING}" -gt 0 ]; then
+              # ⚠️ RED, DELIBERATELY, AND THIS IS NOT AN ENVIRONMENTAL FAILURE.
+              # Pending migrations mean the deployed schema is genuinely behind
+              # the code that was just released — a real defect with a known
+              # remedy that a human can perform in one click. A warning here
+              # would be indistinguishable from the silence that let this drift
+              # accumulate in the first place.
+              echo "::error::${PENDING} migration(s) are in this commit and NOT on production."                   "The deployed schema does not match the code that was just released."                   "Run this workflow again with confirm=APPLY, then run the Live suite."
+              exit 1
+            fi
+            echo "Production matches this commit — nothing to apply."
             exit 0
           fi
 
