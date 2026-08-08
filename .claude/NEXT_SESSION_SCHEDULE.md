@@ -61,6 +61,20 @@ read-only **`Diagnose Render memory`** workflow anchors on the failure event
 earlier) and counts intervals between kills. Details + candidate zero-cost
 remedies in the memory note `project_autoworkshop_session_2026-08-07_pt3_*`.
 
+**✅ I12 IS CLOSED — a real request went end to end for the first time.** Locally,
+as a genuine Keycloak customer: `POST /service-requests` 201 → 6 notification
+rows (in_app + email for reception_staff / workshop_manager / workshop_owner,
+none for the customer) → drain claimed 3, sent 3, failed 0 → all three arrived
+in Mailpit with the real complaint → a second drain claimed 0, so no
+double-send. Rows all `sent`, attempts 0.
+
+**🔴 THE FORM HAD NO SUBMIT BUTTON.** `FormShell` supplies no submit control;
+each screen adds its own, and 2 of 49 never did — the request-for-service form
+and `parts-requests-screen`. So the funnel could not be completed and
+`service_request.created` could never fire. Fixed, plus an opt-in `preview`
+step, plus `packages/ui/src/form-has-submit.spec.ts` which fails if any form
+loses its button again.
+
 **Still open from LIST 1:** I8 (Playwright), I10 (investigated, NOT built —
 `assertWithinApprovalLimit` is called from `variation.service.ts` only; the
 `quotation` and `purchase_order` scopes remain unenforced), I11, I12.
