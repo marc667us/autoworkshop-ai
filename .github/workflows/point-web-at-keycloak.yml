@@ -44,6 +44,10 @@ on:
         description: 'Public base URL of the customer app (the Request for Service form lives there)'
         required: false
         default: 'https://autoworkshop-customer.onrender.com'
+      supplier_web_url:
+        description: 'Public base URL of the supplier app (the Register as parts supplier funnel lands there)'
+        required: false
+        default: 'https://autoworkshop-supplier.onrender.com'
 
 permissions:
   contents: read
@@ -63,6 +67,7 @@ jobs:
       REALM: ${{ inputs.realm }}
       API_BASE_URL: ${{ inputs.api_base_url }}
       CUSTOMER_WEB_URL: ${{ inputs.customer_web_url }}
+      SUPPLIER_WEB_URL: ${{ inputs.supplier_web_url }}
       CONFIRM: ${{ inputs.confirm }}
 
     steps:
@@ -194,6 +199,67 @@ jobs:
             echo "::warning::${URL} returned ${code} — NOT writing CUSTOMER_WEB_URL. Any value already on the service is left untouched. If this is a 404 the form is genuinely missing: deploy customer-web (Release does NOT), then re-run."
           fi
 
+      # ── THE SUPPLIER FUNNEL'S DESTINATION ────────────────────────────────
+      #
+      # Same shape as the customer probe above, and for the same reason: the
+      # apex's "Register as parts supplier" button renders ONLY when
+      # SUPPLIER_WEB_URL is set, and `supplierRegisterHrefFrom` sends people to
+      # that origin's OWN sign-in. Writing an unproven URL here would replace a
+      # correctly hidden button with one that lands a stranger, signed out, on a
+      # host that may not exist — the `c586e38` failure the owner reported four
+      # times.
+      - name: Prove the supplier app answers before naming it
+        run: |
+          set -euo pipefail
+          python3 - > /tmp/supplier_url <<'PY'
+          import os, sys
+          from urllib.parse import urlsplit
+          raw = (os.environ.get('SUPPLIER_WEB_URL') or '').strip()
+          if not raw:
+              sys.exit('::error::supplier_web_url is blank')
+          u = urlsplit(raw)
+          if u.scheme not in ('http', 'https'):
+              sys.exit(f'::error::supplier_web_url scheme {u.scheme!r} is not http/https')
+          if not u.hostname:
+              sys.exit('::error::supplier_web_url has no host')
+          if u.username or u.password:
+              sys.exit('::error::supplier_web_url carries credentials')
+          if u.query or u.fragment:
+              sys.exit('::error::supplier_web_url has a query or fragment; a path cannot be appended to it')
+          # Exactly what `siblingAppBaseFrom` builds: origin + path, every
+          # trailing slash removed. The shell and this validator must agree on
+          # the same string or a value can be PROVEN in a shape the app never
+          # constructs.
+          print(f'{u.scheme}://{u.netloc}{u.path}'.rstrip('/'))
+          PY
+          CANON="$(cat /tmp/supplier_url)"
+          echo "supplier_web_url accepted, canonical: ${CANON}"
+
+          # `/home/dashboard` is where the button actually sends people, so that
+          # is what is probed — not `/`, which merely redirects to it.
+          URL="${CANON}/home/dashboard"
+          ok=0
+          for i in $(seq 1 6); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$URL" || echo 000)"
+            # 200 for the signed-out shell, 3xx for a redirect to sign-in, 401/403
+            # for a hard refusal — all prove the route exists and is wired.
+            case "$code" in
+              200|301|302|303|307|401|403) ok=1; break ;;
+            esac
+            echo "  ${code} (attempt ${i}; waking or down)"
+            [ "$i" -lt 6 ] && sleep 20
+          done
+          echo "supplier dashboard -> ${code}"
+
+          # A down supplier app must not block a Keycloak repair, exactly as for
+          # the customer key: this SKIPS the one variable rather than failing the
+          # workflow that fixes AUTH_URL and preserves AUTH_SECRET.
+          if [ "$ok" = "1" ]; then
+            echo "$CANON" > /tmp/supplier_url_ok
+          else
+            echo "::warning::${URL} returned ${code} — NOT writing SUPPLIER_WEB_URL. The landing's supplier button stays hidden, which is the correct degraded state. If this is a 404, deploy supplier-web (deploy-supplier-web.yml -f confirm=APPLY) then re-run."
+          fi
+
       - name: Read the current variables and merge
         run: |
           set -euo pipefail
@@ -248,6 +314,14 @@ jobs:
               want['CUSTOMER_WEB_URL'] = open('/tmp/customer_url_ok').read().strip()
           else:
               print('CUSTOMER_WEB_URL   : SKIPPED (probe did not pass); existing value preserved')
+
+          # The supplier funnel's destination. Same rule, same reason: written
+          # only when proven, otherwise the existing value is preserved and the
+          # button stays hidden rather than pointing somewhere dead.
+          if os.path.exists('/tmp/supplier_url_ok'):
+              want['SUPPLIER_WEB_URL'] = open('/tmp/supplier_url_ok').read().strip()
+          else:
+              print('SUPPLIER_WEB_URL   : SKIPPED (probe did not pass); existing value preserved')
 
           changed = [k for k, v in want.items() if cur.get(k) != v]
           print('variables on the service :', len(cur))
