@@ -121,6 +121,29 @@ jobs:
               except Exception as e:
                   return 0, f'{type(e).__name__}: {e}'
 
+          def post(url, body, timeout=180):
+              """(status, body) for a POST. Never raises — same contract as fetch.
+
+              ⚠️ A GET AGAINST A POST-ONLY ROUTE RETURNS 404, WHICH IS EXACTLY
+              THE SIGNAL THIS SUITE USES TO MEAN "NOT DEPLOYED". Without this
+              helper, checking `POST /registration/customer` with `fetch` would
+              report a permanent, confident FAILURE against a perfectly healthy
+              deployment — the cry-wolf defect the note below already records
+              once, arriving by a different door.
+              """
+              data = json.dumps(body).encode()
+              req = urllib.request.Request(
+                  url, data=data, method='POST',
+                  headers={'User-Agent': 'aw-live-suite', 'Content-Type': 'application/json'},
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as r:
+                      return r.status, r.read().decode('utf-8', 'replace')
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read().decode('utf-8', 'replace')
+              except Exception as e:
+                  return 0, f'{type(e).__name__}: {e}'
+
           def check(name, fn):
               try:
                   ok, detail = fn()
@@ -213,6 +236,63 @@ jobs:
                   return s in (401, 403), f'HTTP {s} (401/403 = deployed and gated)'
               check(f'API {path} is deployed and refuses anonymous', run)
 
+          # ── 2026-08-08's CHANGE, VERIFIED ON LIVE ──────────────────────────
+          #
+          # 🔴 WRITTEN BECAUSE THE SUITE PASSED 16/0/0 AGAINST A DEPLOY THAT
+          # CONTAINED NONE OF IT. Customer enrolment, the agent layer and six
+          # closed authorization leaks all shipped, and not one of the 16 checks
+          # touched any of them. A green suite that does not exercise the change
+          # is not evidence about the change — the same shape as the fixture
+          # defect found the same day, where the whole customer funnel had been
+          # "proven" against a membership no production code path could create.
+          #
+          # These are deliberately CHEAP and UNAUTHENTICATED. Every one asks the
+          # only question an anonymous caller can answer honestly: is the route
+          # THERE, and does it REFUSE me? 404 means the deploy did not carry the
+          # change; 200 would mean it carries it without a gate.
+
+          # POST-only routes. `fetch` would 404 on all of these for the method,
+          # not the deployment — see `post`.
+          for path, body in [
+              ('/registration/customer', {'organizationId': '11111111-1111-1111-1111-111111111111'}),
+              ('/agents/discover/suppliers', {'url': 'https://example.com', 'brief': 'live suite probe'}),
+              ('/agents/discover/leads', {'url': 'https://example.com', 'brief': 'live suite probe'}),
+          ]:
+              def run(p=path, b=body):
+                  s, _ = post(f'{API}/api/v1{p}', b)
+                  # ⚠️ 400 IS ALSO A PASS, and saying so is the honest thing: it
+                  # means the route is deployed and its VALIDATION ran, which is
+                  # strictly more than 401 proves. What must never appear is 404
+                  # (not deployed) or 2xx (deployed with no gate at all).
+                  return s in (400, 401, 403), f'HTTP {s} (400/401/403 = deployed and gated)'
+              check(f'API POST {path} is deployed and refuses anonymous', run)
+
+          # GET routes added the same day.
+          for path in ['/agents/proposals']:
+              def run(p=path):
+                  s, _ = fetch(f'{API}/api/v1{p}')
+                  return s in (401, 403), f'HTTP {s} (401/403 = deployed and gated)'
+              check(f'API {path} is deployed and refuses anonymous', run)
+
+          # 🔴 THE MIGRATION, NOT JUST THE CODE. `/agents/proposals` reads
+          # `agents.proposals`; if migration 064 had not been applied the route
+          # would still 401 an anonymous caller, because the guard runs BEFORE
+          # any query. So a 401 there says nothing whatever about the schema.
+          #
+          # `/registration/status` is the one route that is reachable with only
+          # a token and touches the identity tables the 061/063 migrations
+          # altered. It still refuses anonymously, so this remains a deployment
+          # check rather than a schema one — and that limit is stated rather
+          # than glossed, because a check that quietly proves less than its name
+          # claims is how this repository has been misled before.
+          # ▶ A real schema assertion needs a token. That is the gap to close
+          #   next, and it is named here so it is not forgotten.
+          def registration_status_deployed():
+              s, _ = fetch(f'{API}/api/v1/registration/status')
+              return s in (401, 403), f'HTTP {s} (401/403 = deployed and gated)'
+          check('API /registration/status is deployed and refuses anonymous',
+                registration_status_deployed)
+
           # ── PUBLIC SURFACES ACTUALLY RETURN DATA ───────────────────────────
           def marketplace_has_parts():
               s, body = fetch(f'{API}/api/v1/public/parts?limit=1')
@@ -258,8 +338,20 @@ jobs:
           # exited 0 for two days having collected zero tests. If the checks
           # ever stop being registered, this must go red rather than quietly
           # report a clean bill of health.
+          #
+          # ⚠️ THE FLOOR MUST TRACK THE SUITE, OR IT STOPS BEING A GUARD.
+          # It was 10 when the suite had 16 checks, which caught "nothing ran"
+          # and nothing else — a whole family of checks could stop registering
+          # and still clear it comfortably. The 2026-08-08 change added five, so
+          # this is raised to 18: still slack enough that removing one check
+          # deliberately does not fail the run, tight enough that losing a block
+          # does.
+          #
+          # 🔴 RAISE THIS WHEN YOU ADD CHECKS. A floor left behind decays into
+          # the "green gate that runs nothing" this comment exists to prevent,
+          # just more slowly.
           total = len(passed) + len(failed) + len(skipped)
-          if total < 10:
+          if total < 18:
               print(f'::error::the live suite registered only {total} checks — it is not running')
               sys.exit(1)
 
