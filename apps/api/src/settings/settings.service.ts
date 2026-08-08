@@ -15,7 +15,35 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * `isEnforced` flag is that a workshop can tell the difference between a policy
  * the system applies and a policy it merely stores.
  */
-const ENFORCED_SCOPES = new Set(['repair_approval']);
+const ENFORCED_SCOPES = new Set([
+  'repair_approval',
+  // Added 2026-08-07 WITH its call site, never before it: `QuotationService.review`
+  // now refuses an approval above the role's limit (and never blocks a rejection).
+  'quotation',
+]);
+
+/**
+ * ⚠️ WHY `purchase_order` IS DELIBERATELY NOT HERE, THOUGH IT WAS ASKED FOR.
+ *
+ * It is the one scope in migration 045's list that CANNOT be honestly enforced
+ * today, and the reason is structural rather than unfinished work:
+ *
+ *   · `purchase-orders` exposes only a LIST endpoint — there is no approval
+ *     decision anywhere to attach a limit to.
+ *   · the nearest decision, `decideRequisition`, acts on
+ *     `parts.purchase_requisitions`, which carries a `quantity` and NO price,
+ *     cost or amount column at all (migration 044).
+ *
+ * So enforcing a MONEY limit there would mean inventing an amount — and a
+ * control computed from a number nobody supplied is worse than no control,
+ * because the refusal it produces cannot be reasoned about. Leaving the scope
+ * OUT of this set makes the settings screen say "recorded, not enforced" for
+ * it, which is the truth.
+ *
+ * Closing it properly needs a priced purchase order (a total on the
+ * requisition or the PO, and an approval endpoint). That is a schema change,
+ * not a line here.
+ */
 
 /**
  * Settings and workshop admin — slice 6 of `COMPLETION_PLAN.md`.

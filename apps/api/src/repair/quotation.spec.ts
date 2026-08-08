@@ -508,6 +508,72 @@ describe('review — §5 and §563', () => {
     ).rejects.toThrow(/must give a reason/);
   });
 
+  // ── the approval LIMIT, scope 'quotation' ───────────────────────────────
+  //
+  // 🔴 `core.approval_limits` has allowed this scope since migration 045 and
+  // NOTHING EVER CONSULTED IT. A workshop that set "a supervisor may approve up
+  // to GHS 500" watched a supervisor approve GHS 5,000. These tests exist
+  // because the happy-path test above PASSED both before and after the check
+  // was added — the fake returns no limit row, so it reads as "unconfigured"
+  // and returns silently. A refusal has to be asserted on purpose or it is not
+  // tested at all.
+  const LIMIT_QUERY = /FROM core\.approval_limits/;
+
+  it('REFUSES an approval above the role limit, and names who can', async () => {
+    const { db } = fakeDb([
+      [Q.reviewLookup, [{ id: QUOTE_ID, status: 'submitted', attempt_no: 1, submitted_by: OTHER_USER, job_number: 'JC-1' }]],
+      // ⚠️ TWO DIFFERENT QUERIES HIT `core.approval_limits`: the limit lookup,
+      // and then the "who CAN approve this" lookup that builds the escalation
+      // sentence. `fakeDb` takes the first matching regex, so ONE handler
+      // answers both — and the row therefore has to be valid for both. Without
+      // `role_name` the escalation mapper crashed on `undefined.replace`, which
+      // presented as the refusal not happening rather than as a bad fixture.
+      [LIMIT_QUERY, [{ max_amount: '10.00', currency: 'GHS', role_name: 'workshop_owner' }]],
+      ...readHandlers(),
+      [Q.quotationUpdate, []],
+    ]);
+    await expect(
+      new QuotationService(db, fakeAudit()).review(
+        ctx({ activeRole: 'workshop_manager' }), QUOTE_ID, { decision: 'approved' },
+      ),
+    ).rejects.toThrow(/above the GHS 10\.00 your role may approve/);
+  });
+
+  it('does NOT block a REJECTION, however large the quotation', async () => {
+    // 🔴 THE ESCAPE HATCH. A limit governs committing the business to a price,
+    // not refusing one. If it gated rejection too, an over-limit quotation
+    // would have no reachable next step — "a rule whose escape hatch is
+    // unreachable is a wall, not a rule", recorded in this repository.
+    const audit = spyAudit();
+    const { db } = fakeDb([
+      [Q.reviewLookup, [{ id: QUOTE_ID, status: 'submitted', attempt_no: 1, submitted_by: OTHER_USER, job_number: 'JC-1' }]],
+      [LIMIT_QUERY, [{ max_amount: '0.00', currency: 'GHS', role_name: 'workshop_owner' }]],
+      [Q.quotationUpdate, []],
+      ...readHandlers(),
+    ]);
+    await new QuotationService(db, audit as never).review(
+      ctx({ activeRole: 'workshop_manager' }), QUOTE_ID,
+      { decision: 'rejected', note: 'too expensive for this repair' },
+    );
+    expect(audit.write.mock.calls[0]?.[2]?.action).toBe('quotation.rejected');
+  });
+
+  it('the workshop owner is never limited', async () => {
+    const audit = spyAudit();
+    const { db } = fakeDb([
+      [Q.reviewLookup, [{ id: QUOTE_ID, status: 'submitted', attempt_no: 1, submitted_by: OTHER_USER, job_number: 'JC-1' }]],
+      [LIMIT_QUERY, [{ max_amount: '0.00', currency: 'GHS', role_name: 'workshop_owner' }]],
+      [Q.quotationUpdate, []],
+      ...readHandlers(),
+    ]);
+    await new QuotationService(db, audit as never).review(
+      ctx({ activeRole: 'workshop_owner' }), QUOTE_ID, { decision: 'approved' },
+    );
+    // A limit that could lock the owner out of their own workshop has no escape
+    // hatch at all — the same exemption `assertWithinApprovalLimit` already makes.
+    expect(audit.write.mock.calls[0]?.[2]?.action).toBe('quotation.approved');
+  });
+
   it('404s a quotation outside the viewers scope rather than 403ing it', async () => {
     const { db } = fakeDb([[Q.reviewLookup, []]]);
     await expect(

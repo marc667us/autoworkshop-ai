@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
+import { assertWithinApprovalLimit } from '../authz/approval-limits';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
 import { optionalDate, optionalText, requireOneOf, requireText, requireUuid } from '../core/validate';
@@ -697,6 +698,38 @@ export class QuotationService {
         throw new ForbiddenException(
           'you submitted this quotation and cannot also approve it; another manager must approve it',
         );
+      }
+
+      // 🔴 THE MONEY LIMIT — `scope = 'quotation'`, ON APPROVAL ONLY.
+      //
+      // `core.approval_limits` has allowed this scope since migration 045 and
+      // the settings screen has been writing it, and NOTHING HAS EVER CONSULTED
+      // IT. A workshop that set "a supervisor may approve up to GHS 500" and
+      // watched a supervisor approve GHS 5,000 had a control that existed only
+      // as a sentence — worse than no control, because somebody relied on it.
+      //
+      // 🔴 A REJECTION IS NEVER BLOCKED. The limit governs COMMITTING the
+      // business to a price, not refusing one. A supervisor who may not approve
+      // GHS 5,000 must still be able to send it back — gating the refusal too
+      // would leave an over-limit quotation with no reachable next step, which
+      // is this repository's "a rule whose escape hatch is unreachable is a
+      // wall, not a rule".
+      //
+      // ⚠️ THE AMOUNT COMES FROM `readQuotations`, NOT A SECOND SUM. Header
+      // totals are NOT stored (migration 016) — they are derived from the
+      // lines and rounded at each step in the currency's minor unit. Writing
+      // that arithmetic again here would be a second answer to one question,
+      // and the two would drift the first time the rounding or the
+      // optional-line rule changed. This is the figure the approver was shown.
+      if (decision === 'approved') {
+        const current = QuotationService.one(
+          await this.readQuotations(client, ctx, { quotationId: id }),
+        );
+        await assertWithinApprovalLimit(client, ctx, {
+          amount: current.total,
+          scope: 'quotation',
+          what: `this quotation for ${row.job_number}`,
+        });
       }
 
       await client.query(
