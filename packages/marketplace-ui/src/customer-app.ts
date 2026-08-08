@@ -49,36 +49,42 @@
 export const REQUEST_SERVICE_PATH = '/service-and-repairs/request-service';
 
 /**
- * Build the absolute href of the Request for Service form, or `undefined` when
- * the customer app's location is not usably configured.
+ * The hardened base URL of a sibling app, or `undefined` when it is not usably
+ * configured.
  *
- * ⚠️ THIS READS THE ENVIRONMENT AT RUNTIME, and that is only true because the
- * page that calls it declares `export const dynamic = 'force-dynamic'`
+ * ⚠️ EVERY CALLER READS THE ENVIRONMENT AT RUNTIME, and that is only true
+ * because the page calling it declares `export const dynamic = 'force-dynamic'`
  * (`apps/workshop-web/app/page.tsx`). Remove that and Next would prerender the
  * route at BUILD time, freezing whatever the builder's environment held —
- * which is nothing — and the button would silently vanish again. Codex raised
- * exactly this on 2026-08-07 and it is the one line that keeps the fix working.
+ * which is nothing — and every button gated on one of these would silently
+ * vanish. Codex raised exactly this on 2026-08-07 and it is the one line that
+ * keeps the fix working. It now guards two funnels, not one.
  *
- * @param env - the environment to read; pass `process.env` at the call site so
- *              this stays a pure function and can be asserted against.
+ * ⚠️ EXTRACTED SO THE SUPPLIER FUNNEL CANNOT DRIFT FROM THE CUSTOMER ONE. The
+ * alternative was a second copy of the same seven refusals, and this repository
+ * has three recorded instances of a copied file quietly disagreeing with its
+ * original. §0.3. Every rule below was written for `requestServiceHrefFrom` and
+ * the reasoning is unchanged — only its home is.
+ *
+ * @param env   - the environment to read; passed in so this stays pure.
+ * @param names - variable names to try, in order of preference.
  */
-export function requestServiceHrefFrom(
+export function siblingAppBaseFrom(
   env: Record<string, string | undefined>,
+  names: readonly string[],
 ): string | undefined {
   // FIRST NON-BLANK, not `??`. Nullish coalescing falls back only on
-  // null/undefined, so a CUSTOMER_WEB_URL that is DECLARED AND EMPTY — exactly
-  // what Render returns for a variable added without a value — would suppress a
-  // perfectly good NEXT_PUBLIC_ value that was already working. The migration
-  // from the old name would then break the very environments it promised not to.
-  const raw = [env['CUSTOMER_WEB_URL'], env['NEXT_PUBLIC_CUSTOMER_WEB_URL']]
-    .find((v) => typeof v === 'string' && v.trim() !== '');
+  // null/undefined, so a variable that is DECLARED AND EMPTY — exactly what
+  // Render returns for one added without a value — would suppress a perfectly
+  // good fallback that was already working.
+  const raw = names.map((n) => env[n]).find((v) => typeof v === 'string' && v.trim() !== '');
   if (raw === undefined) return undefined;
 
   let url: URL;
   try {
     url = new URL(raw.trim());
   } catch {
-    // Not absolute at all — a relative path, or nonsense. Both would produce a
+    // Not absolute at all — a relative path, or nonsense. Both produce a
     // same-host link that 404s on the apex while looking configured.
     return undefined;
   }
@@ -87,20 +93,60 @@ export function requestServiceHrefFrom(
   // interpolated into an anchor. An explicit allow-list is the only safe read.
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
   if (url.hostname === '') return undefined;
-
-  // `https://user:pass@host` parses and renders as a link to `host`. Nothing in
-  // this project needs credentials in a service URL, and a link carrying them
-  // is a phishing shape rather than a configuration.
+  // `https://user:pass@host` parses and renders as a link to `host`. A link
+  // carrying credentials is a phishing shape rather than a configuration.
   if (url.username !== '' || url.password !== '') return undefined;
-
-  // A base carrying a query or a fragment cannot have a path appended to it:
-  // `https://host?x` + `/service…` yields `https://host?x/service…`, which is a
-  // broken link that no test of the origin alone would catch.
+  // A base carrying a query or fragment cannot have a path appended:
+  // `https://host?x` + `/path` yields `https://host?x/path`, a broken link no
+  // test of the origin alone would catch.
   if (url.search !== '' || url.hash !== '') return undefined;
 
-  // A path PREFIX is allowed — a reverse proxy may legitimately mount the
-  // customer app under one — but the trailing slash is dropped so the joined
-  // path never doubles up.
-  const base = `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+  // A path PREFIX is allowed — a reverse proxy may mount an app under one — but
+  // the trailing slash is dropped so a joined path never doubles up.
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, '');
+}
+
+/**
+ * Where a would-be PARTS SUPPLIER signs in to register.
+ *
+ * 🔴 SIGN IN AT THE SUPPLIER APP'S OWN ORIGIN, with a PATH-ONLY callback. This
+ * is the `c586e38` lesson, and getting it wrong is a defect this repository has
+ * already shipped: a cross-host `callbackUrl` on the apex's own sign-in route
+ * signed the visitor in HERE and dropped them on the other app as a STRANGER,
+ * because Auth.js cookies are per-origin. The owner reported the symptom four
+ * times before it was found by reading the live HTML.
+ *
+ * Returns `undefined` when the supplier app's location is not configured, and
+ * the button is then not rendered at all. A missing button is recoverable; a
+ * button that lands somebody signed-out on a foreign host is the bug above.
+ */
+export function supplierRegisterHrefFrom(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  const base = siblingAppBaseFrom(env, ['SUPPLIER_WEB_URL', 'NEXT_PUBLIC_SUPPLIER_WEB_URL']);
+  if (base === undefined) return undefined;
+  // `/home/dashboard` on supplier-web shows the "register your supplier" screen
+  // to a signed-in person with no membership — the same shape workshop-web uses
+  // for `CreateWorkshopScreen`. One destination whether they are new or
+  // returning, so the button never has to guess which.
+  return `${base}/api/auth/signin?callbackUrl=${encodeURIComponent('/home/dashboard')}`;
+}
+
+/**
+ * Build the absolute href of the Request for Service form, or `undefined` when
+ * the customer app's location is not usably configured.
+ *
+ * @param env - the environment to read; pass `process.env` at the call site so
+ *              this stays a pure function and can be asserted against.
+ */
+export function requestServiceHrefFrom(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  // ⚠️ THE HARDENING LIVES IN `siblingAppBaseFrom` ABOVE, shared with the
+  // supplier funnel. It used to be inline here, and duplicating it for the
+  // second app would have been the §0.3 violation this package exists to avoid.
+  const base = siblingAppBaseFrom(env, ['CUSTOMER_WEB_URL', 'NEXT_PUBLIC_CUSTOMER_WEB_URL']);
+  if (base === undefined) return undefined;
   return `${base}${REQUEST_SERVICE_PATH}`;
+
 }

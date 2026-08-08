@@ -24,6 +24,7 @@ import { CallsModule } from './calls/calls.module';
 import { SettingsModule } from './settings/settings.module';
 import { SecurityModule } from './security/security.module';
 import { AgentsModule } from './agents/agents.module';
+import { CrmModule } from './crm/crm.module';
 import { OperationsModule } from './operations/operations.module';
 
 /**
@@ -63,6 +64,9 @@ import { OperationsModule } from './operations/operations.module';
     // The agent layer: triage, supplier discovery, lead discovery.
     // Runs with no agent host configured — see AgentsModule's header.
     AgentsModule,
+    // The lead pipeline. Reads what the discovery agent's approved proposals
+    // wrote into `crm.leads` — a table that until now could only be written.
+    CrmModule,
   ],
   controllers: [HealthController],
 })

@@ -183,6 +183,29 @@ export interface MarketplaceLandingProps {
    * falls back to the sign-in prompt rather than linking somewhere that 404s.
    */
   requestServiceHref?: string;
+
+  /**
+   * Owner, 2026-08-09 — the two BUSINESS funnels.
+   *
+   * *"create a button on landing page called setup your workshop ... create
+   * another button called register as parts supplier."*
+   *
+   * ⚠️ THESE ARE NOT THE CONSUMER CALLS TO ACTION AND MUST NOT SIT BESIDE THEM.
+   * The hero row is for somebody with a broken car; these are for somebody who
+   * wants to trade on the platform. They render in their own band below, so
+   * neither audience has to read past the other's buttons — and so that adding
+   * a sixth button to the hero does not push "Request repair service" onto a
+   * second line on a phone.
+   *
+   * 🔴 EACH IS OMITTED RATHER THAN GUESSED. `setupWorkshopHref` is same-origin
+   * on the apex and has no sensible default anywhere else;
+   * `registerSupplierHref` points at ANOTHER HOST and is `undefined` unless
+   * `SUPPLIER_WEB_URL` is configured. A button that lands somebody signed-out on
+   * a foreign origin is the exact defect that took four reports to find
+   * (`c586e38`), so an absent button is the correct degraded state.
+   */
+  setupWorkshopHref?: string;
+  registerSupplierHref?: string;
 }
 
 export function MarketplaceLanding({
@@ -200,6 +223,8 @@ export function MarketplaceLanding({
   viewer = null,
   basketHref,
   requestServiceHref,
+  setupWorkshopHref,
+  registerSupplierHref,
   // 🔴 WHO OWNS THE `<main>` LANDMARK.
   //
   // customer-web mounts this at `/` OUTSIDE its shell — its root layout is only
@@ -393,6 +418,70 @@ export function MarketplaceLanding({
               <>🔧 No sign-up needed · Search by your car · Compare supplier prices in GHS</>
             )}
           </div>
+
+          {/*
+            ═══ THE TWO BUSINESS FUNNELS (owner, 2026-08-09) ═══════════════════
+
+            A separate band, below the consumer calls to action and visually
+            quieter than them. Most people arriving here have a broken car; a
+            minority want to trade on the platform. Both are served, in that
+            order of prominence.
+
+            🔴 EACH BUTTON IS RENDERED ONLY IF ITS DESTINATION EXISTS. The
+            supplier one points at ANOTHER HOST and is undefined unless
+            `SUPPLIER_WEB_URL` is set — see `supplierRegisterHrefFrom`. This
+            repository has shipped a button gated on an env var that was set
+            nowhere (invisible, while every gate reported success) AND a button
+            whose cross-host callback signed people in on the wrong origin. The
+            first is recoverable; the second took four reports to find. So an
+            unconfigured funnel shows nothing rather than something broken.
+
+            ⚠️ AND THE WHOLE BAND DISAPPEARS WHEN NEITHER IS CONFIGURED, rather
+            than leaving a heading over an empty row — a section title with no
+            content reads as a page that failed to load.
+          */}
+          {setupWorkshopHref || registerSupplierHref ? (
+            <div
+              style={{
+                borderTop: `1px solid ${SOLAR.border}`,
+                paddingTop: primitive.space[5],
+                marginBottom: primitive.space[6],
+              }}
+            >
+              <div
+                style={{
+                  color: SOLAR.text,
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  marginBottom: primitive.space[2],
+                }}
+              >
+                Run a workshop, or sell parts?
+              </div>
+              <div
+                style={{ color: SOLAR.muted, fontSize: '12px', marginBottom: primitive.space[3] }}
+              >
+                {/* Says what happens NEXT, because "verification" arriving as a
+                    surprise after sign-up is how a new business concludes the
+                    product is broken. Migration 069 is the mechanism. */}
+                Create an account and set yourself up in minutes. A platform administrator verifies
+                every new business before it is listed publicly — you can start setting up straight
+                away.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: primitive.space[3] }}>
+                {setupWorkshopHref ? (
+                  <a href={setupWorkshopHref} style={BUTTON_SECONDARY}>
+                    Set up your workshop
+                  </a>
+                ) : null}
+                {registerSupplierHref ? (
+                  <a href={registerSupplierHref} style={BUTTON_SECONDARY}>
+                    Register as parts supplier
+                  </a>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {/*
             SOLAR'S "MAGNET" (landing.html:143). The one free tool, given its own

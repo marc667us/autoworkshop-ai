@@ -42,6 +42,20 @@ const RegisterWorkshopBody = z.object({
 });
 
 /**
+ * The body of `POST /registration/supplier`.
+ *
+ * ⚠️ TWO FIELDS, AND NO ROLE. Same rule as the customer body below: the role
+ * (`supplier_owner`) and the organisation type (`parts_supplier`) are literals
+ * inside migration 068. A `roleName` field accepted here would turn a
+ * self-service sign-up route into privilege escalation as a REST call.
+ */
+type RegisterSupplierBody = z.infer<typeof RegisterSupplierBody>;
+const RegisterSupplierBody = z.object({
+  supplierName: z.string().trim().min(2).max(120),
+  locationName: z.string().trim().min(1).max(120).optional(),
+});
+
+/**
  * The body of `POST /registration/customer`.
  *
  * ⚠️ ONE FIELD, AND `.strict()` VIA `validatedBody` REJECTS ANY OTHER. The
@@ -167,6 +181,71 @@ export class RegistrationController {
       }
       if (message.includes('a workshop needs a name')) {
         throw new BadRequestException('A workshop needs a name.');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * `POST /registration/supplier` — register my parts supplier.
+   *
+   * 🔴 THE ROUTE WITHOUT WHICH THE "Register as parts supplier" BUTTON WOULD BE
+   * A 401. Nothing in the product could create a `supplier_owner` membership
+   * before migration 068 — the same defect the customer role had on 2026-08-08,
+   * caught this time BEFORE the button shipped rather than after.
+   *
+   * ⚠️ ON `UserGuard`, NECESSARILY — the caller has no membership yet, which is
+   * the whole point. What makes that safe is in 068: the role and the org type
+   * are literals, the caller is the token subject, an account that already
+   * belongs anywhere is refused, and the RLS door pins every inserted row to
+   * this user.
+   *
+   * ⚠️ THE SUPPLIER IS NOT PUBLISHED BY THIS CALL. Migration 069 queues it for
+   * a platform administrator to verify; `catalogue.suppliers.is_published`
+   * stays FALSE until somebody approves. The response says so, because a
+   * sign-up that quietly does half of what the person expects is worse than one
+   * that explains itself.
+   */
+  @Post('supplier')
+  async registerSupplier(
+    @Req() req: UserRequest,
+    @Body(validatedBody(RegisterSupplierBody)) parsed: RegisterSupplierBody,
+  ) {
+    const subject = await this.subjectOf(req);
+    try {
+      const created = await this.memberships.registerSupplier(
+        subject,
+        parsed.supplierName,
+        parsed.locationName,
+      );
+      return {
+        ...created,
+        roleName: 'supplier_owner',
+        // 🔴 STATED IN THE RESPONSE, not left for the screen to guess. The
+        // account works now; the public listing does not exist yet.
+        verificationStatus: 'pending',
+      };
+    } catch (err) {
+      // 🔴 THE DATABASE'S REFUSAL MUST REACH THE USER AS AN ANSWER, NOT A 500.
+      // Same reasoning as `registerWorkshop` above, which shipped that exact
+      // defect: a double-submitted form returned "Internal server error" for a
+      // guard that had worked perfectly, and the person concluded registration
+      // was broken when in fact it had already succeeded.
+      //
+      // Matched on the message 068 raises. That coupling is deliberate and
+      // both strings are quoted in the migration — if either is reworded this
+      // falls back to a 500 rather than the wording drifting unnoticed.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('already belongs to an organisation')) {
+        throw new ConflictException(
+          'This account already belongs to an organisation. Sign in with a different account to register a supplier, or ask a platform administrator to add you to an existing one.',
+        );
+      }
+      if (message.includes('no active application user')) {
+        throw new BadRequestException('This account is not active.');
+      }
+      if (message.includes('a supplier needs a name')) {
+        throw new BadRequestException('A supplier needs a name.');
       }
       throw err;
     }

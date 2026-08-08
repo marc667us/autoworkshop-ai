@@ -10,31 +10,32 @@ import {
 } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { LEAD_DISCOVERY, leadsIn, type ApiProposal, type LeadCandidate } from './agent-proposals';
+import { LeadStatusControl, type LeadStatus } from './lead-status';
 import { navLabelFor } from './nav-label';
 import { ProposalDecision } from './proposal-decision';
 
 /**
- * LEADS — the potential customers the discovery agent found, and what a human
- * decided about them.
+ * LEADS — the workshop's lead pipeline, and the agent proposals feeding it.
  *
- * ── 🔴 THIS SCREEN READS PROPOSALS, NOT LEADS, AND THAT IS A KNOWN GAP ─────
+ * ── THE SCREEN IS IN TWO HALVES, AND THE ORDER IS THE POINT ───────────────
  *
- * `crm.leads` exists (migration 064) and `POST /agents/proposals/:id/apply-leads`
- * writes to it. There is NO read endpoint for it — no `GET /leads` — so this
- * screen lists the lead-discovery PROPOSALS and shows each one's candidates
- * from its stored payload.
+ * 1. THE PIPELINE — real rows from `crm.leads`, read through `GET /leads`,
+ *    each with the status a human can move. This is the workshop's own record.
+ * 2. THE PROPOSALS — what the discovery agent has suggested and nobody has
+ *    decided yet. These are candidates, not records; nothing in them is a fact
+ *    about the workshop until somebody approves and applies them.
  *
- * ⚠️ WHAT THAT COSTS, STATED PLAINLY SO NOBODY DISCOVERS IT BY SURPRISE:
- *   · A lead that has been APPLIED is shown as it was PROPOSED. If somebody
- *     later edits or works that lead, this screen will not know.
- *   · A lead added by any other route would not appear here at all.
- *   · There is no status, owner or follow-up on a lead — `crm.leads.status`
- *     defaults to 'new' and nothing here can read or change it.
+ * 🔴 THIS SCREEN USED TO SHOW ONLY HALF 2, AND CALLED IT "leads". `crm.leads`
+ * had existed since migration 064 with a writer and no reader, so a lead that
+ * had been APPLIED was still displayed as it had been PROPOSED, `status` was
+ * invisible and unchangeable, and a lead arriving by any other route did not
+ * appear at all. The debt was recorded in this comment for a session; `GET
+ * /leads` closes it.
  *
- * 🔴 A DEDICATED `GET /leads` IS STILL OWED, and this comment is the record of
- * that debt. When it lands, this screen changes from "proposals about leads" to
- * "leads, with the proposal that produced them" — the route, the nav entry and
- * the decision controls all stay.
+ * ⚠️ BOTH HALVES STAY. Deleting the proposals would remove the only place the
+ * approve/apply decision can be taken, and deleting the pipeline was the bug.
+ * They answer different questions: "who are we working?" and "what has the
+ * agent found that nobody has looked at?".
  */
 export const dynamic = 'force-dynamic';
 
@@ -45,15 +46,134 @@ export async function LeadsScreen({ route }: { route: string }) {
     <>
       <PageHeader
         title={title}
-        description="Potential customers the discovery agent found. Nothing is added to the workshop's records until somebody here approves it — and nobody is ever contacted automatically."
+        description="Potential customers, and what the workshop has done about each one. Nothing is added until somebody here approves it — and nobody is ever contacted automatically."
       />
       {/* §70 loading state. `Suspense` rather than a flag, so the page header
           and the navigation render immediately even when the API is cold —
-          measured at 21.6s on a Render free-tier cold start. */}
+          measured at 21.6s on a Render free-tier cold start.
+          ⚠️ TWO BOUNDARIES, NOT ONE: the pipeline and the proposals are separate
+          API calls, and a single boundary would hold both back for the slower. */}
+      <Suspense fallback={<LoadingState label="Loading the lead pipeline…" />}>
+        <LeadPipeline />
+      </Suspense>
       <Suspense fallback={<LoadingState label="Loading lead proposals…" />}>
         <LeadProposals />
       </Suspense>
     </>
+  );
+}
+
+/** One row of `crm.leads`, as `GET /leads` returns it. */
+interface ApiLead {
+  id: string;
+  organisationName: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  website: string | null;
+  location: string | null;
+  rationale: string | null;
+  sourceUrl: string;
+  status: LeadStatus;
+  createdAt: string;
+}
+
+const LEAD_BADGE: Record<LeadStatus, 'draft' | 'active' | 'complete' | 'attention' | 'blocked'> = {
+  new: 'draft',
+  qualified: 'attention',
+  contacted: 'active',
+  converted: 'complete',
+  rejected: 'blocked',
+};
+
+async function LeadPipeline() {
+  const result = await apiGet<ApiLead[]>('workshop', '/leads');
+  if (!result.ok) return <ApiFailure reason={result.reason} workspaceId="workshop" />;
+
+  if (result.data.length === 0) {
+    return (
+      <section style={{ marginBottom: primitive.space[6] }}>
+        <h2 style={{ fontSize: primitive.fontSize.lg, color: themeVar.textPrimary }}>Lead pipeline</h2>
+        <EmptyState
+          title="No leads yet"
+          description="Approve a lead proposal below and press Apply — the candidates in it become rows here, each with a status you can move."
+        />
+      </section>
+    );
+  }
+
+  return (
+    <section style={{ marginBottom: primitive.space[6] }}>
+      <h2 style={{ fontSize: primitive.fontSize.lg, color: themeVar.textPrimary }}>Lead pipeline</h2>
+      <DataTable<ApiLead>
+        caption="Leads this workshop is working"
+        summary={`${result.data.length} lead${result.data.length === 1 ? '' : 's'}`}
+        rows={result.data}
+        rowKey={(l) => l.id}
+        columns={[
+          {
+            key: 'organisation',
+            header: 'Organisation',
+            cell: (l) => (
+              <>
+                <span style={{ fontWeight: 600 }}>{l.organisationName}</span>
+                {l.website ? (
+                  <>
+                    {' '}
+                    <a href={l.website} target="_blank" rel="noreferrer noopener">
+                      website
+                      <span style={visuallyHidden}> for {l.organisationName}</span>
+                    </a>
+                  </>
+                ) : null}
+              </>
+            ),
+          },
+          {
+            key: 'contact',
+            header: 'Contact',
+            cell: (l) => (
+              <>
+                {l.contactName ? <div>{l.contactName}</div> : null}
+                {l.contactEmail ? <div>{l.contactEmail}</div> : null}
+                {l.contactPhone ? <div>{l.contactPhone}</div> : null}
+                {!l.contactName && !l.contactEmail && !l.contactPhone ? '—' : null}
+              </>
+            ),
+          },
+          { key: 'location', header: 'Location', cell: (l) => l.location ?? '—', secondary: true },
+          {
+            key: 'status',
+            header: 'Status',
+            cell: (l) => (
+              <div style={{ display: 'grid', gap: primitive.space[1] }}>
+                <StatusBadge kind={LEAD_BADGE[l.status] ?? 'draft'} label={l.status} />
+                {/* The badge states the server's value; the control changes it.
+                    Both, because a select alone does not read as a status at a
+                    glance and a badge alone cannot be acted on. */}
+                <LeadStatusControl leadId={l.id} status={l.status} label={l.organisationName} />
+              </div>
+            ),
+          },
+          {
+            key: 'source',
+            header: 'Source',
+            nowrap: true,
+            // 🔴 THE SOURCE LINK SURVIVES INTO THE PIPELINE, not just the
+            // proposal. `source_url` is NOT NULL in migration 064 because a lead
+            // whose origin cannot be produced cannot be defended to the business
+            // it is about — and it is the row being WORKED that somebody will be
+            // asked to justify, not the proposal it came from.
+            cell: (l) => (
+              <a href={l.sourceUrl} target="_blank" rel="noreferrer noopener">
+                open
+                <span style={visuallyHidden}> the page {l.organisationName} was found on</span>
+              </a>
+            ),
+          },
+        ]}
+      />
+    </section>
   );
 }
 
@@ -72,21 +192,37 @@ async function LeadProposals() {
   // showing the wrong rows.
   const proposals = result.data.filter((p) => p.agentName === LEAD_DISCOVERY);
 
+  const heading = (
+    <h2 style={{ fontSize: primitive.fontSize.lg, color: themeVar.textPrimary }}>
+      Agent proposals
+    </h2>
+  );
+
   if (proposals.length === 0) {
     return (
-      <EmptyState
-        title="No lead proposals yet"
-        description="Open Discovery, paste the address of a page listing businesses — a trade directory, an association's member list — and say what you are looking for. Candidates appear here for review."
-      />
+      <section>
+        {heading}
+        <EmptyState
+          title="No lead proposals yet"
+          description="Open Discovery, paste the address of a page listing businesses — a trade directory, an association's member list — and say what you are looking for. Candidates appear here for review."
+        />
+      </section>
     );
   }
 
   return (
-    <div style={{ display: 'grid', gap: primitive.space[5] }}>
-      {proposals.map((p) => (
-        <ProposalCard key={p.id} proposal={p} />
-      ))}
-    </div>
+    <section>
+      {heading}
+      {/* ⚠️ DECIDED PROPOSALS ARE KEPT, not filtered out. An applied proposal is
+          the audit trail for the pipeline rows above it — remove it and the
+          question "who approved this stranger's details being stored?" has no
+          answer on any screen. Each card states its own status. */}
+      <div style={{ display: 'grid', gap: primitive.space[5] }}>
+        {proposals.map((p) => (
+          <ProposalCard key={p.id} proposal={p} />
+        ))}
+      </div>
+    </section>
   );
 }
 

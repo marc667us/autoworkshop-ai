@@ -12,6 +12,8 @@ import { MeService } from './me.service';
 import { MembershipService } from './membership.service';
 import { OrganizationController } from './organization.controller';
 import { OrganizationService } from './organization.service';
+import { OrganizationRegistrationController } from './organization-registration.controller';
+import { OrganizationRegistrationService } from './organization-registration.service';
 import { RegistrationController } from './registration.controller';
 import { UserService } from './user.service';
 
@@ -25,6 +27,10 @@ import { UserService } from './user.service';
     // Onboarding: reachable BEFORE the caller belongs to any organisation.
     // On UserGuard, not TenantGuard — see the controller header.
     RegistrationController,
+    // The verification queue (069/070): a platform administrator sees every
+    // self-registration; a registrant sees only their own. TenantGuard, unlike
+    // RegistrationController above — both callers belong somewhere by now.
+    OrganizationRegistrationController,
   ],
   providers: [
     MembershipRepository,
@@ -36,6 +42,7 @@ import { UserService } from './user.service';
     UserService,
     MembershipService,
     MeService,
+    OrganizationRegistrationService,
   ],
   exports: [
     MembershipRepository,
@@ -45,6 +52,7 @@ import { UserService } from './user.service';
     UserService,
     MembershipService,
     MeService,
+    OrganizationRegistrationService,
   ],
 })
 export class IdentityModule {}

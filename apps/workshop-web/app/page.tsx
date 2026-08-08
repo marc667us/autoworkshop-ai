@@ -7,6 +7,7 @@ import {
   fetchStats,
   fetchVin,
   requestServiceHrefFrom,
+  supplierRegisterHrefFrom,
 } from '@autoworkshop/marketplace-ui';
 import { currentViewer, viewerHasSession } from '@autoworkshop/next-shell';
 
@@ -218,6 +219,31 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // render at all while every gate reported the feature shipped. It is now a
       // tested function with the refusals asserted; the reasoning lives there.
       requestServiceHref={requestServiceHrefFrom(process.env)}
+      // ═══ THE TWO BUSINESS FUNNELS (owner, 2026-08-09) ═══════════════════
+      //
+      // 🔴 THE WORKSHOP ONE IS SAME-ORIGIN AND THE SUPPLIER ONE IS NOT, and
+      // that asymmetry is the entire reason they are built differently rather
+      // than by one shared helper.
+      //
+      // THIS APP IS THE APEX. Its `/home/dashboard` renders
+      // `CreateWorkshopScreen` for a signed-in person with no membership, so a
+      // literal same-origin sign-in href with a path-only `callbackUrl` is
+      // exactly right and cannot be misconfigured.
+      //
+      // supplier-web is ANOTHER HOST. Auth.js cookies are per-origin, so its
+      // sign-in must happen AT ITS OWN ORIGIN — signing in here and redirecting
+      // there lands the person on a foreign host as a stranger. That is
+      // `c586e38`, the bug the owner reported four times, and
+      // `supplierRegisterHrefFrom` is where the rule is written down and
+      // tested. It returns undefined unless SUPPLIER_WEB_URL is set, and the
+      // button then does not render at all.
+      //
+      // ⚠️ READ AT RUNTIME, which works only because of `dynamic =
+      // 'force-dynamic'` above. Without it Next would freeze the builder's
+      // empty environment at build time and the supplier button would silently
+      // vanish — the 2026-08-07 defect, exactly.
+      setupWorkshopHref="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard"
+      registerSupplierHref={supplierRegisterHrefFrom(process.env)}
       basketHref="/basket"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />

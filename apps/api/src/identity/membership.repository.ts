@@ -179,6 +179,62 @@ export class MembershipRepository {
   }
 
   /**
+   * REGISTRATION — an identity becomes a PARTS SUPPLIER (migration 068).
+   *
+   * 🔴 THE SAME DEFECT THE CUSTOMER ROLE HAD, FOUND BEFORE IT SHIPPED. A grep
+   * for writers of `identity.memberships` returned exactly two —
+   * `register_workshop` (always `workshop_owner`) and the admin-only
+   * `MembershipService.grant()` — so NO production code path could create a
+   * `supplier_owner`, even though the role appears in `ROLE_PRECEDENCE`, the
+   * permission matrix, the supplier navigation tree and the `supplier-web` app.
+   * A "Register as parts supplier" button without this would have produced an
+   * account that signs in and is then refused by every supplier route.
+   *
+   * ⚠️ SAME RULES AS `registerWorkshop`, for the same reasons: the caller is
+   * the token SUBJECT and never a user id from a body, the ROLE and the ORG
+   * TYPE are literals inside the function and not parameters, and "already
+   * belongs to an organisation" is enforced in the database so a
+   * double-submitted form cannot race two tenants into existence.
+   *
+   * ⚠️ `queryWithoutTenant`, NECESSARILY. The caller has no membership yet, so
+   * there is no tenant context to run under — that is the entire situation this
+   * route exists for.
+   */
+  async registerSupplier(
+    subject: string,
+    supplierName: string,
+    locationName: string | undefined,
+  ): Promise<{
+    tenantId: string;
+    organizationId: string;
+    branchId: string;
+    membershipId: string;
+  }> {
+    const rows = await this.db.queryWithoutTenant<{
+      o_tenant_id: string;
+      o_organization_id: string;
+      o_branch_id: string;
+      o_membership_id: string;
+    }>(
+      // ⚠️ THE `o_` PREFIXES ARE THE FUNCTION'S REAL COLUMN NAMES, not a local
+      // alias choice. Migration 068 needs them because a `RETURNS TABLE` column
+      // called `organization_id` makes every unqualified reference inside the
+      // body ambiguous — at RUNTIME, not at CREATE time.
+      `SELECT o_tenant_id, o_organization_id, o_branch_id, o_membership_id
+         FROM identity.register_supplier($1, $2, $3)`,
+      [subject, supplierName, locationName ?? ''],
+    );
+    const row = rows[0];
+    if (!row) throw new Error('register_supplier returned no row');
+    return {
+      tenantId: row.o_tenant_id,
+      organizationId: row.o_organization_id,
+      branchId: row.o_branch_id,
+      membershipId: row.o_membership_id,
+    };
+  }
+
+  /**
    * ENROLMENT — an identity becomes a CUSTOMER of a workshop that publishes
    * itself (migration 061).
    *

@@ -362,3 +362,150 @@ jobs:
               print(f'::warning::{len(skipped)} live check(s) could not run — read them, '
                     'a skip is not a pass')
           PY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # THE SIGNED-IN HALF.
+  #
+  # 🔴 EVERY CHECK IN THE JOB ABOVE IS ANONYMOUS, and that job's own comments
+  # say what it therefore cannot prove: "a 401 says nothing whatever about the
+  # schema. A real schema assertion needs a token. That is the gap to close
+  # next." This is that job.
+  #
+  # ⚠️ A SEPARATE JOB, NOT MORE PYTHON CHECKS. Driving an authorization-code
+  # login needs a browser; `urllib` cannot do it. Keycloak has NO client with
+  # `directAccessGrantsEnabled` — all nine are false — and enabling a password
+  # grant on the PRODUCTION realm to make a test cheaper is weakening the live
+  # authentication surface for the tester's convenience. That is the owner's
+  # decision, not a detail to slip into a workflow.
+  #
+  # ⚠️ `if: always()` — it runs even when the anonymous job failed, because
+  # "the apex is slow" must not hide "the owner sees the wrong page". They are
+  # independent questions and both counts are wanted.
+  #
+  # ⚠️ IT CANNOT TURN THE RUN RED FOR A MISSING SECRET. Without credentials
+  # every test SKIPS and the summary says what went unproven. A gate that goes
+  # red for an environmental reason is a gate people learn to ignore.
+  # ══════════════════════════════════════════════════════════════════════════
+  signed-in:
+    runs-on: ubuntu-latest
+    needs: live
+    if: always()
+    timeout-minutes: 25
+    env:
+      APEX_URL: ${{ inputs.apex || 'https://autoworkshop.aiappinvent.com' }}
+      LIVE_OWNER_EMAIL: ${{ secrets.LIVE_OWNER_EMAIL }}
+      LIVE_OWNER_PASSWORD: ${{ secrets.LIVE_OWNER_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Say up front whether this job can prove anything
+        run: |
+          if [ -z "${LIVE_OWNER_EMAIL}" ] || [ -z "${LIVE_OWNER_PASSWORD}" ]; then
+            echo "::warning::LIVE_OWNER_EMAIL / LIVE_OWNER_PASSWORD are not set. Every"\
+                 "signed-in check will SKIP. What a real owner sees after signing in is"\
+                 "NOT proven by this run. Set both repository secrets to close the gap."
+          else
+            echo "credentials present — the signed-in checks will run"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @autoworkshop/e2e exec playwright install --with-deps chromium
+
+      # 🔴 WARM KEYCLOAK BEFORE THE BROWSER TOUCHES IT. Cold start is ~127s
+      # measured, and a login that times out on a cold realm reads as a broken
+      # sign-in. This is a precondition, not a check.
+      - name: Warm the realm and the apex
+        run: |
+          for url in "$APEX_URL" \
+                     "https://autoworkshop-keycloak.onrender.com/realms/autoworkshop/.well-known/openid-configuration"; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 240 "$url" || echo 000)"
+            echo "warm  $url -> $code"
+          done
+
+      - name: Sign in as the owner and check what they actually see
+        working-directory: apps/e2e
+        # `|| true` so the report step below always runs and prints THREE
+        # NUMBERS. The exit code is decided from the parsed counts, never from
+        # Playwright's — this repository lost two days to a suite that exited 0
+        # having collected zero tests.
+        run: npx playwright test --config playwright.live.config.ts || true
+
+      - name: PASSED / FAILED / SKIPPED
+        working-directory: apps/e2e
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+
+          path = 'live-results.json'
+          if not os.path.exists(path):
+              print('::error::playwright wrote no report — the signed-in suite did not run at all')
+              sys.exit(1)
+
+          with open(path, encoding='utf-8') as fh:
+              report = json.load(fh)
+
+          passed = failed = skipped = 0
+          lines = []
+
+          def walk(suite):
+              global passed, failed, skipped
+              for spec in suite.get('specs', []):
+                  for t in spec.get('tests', []):
+                      # `status` is playwright's OUTCOME for the whole test:
+                      # expected / unexpected / skipped / flaky.
+                      status = t.get('status', 'unknown')
+                      title = spec.get('title', '?')
+                      if status == 'expected':
+                          passed += 1
+                          lines.append(f'PASS  {title}')
+                      elif status == 'skipped':
+                          skipped += 1
+                          lines.append(f'SKIP  {title}')
+                      else:
+                          failed += 1
+                          lines.append(f'FAIL  {title} ({status})')
+              for child in suite.get('suites', []):
+                  walk(child)
+
+          for s in report.get('suites', []):
+              walk(s)
+
+          print()
+          for line in lines:
+              print(line)
+          print()
+          print('=' * 62)
+          print(f'  SIGNED-IN   PASSED {passed}   FAILED {failed}   SKIPPED {skipped}')
+          print('=' * 62)
+
+          total = passed + failed + skipped
+          # 🔴 A SUITE THAT REGISTERED NOTHING IS A FAILURE. Not a pass, and not
+          # a skip — "zero tests" and "all tests skipped" look identical in every
+          # summary that only counts failures.
+          if total == 0:
+              print('::error::the signed-in suite registered ZERO tests — it is not running')
+              sys.exit(1)
+
+          if failed:
+              print(f'::error::{failed} signed-in check(s) failed against the deployed site')
+              sys.exit(1)
+
+          if skipped == total:
+              print('::warning::every signed-in check SKIPPED — this run proves nothing '
+                    'about what a signed-in owner sees. Set LIVE_OWNER_EMAIL and '
+                    'LIVE_OWNER_PASSWORD.')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-signed-in-trace
+          path: apps/e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

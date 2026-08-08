@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { apiPost, type ApiResult } from '@autoworkshop/next-shell';
+import { apiPatch, apiPost, type ApiResult } from '@autoworkshop/next-shell';
 import type { ActionResult } from '@autoworkshop/ui';
 
 /**
@@ -142,6 +142,40 @@ export async function applyLeadsAction(
   if (!result.ok) return { ok: false, error: explain(result, 'The leads were not written.') };
   revalidateAgentViews();
   return { ok: true, leadsCreated: result.data.leadsCreated };
+}
+
+/**
+ * Move a lead along the pipeline — `new` → `qualified` → `contacted` →
+ * `converted`, or `rejected`.
+ *
+ * ⚠️ IN THIS FILE, THOUGH A LEAD IS NOT A PROPOSAL, because `AGENT_ROUTES` above
+ * is the single list of the paths this screen is mounted at and it must not be
+ * duplicated. A second copy in a `leads-actions.ts` would go stale the first
+ * time a role tree moved the entry, and `revalidatePath` DOES NOT REPORT AN
+ * UNKNOWN ROUTE — the failure is a stale screen with no error anywhere.
+ *
+ * ⚠️ NOTHING HERE CONTACTS ANYBODY. Setting `contacted` records that a human
+ * did; it does not send anything. `crm.leads` has no outbound path at all, by
+ * design (migration 064), and this action does not add one.
+ */
+export async function setLeadStatusAction(
+  leadId: string,
+  status: 'new' | 'qualified' | 'contacted' | 'converted' | 'rejected',
+): Promise<{ ok: boolean; error?: string }> {
+  const result = await apiPatch<unknown>('workshop', `/leads/${leadId}`, { status });
+  if (!result.ok) {
+    return {
+      ok: false,
+      // `explain`'s notFound sentence names a proposal, which would be the
+      // wrong noun here and sends the reader looking in the wrong place.
+      error:
+        result.reason === 'notFound'
+          ? 'That lead no longer exists, or it belongs to another workshop.'
+          : explain(result, 'The lead was not updated.'),
+    };
+  }
+  revalidateAgentViews();
+  return { ok: true };
 }
 
 /**
