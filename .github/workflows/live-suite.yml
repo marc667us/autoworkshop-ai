@@ -1,0 +1,266 @@
+# THE FULL SUITE, RUN AGAINST THE DEPLOYED SITE.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 🔴 OWNER POLICY, 2026-08-07 — HARD, AND IT APPLIES TO EVERY PROJECT:
+#
+#   "everytime you deploy you must run full test suite on the live site"
+#
+# A deploy is NOT finished when the workflow turns green. It is finished when
+# this has run against the DEPLOYED site and the counts have been reported.
+# ══════════════════════════════════════════════════════════════════════════
+#
+# ── WHY THE OWNER IS RIGHT, IN THIS REPOSITORY SPECIFICALLY ────────────────
+#
+# Every one of these passed CI and was broken for real users:
+#
+#   · the owner's headline button was gated on an env var set on neither the
+#     service nor the build — it could not render for anyone, and a green
+#     deploy said nothing. Found by grepping the LIVE HTML for its own text.
+#   · slice 11's proxy omitted the API's `/api/v1` prefix. Compiled fine.
+#   · `Release` deploys workshop-web ONLY, so "deployed" was true of one app
+#     and false of the next.
+#   · verifyEmail was ON with no smtpServer, which BLOCKED SIGN-UP. Nothing in
+#     a build can see a realm flag.
+#   · local is superuser and Render is not, so a whole class of RLS defect is
+#     invisible to a local suite by construction.
+#
+# The shape they share: THE THING THAT WAS WRONG WAS NOT OBSERVABLE FROM THE
+# BUILD. This is the only gate that looks at what users actually reach.
+#
+# ── ⚠️ HOW THIS REPORTS, AND WHY IT MATTERS ───────────────────────────────
+#
+# PASSED / FAILED / SKIPPED as THREE NUMBERS, never an exit code. This
+# repository lost two days to `pnpm e2e` exiting 0 while collecting zero tests,
+# and has a standing rule that a skip is a third state which must be said out
+# loud. A check that cannot run is SKIPPED and named — never folded into passed.
+#
+# ⚠️ COLD STARTS ARE NOT OUTAGES. These are free-tier services: Keycloak has
+# been measured at ~127s from cold, and a 90s timeout produced a "the app is
+# down" report on 2026-08-07 when nothing was wrong. Every check warms its
+# target first and allows a cold-start-sized budget before calling it a failure.
+
+name: Live suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      apex:
+        description: 'Apex (workshop-web) base URL'
+        required: false
+        default: 'https://autoworkshop.aiappinvent.com'
+      customer:
+        description: 'customer-web base URL'
+        required: false
+        default: 'https://autoworkshop-customer.onrender.com'
+      api:
+        description: 'API base URL'
+        required: false
+        default: 'https://autoworkshop-api.onrender.com'
+      keycloak:
+        description: 'Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+  # Runs itself after a release, so complying with the policy is the default
+  # rather than something a person has to remember at the end of a long day.
+  workflow_run:
+    workflows: ['Release']
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APEX: ${{ inputs.apex || 'https://autoworkshop.aiappinvent.com' }}
+      CUSTOMER: ${{ inputs.customer || 'https://autoworkshop-customer.onrender.com' }}
+      API: ${{ inputs.api || 'https://autoworkshop-api.onrender.com' }}
+      KEYCLOAK: ${{ inputs.keycloak || 'https://autoworkshop-keycloak.onrender.com' }}
+      REALM: autoworkshop
+
+    steps:
+      - name: Wake every service before timing anything against it
+        run: |
+          set -uo pipefail
+          # 🔴 NOT A TEST — a PRECONDITION. Free instances spin down, and the
+          # first request pays the whole cold start. Measuring before warming is
+          # how a healthy platform gets reported as an outage; that happened on
+          # 2026-08-07 and cost an hour.
+          for url in "$APEX" "$CUSTOMER" "$API/api/v1/health" "$KEYCLOAK/realms/$REALM/.well-known/openid-configuration"; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 240 "$url" || echo 000)"
+            echo "warm  $url -> $code"
+          done
+
+      - name: The suite
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          import json, os, re, sys, urllib.request, urllib.error
+
+          APEX     = os.environ['APEX'].rstrip('/')
+          CUSTOMER = os.environ['CUSTOMER'].rstrip('/')
+          API      = os.environ['API'].rstrip('/')
+          KEYCLOAK = os.environ['KEYCLOAK'].rstrip('/')
+          REALM    = os.environ['REALM']
+
+          passed, failed, skipped = [], [], []
+
+          def fetch(url, timeout=180):
+              """(status, body). Never raises — a transport failure is a RESULT."""
+              req = urllib.request.Request(url, headers={'User-Agent': 'aw-live-suite'})
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as r:
+                      return r.status, r.read().decode('utf-8', 'replace')
+              except urllib.error.HTTPError as e:
+                  # 🔴 AN HTTP ERROR IS AN ANSWER, NOT AN OUTAGE. 401 and 404 are
+                  # the two most informative results in this whole file — a route
+                  # that 401s EXISTS, and one that 404s does not.
+                  return e.code, e.read().decode('utf-8', 'replace')
+              except Exception as e:
+                  return 0, f'{type(e).__name__}: {e}'
+
+          def check(name, fn):
+              try:
+                  ok, detail = fn()
+              except Exception as e:
+                  failed.append((name, f'the check itself raised {type(e).__name__}: {e}'))
+                  return
+              if ok is None:
+                  skipped.append((name, detail))
+              elif ok:
+                  passed.append((name, detail))
+              else:
+                  failed.append((name, detail))
+
+          # ── REACHABILITY ────────────────────────────────────────────────────
+          def up(label, url, want=200):
+              def run():
+                  s, _ = fetch(url)
+                  return s == want, f'HTTP {s} (wanted {want})'
+              check(f'{label} answers', run)
+
+          up('apex', APEX)
+          up('customer-web', CUSTOMER)
+          up('api health', f'{API}/api/v1/health')
+          up('keycloak realm', f'{KEYCLOAK}/realms/{REALM}/.well-known/openid-configuration')
+
+          # ── THE OWNER'S FUNNEL, BY ITS OWN TEXT ────────────────────────────
+          # 🔴 GREP THE LIVE HTML FOR THE FEATURE'S OWN WORDS. The button that
+          # could not render passed typecheck, lint, unit tests, a container
+          # smoke test and a Render deploy. Only its absence from the served
+          # HTML would have caught it.
+          def landing_has_request_button():
+              s, body = fetch(APEX)
+              if s != 200:
+                  return False, f'apex returned {s}'
+              hit = re.search(r'[Rr]equest (repair )?service', body)
+              return bool(hit), 'found the request-service call to action' if hit \
+                  else 'NO request-service text in the served HTML'
+          check('apex offers "Request repair service"', landing_has_request_button)
+
+          def request_form_route_exists():
+              s, body = fetch(f'{CUSTOMER}/service-and-repairs/request-service')
+              if s not in (200, 302, 307):
+                  return False, f'the funnel destination returned {s}'
+              return True, f'HTTP {s}'
+          check('request-service route is reachable', request_form_route_exists)
+
+          # 🔴 ANONYMOUS MUST NOT GET A FILLABLE FORM. A visitor arriving from the
+          # apex has no session on this host (separate hosts, separate cookies),
+          # and the form used to render for them anyway — they typed a fault,
+          # pressed send, and lost everything. It must refuse BEFORE it is filled.
+          def anonymous_sees_no_form():
+              s, body = fetch(f'{CUSTOMER}/service-and-repairs/request-service')
+              if s != 200:
+                  return None, f'route returned {s}; nothing to inspect'
+              forms = len(re.findall(r'<form', body, re.I))
+              textareas = len(re.findall(r'<textarea', body, re.I))
+              ok = forms == 0 and textareas == 0
+              return ok, f'{forms} <form>, {textareas} <textarea> for an anonymous visitor'
+          check('anonymous visitor gets no fillable request form', anonymous_sees_no_form)
+
+          # ── THE SUBMIT BUTTON MUST EXIST WHERE A FORM DOES ─────────────────
+          # The owner reported a form with no submit control on 2026-08-07; two
+          # of 49 forms had none. A static test guards the source; this checks
+          # the SERVED page, because those are different claims.
+          def served_forms_have_submit():
+              s, body = fetch(f'{CUSTOMER}/')
+              if s != 200:
+                  return None, f'customer landing returned {s}'
+              forms = len(re.findall(r'<form', body, re.I))
+              if forms == 0:
+                  return None, 'no form on this page to check'
+              submits = len(re.findall(r'type="submit"', body, re.I))
+              return submits >= 1, f'{forms} form(s), {submits} submit control(s)'
+          check('served forms carry a submit control', served_forms_have_submit)
+
+          # ── ROUTES EXIST: 401 IS THE PROOF, 404 IS THE FAILURE ─────────────
+          for path in ['/service-requests', '/supplier-requests', '/notifications',
+                       '/plan-work/board', '/learning/materials']:
+              def run(p=path):
+                  s, _ = fetch(f'{API}/api/v1{p}')
+                  # 401/403 = the route is deployed and refuses anonymous callers.
+                  # 404 = it is not deployed at all, which is the defect this
+                  # family of checks exists to catch.
+                  return s in (401, 403), f'HTTP {s} (401/403 = deployed and gated)'
+              check(f'API {path} is deployed and refuses anonymous', run)
+
+          # ── PUBLIC SURFACES ACTUALLY RETURN DATA ───────────────────────────
+          def marketplace_has_parts():
+              s, body = fetch(f'{API}/api/v1/public/parts?limit=1')
+              if s != 200:
+                  return False, f'HTTP {s}'
+              try:
+                  d = json.loads(body)
+              except Exception:
+                  return False, 'response was not JSON'
+              total = d.get('total', len(d.get('parts', [])))
+              # ⚠️ CONTENT, not structure. 24 live browser checks once passed
+              # against a completely empty shop.
+              return total > 0, f'{total} part(s) listed'
+          check('public parts marketplace returns stock', marketplace_has_parts)
+
+          # ── MY OWN CHANGE, VERIFIED ON LIVE ────────────────────────────────
+          def robots_protects_private_areas():
+              s, body = fetch(f'{CUSTOMER}/robots.txt')
+              if s != 200:
+                  return None, f'robots.txt returned {s} — not deployed yet'
+              blocks_private = '/my-vehicles' in body and '/payments' in body
+              allows_funnel = '/service-and-repairs/request-service' in body
+              return blocks_private and allows_funnel, \
+                  f'private blocked={blocks_private}, funnel allowed={allows_funnel}'
+          check('customer robots.txt blocks private areas, allows the funnel',
+                robots_protects_private_areas)
+
+          # ── REPORT ─────────────────────────────────────────────────────────
+          print()
+          for name, detail in passed:
+              print(f'PASS  {name} — {detail}')
+          for name, detail in skipped:
+              print(f'SKIP  {name} — {detail}')
+          for name, detail in failed:
+              print(f'FAIL  {name} — {detail}')
+
+          print()
+          print('=' * 62)
+          print(f'  PASSED {len(passed)}   FAILED {len(failed)}   SKIPPED {len(skipped)}')
+          print('=' * 62)
+
+          # 🔴 A SUITE THAT RAN NOTHING IS A FAILURE, NOT A PASS. `pnpm e2e`
+          # exited 0 for two days having collected zero tests. If the checks
+          # ever stop being registered, this must go red rather than quietly
+          # report a clean bill of health.
+          total = len(passed) + len(failed) + len(skipped)
+          if total < 10:
+              print(f'::error::the live suite registered only {total} checks — it is not running')
+              sys.exit(1)
+
+          if failed:
+              print(f'::error::{len(failed)} live check(s) failed against the deployed site')
+              sys.exit(1)
+          if skipped:
+              print(f'::warning::{len(skipped)} live check(s) could not run — read them, '
+                    'a skip is not a pass')
+          PY
