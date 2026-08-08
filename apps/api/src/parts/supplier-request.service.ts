@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
 
@@ -84,6 +85,24 @@ export class SupplierRequestService {
 
   /** The workshop's own asks, across every supplier. */
   async listForWorkshop(ctx: TenantContext): Promise<SupplierRequestRow[]> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    //
+    // ⚠️ THIS ROW CARRIES THE SUPPLIER'S QUOTED PRICE. `quote_minor` is what
+    // the workshop PAYS for a part; the customer is later billed a marked-up
+    // figure through `finance.invoices`. Handing a customer the procurement
+    // conversation — who was asked, what they answered, and how fast — hands
+    // them the workshop's margin on every job. `notes` is free text written
+    // between staff and a supplier, and nothing about it is customer-facing.
+    //
+    // ⚠️ THE ROLE CHECK ON `create`/`decide` (`MAY_ASK`) NEVER COVERED THIS.
+    // It is a write list; every write was gated and the read was not — the
+    // exact asymmetry `authz/workshop-roles.ts` was written about. Migration
+    // 062 adds the matching `<> 'customer'` clause to the SELECT policy that
+    // 059's INSERT and UPDATE policies already carried, so this is stated in
+    // both layers rather than in the service alone.
+    assertWorkshopStaff(ctx, 'The workshop parts-request record');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query(
         `SELECT ${COLUMNS}

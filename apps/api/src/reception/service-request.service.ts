@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { ServiceRequestTriageAgent } from '../agents/service-request-triage.agent';
 import type {
   ConvertServiceRequestBody,
   CreateServiceRequestBody,
@@ -70,6 +71,8 @@ export class ServiceRequestService {
     // Migration 060. Reception must HEAR about an intake, not discover it by
     // opening a screen.
     private readonly notifications: NotificationsService,
+    // The triage agent. Called AFTER the transaction commits — see `create`.
+    private readonly triage: ServiceRequestTriageAgent,
   ) {}
 
   /**
@@ -82,6 +85,40 @@ export class ServiceRequestService {
    * theirs.
    */
   async create(ctx: TenantContext, input: CreateServiceRequestBody): Promise<ServiceRequestRow> {
+    const created = await this.createInTransaction(ctx, input);
+
+    // 🔴 THE AGENT RECEIVES THE REQUEST HERE — AFTER IT IS SAFELY COMMITTED.
+    //
+    // Owner, 2026-08-08: "AI agent must receive the request and used to on
+    // interflow setup the customer request in the workshop and assign
+    // technicians get job started."
+    //
+    // ⚠️ DELIBERATELY *NOT* INSIDE THE TRANSACTION ABOVE, unlike migration
+    // 060's notification. The two look similar and need opposite treatment:
+    //
+    //   · the notification MUST be atomic with the request — a request that
+    //     fails to reach reception must not exist;
+    //   · the triage proposal must NOT be, because a model generation takes
+    //     seconds and holding the customer's INSERT transaction open, with
+    //     locks, while they watch a spinner is a bad trade for an opinion.
+    //
+    // A missing proposal costs reception a convenience. A failed POST costs the
+    // workshop a customer. Those must not share a failure mode — so this cannot
+    // throw, is not awaited, and reception can ask for a re-run at
+    // `POST /agents/triage/service-request/:id` if the agent was down.
+    this.triage.triageInBackground(ctx, created.id, {
+      complaint: input.complaint,
+      vehicleDescription: input.vehicleDescription,
+      registrationNumber: input.registrationNumber,
+    });
+
+    return created;
+  }
+
+  private async createInTransaction(
+    ctx: TenantContext,
+    input: CreateServiceRequestBody,
+  ): Promise<ServiceRequestRow> {
     return this.db.withTenant(ctx, async (client) => {
       // The chosen workshop must be a real organisation IN THIS TENANT. The FK
       // alone would happily accept an organisation from ANOTHER tenant, so a

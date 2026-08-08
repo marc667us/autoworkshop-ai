@@ -26,9 +26,38 @@
 # rule (ADR-012) and NO PAID REMEDY IS TO BE PROPOSED, so the only lever is how
 # many hours to spend and when.
 #
-# The window below is therefore deliberately modest: weekdays, 08:00-18:00 UTC.
+# The window below is therefore deliberately modest: 08:00-18:00 UTC.
 # Ghana is UTC+0, so that is local working hours with no offset arithmetic.
 # WIDENING IT SPENDS HOURS THE OTHER THREE SERVICES NEED. Do the sum first.
+#
+# ── 🔴 2026-08-08: WIDENED FROM WEEKDAYS TO ALL SEVEN DAYS ──────────────────
+#
+# The owner, on a SATURDAY: *"kc still says server is start after all this
+# time"*. Measured at that moment: the discovery document took **136.2 seconds**.
+# The screen was telling the truth — Keycloak really was starting.
+#
+# The cause was this line's `1-5`. The last delivered run had been the previous
+# FRIDAY at 18:32, so Keycloak had been cold for the whole weekend and every
+# visit paid the full wake. The owner works weekends; the schedule assumed
+# nobody did. A warmer that is off exactly when the person testing is present
+# is not a warmer, and "it works on Tuesday" is not an answer to "it is broken
+# now".
+#
+# THE ARITHMETIC, because the header above demands it be done before widening:
+#
+#   before:  10h x ~21.7 weekdays  = ~217 h/month
+#   after:   10h x ~30.4 days      = ~304 h/month   (+87)
+#   leaves:  750 - 304             = ~446 h/month for api + the two web services
+#
+# Still well under the 730 h that a 24/7 warmer would consume, and it keeps the
+# working-hours window rather than trading it away. The three remaining services
+# only accrue hours while actually serving traffic, and on a pre-launch product
+# that is a small fraction of the day.
+#
+# ⚠️ IF THE ACCOUNT IS EVER SUSPENDED FOR HOURS AGAIN (it was on 2026-07-28,
+# `suspenders: ['billing']`), THIS IS THE FIRST LINE TO PUT BACK TO `1-5`. It is
+# a one-character revert and it buys back ~87 h/month. Do that before touching
+# anything that affects a customer.
 #
 # ── WHY ONE RUN LOOPS INSTEAD OF ASKING CRON FOR MORE FIRES ─────────────────
 #
@@ -61,7 +90,17 @@ on:
     # rate is ~0.6/h whatever this says. Offset minutes avoid the :00 high-load
     # slot GitHub's own docs call the worst one. Do NOT tighten this to "fix"
     # thin coverage — it has no measurable effect.
-    - cron: "3,18,33,48 8-17 * * 1-5"
+    #
+    # `*` for the day, NOT `1-5` — see the header. The weekday-only version left
+    # Keycloak cold every weekend, which is when the owner tested it.
+    #
+    # ⚠️ THE `cancelled` RUNS IN THE HISTORY ARE NORMAL, NOT A FAULT. GitHub
+    # keeps at most ONE pending run per concurrency group, so when a third fire
+    # lands behind a five-hour warmer the middle one is cancelled. Six of the
+    # last ten runs read `cancelled` for exactly that reason. Do not "fix" it by
+    # setting `cancel-in-progress: true` — that kills the RUNNING warmer instead
+    # and opens the coverage gap this design exists to close.
+    - cron: "3,18,33,48 8-17 * * *"
   workflow_dispatch: {}
 
 permissions:

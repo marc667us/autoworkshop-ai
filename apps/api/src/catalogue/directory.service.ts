@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
 import { CatalogueInputError, optionalText, requiredText } from './catalogue-write-rules';
@@ -54,8 +55,30 @@ export class DirectoryService {
    * not a governance secret, and a screen that hides it from the people who
    * must ask the owner to change it is useless), so 028 added `member_read_own`
    * rather than this comment being weakened to match.
+   *
+   * ── 🔴 AND THEN "MEMBER" STOPPED MEANING "COLLEAGUE" ──────────────────────
+   *
+   * 028's policy comment says "No role condition, deliberately… that is not
+   * privileged information INSIDE THE ORGANIZATION". That sentence was true
+   * when the only way into a workshop's organisation was for the workshop to
+   * put you there. Migration 061 made `customer` self-service: any signed-up
+   * stranger can enrol at any workshop published in
+   * `catalogue.mechanic_directory`, and their `TenantContext.organizationId` IS
+   * the workshop's — so `member_read_own` now matches them too, and
+   * organisation-scoped RLS structurally cannot tell the two apart
+   * (`authz/workshop-roles.ts`).
+   *
+   * 028 is applied and checksummed and is NOT edited. The gate is here instead,
+   * and it is the whole reason this method needs one: what came back was the
+   * workshop's DRAFT listing state plus `suggested.publicPhone`, which the
+   * block below flags as possibly a private office line — a number the owner
+   * has deliberately NOT accepted into a public field.
    */
   async describe(ctx: TenantContext) {
+    assertWorkshopStaff(ctx, 'The workshop directory listing');
+    const mayEdit =
+      ctx.activeRole === 'workshop_owner' || ctx.activeRole === 'platform_administrator';
+
     return this.db.withTenant(ctx, async (client) => {
       const listing = await client.query(
         `SELECT organization_id, trading_name, city, country, public_phone,
@@ -65,18 +88,29 @@ export class DirectoryService {
         [ctx.organizationId],
       );
 
-      // Pre-fill only. These are NOT the published values and are never
-      // presented as such — the screen shows them as suggestions for a listing
-      // that does not exist yet.
-      const profile = await client.query(
-        `SELECT trading_name, city, country, phone
-           FROM core.organization_profile
-          WHERE organization_id = $1`,
-        [ctx.organizationId],
-      );
+      /**
+       * Pre-fill only. These are NOT the published values and are never
+       * presented as such — the screen shows them as suggestions for a listing
+       * that does not exist yet.
+       *
+       * ⚠️ NOT READ AT ALL UNLESS THERE IS A FORM TO PRE-FILL. `suggested`
+       * exists solely so an OWNER's empty edit form opens with the workshop
+       * profile's values in it; nobody else can act on them. The profile's
+       * `phone` may be a private office line (see below), so the query that
+       * fetches it is skipped rather than fetched-and-discarded — a value not
+       * read cannot be returned by a later careless edit to the shape below.
+       */
+      const profile = mayEdit
+        ? await client.query(
+            `SELECT trading_name, city, country, phone
+               FROM core.organization_profile
+              WHERE organization_id = $1`,
+            [ctx.organizationId],
+          )
+        : null;
 
       const row = listing.rows[0] as Record<string, unknown> | undefined;
-      const p = profile.rows[0] as Record<string, unknown> | undefined;
+      const p = profile?.rows[0] as Record<string, unknown> | undefined;
 
       return {
         listing: row
@@ -91,15 +125,29 @@ export class DirectoryService {
               updatedAt: row['updated_at'],
             }
           : null,
+        /**
+         * ⚠️ THE KEY IS ALWAYS PRESENT AND THE VALUES ARE NULL FOR A NON-EDITOR
+         * — deliberately, and it is not squeamishness about `null`.
+         * `directory-screen.tsx` DESTRUCTURES this (`const { listing,
+         * suggested, mayEdit } = res.data`) and then reads
+         * `suggested.tradingName`, so returning the block as `null` would throw
+         * a TypeError inside a server component and take the whole page down
+         * for the manager it was meant to protect. Withholding the VALUES
+         * withholds the data; withholding the KEY breaks a shipped caller.
+         *
+         * ⚠️ THE PROFILE PHONE IS OFFERED, NOT COPIED. It may be a private
+         * office line. The owner has to accept it into a public field — which
+         * is exactly why it is not handed to everybody who can open this
+         * screen. A non-editor still sees the SAVED listing above; what they no
+         * longer see is the workshop's unpublished contact details.
+         */
         suggested: {
           tradingName: p?.['trading_name'] ?? null,
           city: p?.['city'] ?? null,
           country: p?.['country'] ?? null,
-          // ⚠️ THE PROFILE PHONE IS OFFERED, NOT COPIED. It may be a private
-          // office line. The owner has to accept it into a public field.
           publicPhone: p?.['phone'] ?? null,
         },
-        mayEdit: ctx.activeRole === 'workshop_owner' || ctx.activeRole === 'platform_administrator',
+        mayEdit,
       };
     });
   }

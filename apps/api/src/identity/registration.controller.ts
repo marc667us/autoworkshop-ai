@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { UserGuard, type UserRequest } from '../auth/user.guard';
 import { KeycloakJwtService } from '../auth/keycloak-jwt.service';
 import { MembershipRepository } from './membership.repository';
+import { CustomerEnrolmentService } from './customer-enrolment.service';
 import { validatedBody } from '../common/validation/validated-body';
 
 /**
@@ -40,12 +41,26 @@ const RegisterWorkshopBody = z.object({
   branchName: z.string().trim().min(1).max(120).optional(),
 });
 
+/**
+ * The body of `POST /registration/customer`.
+ *
+ * ⚠️ ONE FIELD, AND `.strict()` VIA `validatedBody` REJECTS ANY OTHER. The
+ * temptation is to accept a `roleName` "for later"; that field would be the
+ * whole vulnerability. The role is a literal inside migration 061 and there is
+ * no argument anywhere on this path that can change it.
+ */
+type EnrolAsCustomerBody = z.infer<typeof EnrolAsCustomerBody>;
+const EnrolAsCustomerBody = z.object({
+  organizationId: z.string().uuid(),
+});
+
 @Controller('registration')
 @UseGuards(UserGuard)
 export class RegistrationController {
   constructor(
     private readonly memberships: MembershipRepository,
     private readonly jwt: KeycloakJwtService,
+    private readonly enrolment: CustomerEnrolmentService,
   ) {}
 
   /**
@@ -155,6 +170,45 @@ export class RegistrationController {
       }
       throw err;
     }
+  }
+
+  /**
+   * `POST /registration/customer` — become a customer of a workshop.
+   *
+   * 🔴 THE ROUTE THAT WAS MISSING, AND ITS ABSENCE MADE THE WHOLE CUSTOMER
+   * VALUE CHAIN UNREACHABLE ON PRODUCTION. Before this, nothing in the product
+   * could create a `customer` membership, so a signed-up person hit 401 on
+   * every customer route. See `CustomerEnrolmentService` for the measurement.
+   *
+   * ⚠️ ON `UserGuard`, NECESSARILY. The caller has no membership yet — that is
+   * the entire point — so `TenantGuard` would refuse the exact person this
+   * route exists for. What makes that safe is stated in migration 061: the role
+   * is a literal and not a parameter, the workshop must have published itself
+   * in the mechanic directory, an account that already holds a role there is
+   * returned unchanged or refused, and the RLS door pins the new row to the
+   * caller's own user id.
+   *
+   * ⚠️ THE BODY NAMES A WORKSHOP AND NOTHING ELSE. No role, no user id, no
+   * display name — all three come from the validated token or from the
+   * database. A `roleName` field here would be privilege escalation as a REST
+   * call.
+   *
+   * Idempotent: the funnel calls it on every visit to a workshop's Request for
+   * Service page, and `created` says whether anything actually changed.
+   */
+  @Post('customer')
+  async enrolAsCustomer(
+    @Req() req: UserRequest,
+    @Body(validatedBody(EnrolAsCustomerBody)) parsed: EnrolAsCustomerBody,
+  ) {
+    const header = req.headers.authorization ?? '';
+    const verified = await this.jwt.verify(header.slice(7));
+    return this.enrolment.enrol(
+      verified.subject,
+      parsed.organizationId,
+      verified.name,
+      verified.email,
+    );
   }
 
   /**

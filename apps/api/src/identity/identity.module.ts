@@ -7,6 +7,7 @@ import {
   UserController,
 } from './identity.controllers';
 import { MembershipRepository } from './membership.repository';
+import { CustomerEnrolmentService } from './customer-enrolment.service';
 import { MeService } from './me.service';
 import { MembershipService } from './membership.service';
 import { OrganizationController } from './organization.controller';
@@ -27,6 +28,9 @@ import { UserService } from './user.service';
   ],
   providers: [
     MembershipRepository,
+    // Self-service customer enrolment (migration 061). Without it the
+    // `customer` role cannot exist outside the local seed script.
+    CustomerEnrolmentService,
     OrganizationService,
     BranchService,
     UserService,
@@ -35,6 +39,7 @@ import { UserService } from './user.service';
   ],
   exports: [
     MembershipRepository,
+    CustomerEnrolmentService,
     OrganizationService,
     BranchService,
     UserService,

@@ -40,7 +40,7 @@ export const WORKSHOP_STAFF_ROLES = [
   'technician',
   'storekeeper',
   'cashier',
-  'quality_controller',
+  'quality_control_inspector',
   'platform_administrator',
 ] as const;
 

@@ -101,7 +101,12 @@ const ROLE_LABEL: Record<string, string> = {
   technician: 'Technician',
   storekeeper: 'Storekeeper',
   cashier: 'Cashier',
-  quality_controller: 'Quality control',
+  // `quality_control_inspector`, NOT `quality_controller`. The latter is not
+  // a role in ROLE_PRECEDENCE and never was — it sat in seven API role lists
+  // for months, failing CLOSED, so a quality inspector was silently refused
+  // and nothing said so. Here the cost was only cosmetic (the lookup falls
+  // back to the raw string), which is exactly why it survived the API fix.
+  quality_control_inspector: 'Quality control',
   platform_administrator: 'Platform administrator',
 };
 

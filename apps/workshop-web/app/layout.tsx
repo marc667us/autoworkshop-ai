@@ -16,6 +16,8 @@ import { themeBootScript } from '@autoworkshop/ui';
 import { prewarmKeycloak } from '@autoworkshop/auth';
 import { signOutAction, switchUserAction } from './sign-out-action';
 import { liveCounters } from './_screens/live-counters';
+import { assistantPanelData } from './_screens/assistant-proposals';
+import { decideProposalAction } from './_screens/agent-actions';
 
 
 export const metadata: Metadata = {
@@ -79,6 +81,21 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const { counters, warnings } = onboarding
     ? { counters: {}, warnings: {} }
     : await liveCounters(signedIn);
+
+  // 🔴 THE AGENT LAYER, MADE VISIBLE. `apps/api/src/agents` writes proposals —
+  // a triage opinion on every incoming service request, supplier and lead
+  // candidates from the discovery agents — and until this line nothing in any
+  // of the seven apps read them. A shipped service nobody can see has not
+  // shipped; that is this repository's most expensive recurring lesson.
+  //
+  // ⚠️ ONE GET PER PAGE RENDER, and it is deliberate rather than overlooked.
+  // The panel is in the shell, so its data has to be resolved where the shell
+  // is. It is skipped entirely during onboarding (a workshop that does not
+  // exist yet cannot have proposals) and for signed-out visitors, which is the
+  // public landing — the busiest route in this app.
+  const assistant = onboarding
+    ? { proposals: [], unavailableReason: undefined }
+    : await assistantPanelData(signedIn);
 
 
 
@@ -156,6 +173,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // The remaining keys get their numbers as their slices land.
           counters={onboarding ? {} : counters}
           warnings={onboarding ? {} : warnings}
+          // 🔴 THE ASSISTANT IS REAL IN THIS WORKSPACE, AND ONLY IN THIS ONE.
+          // `AppShell` defaults `assistantUnavailableReason` to the Phase-8
+          // message, so customer-web, supplier-web, fleet-web, insurance-web,
+          // towing-web and admin-web keep saying the true thing about
+          // themselves — none of them has an agent host. This app passes `null`
+          // when the API answered, or the API's own reason when it did not.
+          assistantUnavailableReason={assistant.unavailableReason}
+          assistantProposals={assistant.proposals}
+          // The decision is a server action because it is an authenticated POST
+          // and the token lives in an httpOnly cookie. `AgentProposalService`
+          // re-checks staff membership and refuses a second decision on the
+          // same row; this only carries the answer back to the panel.
+          onAssistantDecision={decideProposalAction}
           topNavActions={[
             { id: 'create', label: 'Create', icon: 'create' },
             { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },

@@ -96,14 +96,108 @@ const MAX_BYTES = 64 * 1024 * 1024;
  * the caller can SEE the owner; whether they may ATTACH to it is the owning
  * service's rule. `execution` and `execution_task` are therefore additionally
  * gated below.
+ *
+ * ── 🔴 AND IT WAS NOT ENOUGH FOR A CUSTOMER, EITHER ────────────────────────
+ *
+ * The probe was `id = $1 AND tenant_id = $2 AND organization_id = $3` and
+ * nothing else, so it asked "is this thing in this workshop?" — never "is this
+ * thing THIS PERSON'S?". A customer's active organisation IS the workshop's
+ * (`authz/workshop-roles.ts`), so every owner row in the whole workshop passed.
+ * `GET /media?ownerType=job_card&ownerId=<uuid>` therefore returned ANOTHER
+ * CUSTOMER'S REPAIR PHOTOGRAPHS to any signed-in customer holding a job-card id,
+ * and `DELETE /media/:id/link` detached them — a write, on somebody else's
+ * evidence of what their car looked like when it arrived.
+ *
+ * `customerPath` below is the missing half. Each owner type states, in SQL, the
+ * ONE route by which a customer legitimately reaches that kind of row; the
+ * predicate is inert (`$4` is NULL) for every other role, exactly like
+ * `job-card.service.ts:182`/`:189`, whose shape this copies rather than
+ * reinvents. `selfservice/customer-scope.ts` records why it has to live in the
+ * service: RLS here is ORGANISATION-scoped and cannot express "this customer",
+ * because two customers of one workshop are in one organisation.
+ *
+ * ⚠️ THE PREDICATE NAMES `customer` AND ONLY `customer`. It is not a
+ * general-purpose "is this yours" test and must not be read as one — other
+ * non-staff roles (supplier users, fleet managers) pass `$4` NULL and are
+ * unchanged by this. `customer` is singled out because it is the role that
+ * shares the workshop's organisation, which is the reason the hole existed.
  */
-const OWNER_TABLES: Record<OwnerType, { table: string; label: string }> = {
-  job_card: { table: 'repair.job_cards', label: 'job card' },
-  execution: { table: 'repair.repair_executions', label: 'repair execution' },
-  execution_task: { table: 'repair.execution_tasks', label: 'repair task' },
-  vehicle_intake: { table: 'reception.vehicle_intakes', label: 'vehicle intake' },
-  quality_inspection: { table: 'repair.quality_inspections', label: 'quality inspection' },
-  message: { table: 'comms.messages', label: 'message' },
+const OWNER_TABLES: Record<
+  OwnerType,
+  {
+    table: string;
+    label: string;
+    /**
+     * How a CUSTOMER legitimately reaches this owner row, as a SQL predicate
+     * over the alias `o` and the bound parameter `$4` (their user id).
+     *
+     * Applied only when the caller's active role is `customer`; `$4` is NULL
+     * for everyone else and the whole clause short-circuits to true.
+     */
+    customerPath: string;
+  }
+> = {
+  // The card names the customer directly. `core.customers.user_id` is the
+  // server's own link between a signed-in person and their record — never a
+  // value the caller supplies (`selfservice/customer-scope.ts`).
+  job_card: {
+    table: 'repair.job_cards',
+    label: 'job card',
+    customerPath: `EXISTS (SELECT 1 FROM core.customers c
+                            WHERE c.id = o.customer_id AND c.user_id = $4::uuid)`,
+  },
+  // One hop: an execution belongs to a job card (`job_card_id` is NOT NULL in
+  // 019), and the job card names the customer.
+  execution: {
+    table: 'repair.repair_executions',
+    label: 'repair execution',
+    customerPath: `EXISTS (SELECT 1 FROM repair.job_cards j
+                             JOIN core.customers c ON c.id = j.customer_id
+                            WHERE j.id = o.job_card_id AND c.user_id = $4::uuid)`,
+  },
+  // Two hops, and both are NOT NULL in 019, so the chain cannot break into an
+  // accidentally-permissive NULL comparison.
+  execution_task: {
+    table: 'repair.execution_tasks',
+    label: 'repair task',
+    customerPath: `EXISTS (SELECT 1 FROM repair.repair_executions e
+                             JOIN repair.job_cards j ON j.id = e.job_card_id
+                             JOIN core.customers c ON c.id = j.customer_id
+                            WHERE e.id = o.execution_id AND c.user_id = $4::uuid)`,
+  },
+  // ⚠️ VIA THE VEHICLE, NOT THE JOB CARD. `vehicle_intakes.job_card_id` is
+  // NULLABLE (041) — an intake is recorded at the gate, before a card exists —
+  // so joining through it would leave exactly the newest intakes unreachable by
+  // the customer who just handed the keys over. `vehicle_id` is NOT NULL and
+  // `core.vehicles.customer_id` is NOT NULL (004), so this chain always exists.
+  vehicle_intake: {
+    table: 'reception.vehicle_intakes',
+    label: 'vehicle intake',
+    customerPath: `EXISTS (SELECT 1 FROM core.vehicles v
+                             JOIN core.customers c ON c.id = v.customer_id
+                            WHERE v.id = o.vehicle_id AND c.user_id = $4::uuid)`,
+  },
+  // QC belongs to a job card (`job_card_id` NOT NULL in 030) — same chain as an
+  // execution.
+  quality_inspection: {
+    table: 'repair.quality_inspections',
+    label: 'quality inspection',
+    customerPath: `EXISTS (SELECT 1 FROM repair.job_cards j
+                             JOIN core.customers c ON c.id = j.customer_id
+                            WHERE j.id = o.job_card_id AND c.user_id = $4::uuid)`,
+  },
+  // 🔴 PARTICIPATION, NOT THE CUSTOMER RECORD. 046 states it plainly:
+  // `comms.participants` "IS THE ACCESS RULE, not a display list. A message is
+  // readable because you are in its thread." A thread's `customer_id` is
+  // NULLABLE and is what the thread is ABOUT, not who may read it — scoping on
+  // it would hand a customer the attachments on an INTERNAL thread that merely
+  // mentions them. So this asks the same question the messaging domain asks.
+  message: {
+    table: 'comms.messages',
+    label: 'message',
+    customerPath: `EXISTS (SELECT 1 FROM comms.participants p
+                            WHERE p.thread_id = o.thread_id AND p.user_id = $4::uuid)`,
+  },
 };
 
 /**
@@ -330,6 +424,14 @@ export class MediaService {
       // Prove the caller can reach the OWNER before detaching anything from it.
       // Without this, knowing two ids was enough to strip a photograph off
       // another organisation's job card — media.links' RLS is tenant-wide.
+      //
+      // 🔴 AND THIS IS A WRITE, WHICH IS WHY THE SAME CHECK MATTERS MOST HERE.
+      // `assertOwnerReachable` now also carries the per-customer predicate, so
+      // a customer detaching an attachment from another customer's job card is
+      // refused at the same line that refuses reading it. The read and the
+      // write share one function precisely so they cannot drift apart — the
+      // read being gated and the write not is this repository's most repeated
+      // authorization defect, and it has appeared in the other direction too.
       await this.assertOwnerReachable(client, ctx, ownerType, ownerId);
 
       const result = await client.query(
@@ -345,11 +447,12 @@ export class MediaService {
   /**
    * Prove the caller can reach the owner, under their own RLS context.
    *
-   * ⚠️ THE TABLE NAME IS INTERPOLATED, and that is safe ONLY because it comes
-   * from `OWNER_TABLES` keyed by a value the boundary already narrowed to a
-   * closed enum — it is never caller text. `owner_id` is a bound parameter.
-   * If `OWNER_TABLES` ever grows a name built from input, this becomes an
-   * injection site.
+   * ⚠️ THE TABLE NAME AND THE CUSTOMER PREDICATE ARE INTERPOLATED, and that is
+   * safe ONLY because both come from `OWNER_TABLES` keyed by a value the
+   * boundary already narrowed to a closed enum — neither is ever caller text.
+   * `owner_id` and the customer's user id are bound parameters. If
+   * `OWNER_TABLES` ever grows a `table` or `customerPath` built from input,
+   * this becomes an injection site.
    */
   private async assertOwnerReachable(
     client: { query: (text: string, values?: unknown[]) => Promise<{ rowCount: number | null }> },
@@ -359,6 +462,11 @@ export class MediaService {
   ): Promise<void> {
     const owner = OWNER_TABLES[ownerType];
     if (!owner) throw new BadRequestException('unknown attachment target');
+
+    // Derived from the SESSION, never from the request. A customer id in a
+    // request is a customer id an attacker can change; this is the server's own
+    // link between the signed-in person and their records.
+    const customerUserId = ctx.activeRole === 'customer' ? ctx.userId : null;
 
     let found: { rowCount: number | null };
     try {
@@ -377,10 +485,34 @@ export class MediaService {
       //
       // Found by Codex, 2026-08-06. A tenant predicate is not an organisation
       // predicate, and RLS being present is not RLS being sufficient.
+      //
+      // 🔴 AND AN ORGANISATION PREDICATE IS NOT A CUSTOMER PREDICATE.
+      //
+      // The three columns above were the WHOLE check, and a customer's active
+      // organisation IS the workshop's — so this query answered "yes" for every
+      // job card, intake, execution, task, QC record and message in the entire
+      // workshop. A signed-in customer with any owner id read another
+      // customer's photographs through `GET /media`, and detached them through
+      // `DELETE /media/:id/link`, which reaches this same function.
+      //
+      // `$4` is the caller's user id ONLY when their active role is `customer`,
+      // and NULL otherwise, so the clause is inert for staff and the query plan
+      // is unchanged for them. That NULL-or shape is the repository's
+      // established one — `job-card.service.ts:182`/`:189` — deliberately
+      // reused rather than re-invented, because a rule re-typed per service is
+      // a rule that will be typed differently in one of them
+      // (`selfservice/customer-scope.ts`).
+      //
+      // ⚠️ THE PREDICATE IS THE ONLY BOUNDARY HERE. RLS cannot carry it: every
+      // policy on these tables is tenant- or organisation-scoped, and two
+      // customers of one workshop share both. If this clause is ever dropped,
+      // nothing downstream catches it.
       found = await client.query(
-        `SELECT 1 FROM ${owner.table}
-          WHERE id = $1 AND tenant_id = $2 AND organization_id = $3 LIMIT 1`,
-        [ownerId, ctx.tenantId, ctx.organizationId],
+        `SELECT 1 FROM ${owner.table} o
+          WHERE o.id = $1 AND o.tenant_id = $2 AND o.organization_id = $3
+            AND ($4::uuid IS NULL OR ${owner.customerPath})
+          LIMIT 1`,
+        [ownerId, ctx.tenantId, ctx.organizationId, customerUserId],
       );
     } catch (error) {
       // `reception.vehicle_intakes` and `comms.messages` arrive in later slices.

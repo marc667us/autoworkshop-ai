@@ -89,7 +89,7 @@ const ENFORCED_SCOPES = new Set([
  */
 const MAY_READ_CONFIG = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
-  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+  'technician', 'storekeeper', 'cashier', 'quality_control_inspector', 'platform_administrator',
 ] as const;
 
 /** Only these may CHANGE how the workshop is configured. */
@@ -201,9 +201,34 @@ export class SettingsService {
   ) {}
 
   /**
-   * ⚠️ STAFF ONLY. Opening hours and service categories are deliberately NOT
-   * gated by this — they are published to the public profile anyway, and
-   * reception needs them to book anything at all.
+   * ⚠️ STAFF ONLY — AND SINCE 2026-08-08 THAT INCLUDES OPENING HOURS AND
+   * SERVICE CATEGORIES.
+   *
+   * 🔴 THIS COMMENT USED TO EXEMPT THOSE TWO: "deliberately NOT gated by this —
+   * they are published to the public profile anyway". Both halves were wrong.
+   *
+   *   · `listOpeningHours` and `listServiceCategories` carry NO
+   *     `is_published` / `is_active` predicate. They return the DRAFT and the
+   *     DEACTIVATED rows as well — which for service categories is the
+   *     workshop's internal price list, `indicative_price` and `currency` per
+   *     category, and for hours is a rota it has not agreed to show anybody.
+   *     "Published anyway" described a different query from the one running.
+   *   · the PUBLISHED subset already has its own reader that needs no
+   *     membership at all — `PublicCatalogueService.workshopProfile`, served by
+   *     `GET /public/workshops/:organizationId/profile` and decided by the
+   *     `public_read` policies in migration 045. So refusing here takes nothing
+   *     away from anyone outside the workshop; it points them at the endpoint
+   *     that was built for them.
+   *
+   * What changed to make the exemption dangerous: migration 061 made `customer`
+   * a SELF-SERVICE role, so any signed-up stranger can now enrol at any
+   * workshop published in `catalogue.mechanic_directory`, and their
+   * `TenantContext.organizationId` IS that workshop's. See
+   * `authz/workshop-roles.ts` for why organisation-scoped RLS structurally
+   * cannot separate the two.
+   *
+   * Reception, technicians and the rest still pass: `MAY_READ_CONFIG` is every
+   * workshop staff role, and the booking screens need the categories.
    */
   private assertMayReadConfig(ctx: TenantContext): void {
     if (!MAY_READ_CONFIG.includes(ctx.activeRole as (typeof MAY_READ_CONFIG)[number])) {
@@ -239,7 +264,13 @@ export class SettingsService {
 
   // ── opening hours ─────────────────────────────────────────────────────────
 
+  /**
+   * ⚠️ EVERY ROW, PUBLISHED OR NOT — which is why it is gated. The public,
+   * published-only view of the same table is
+   * `GET /public/workshops/:organizationId/profile`.
+   */
   async listOpeningHours(ctx: TenantContext): Promise<OpeningHoursRow[]> {
+    this.assertMayReadConfig(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, weekday, is_closed, opens_at::text, closes_at::text, is_published
@@ -314,7 +345,15 @@ export class SettingsService {
 
   // ── service categories ────────────────────────────────────────────────────
 
+  /**
+   * 🔴 THIS IS THE WORKSHOP'S PRICE LIST, not its shop window. No
+   * `is_published`/`is_active` predicate, so it returns drafts and withdrawn
+   * categories together with `indicative_price` and `currency` — the numbers
+   * reception quotes from. The public, published-and-active view is
+   * `GET /public/workshops/:organizationId/profile`.
+   */
   async listServiceCategories(ctx: TenantContext): Promise<ServiceCategoryRow[]> {
+    this.assertMayReadConfig(ctx);
     return this.db.withTenant(ctx, async (client) => {
       const r = await client.query(
         `SELECT id, name, description, default_duration_minutes, indicative_price,

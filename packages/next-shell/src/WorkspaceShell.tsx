@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { AppShell, ThemeProvider, type TopNavAction } from '@autoworkshop/ui';
+import { AppShell, ThemeProvider, type AgentProposal, type TopNavAction } from '@autoworkshop/ui';
 import {
   getWorkspace,
   workspaceForRole,
@@ -144,6 +144,24 @@ export interface WorkspaceShellProps {
    */
   foreignWorkspace?: boolean;
   drawer?: React.ReactNode;
+
+  /**
+   * The AI assistant, as this app can actually offer it.
+   *
+   * ⚠️ ALL THREE ARE PASSED STRAIGHT THROUGH, unread. The shell decides nothing
+   * about the assistant: the app's SERVER layout reads the proposals (the token
+   * is in an httpOnly cookie it can reach and this client component cannot) and
+   * supplies the decision action. See `AppShell`'s own notes for why
+   * `assistantUnavailableReason` defaults to the Phase-8 message rather than to
+   * "connected" — six of the seven apps have no agent host, and the default is
+   * what keeps them honest.
+   */
+  assistantUnavailableReason?: string | null;
+  assistantProposals?: readonly AgentProposal[];
+  onAssistantDecision?: (
+    proposalId: string,
+    decision: 'approved' | 'rejected',
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export function WorkspaceShell({
@@ -168,6 +186,9 @@ export function WorkspaceShell({
   publicPaths,
   foreignWorkspace = false,
   drawer,
+  assistantUnavailableReason,
+  assistantProposals,
+  onAssistantDecision,
 }: WorkspaceShellProps) {
   const pathname = usePathname() || '/';
   // Public page + nobody signed in = the shop front, not the application.
@@ -259,6 +280,19 @@ export function WorkspaceShell({
         />
       }
       drawer={drawer}
+      // ⚠️ STRIPPED WHEN BARE, like every other piece of workspace chrome above.
+      // A visitor on the public landing, or a signed-in customer for whom this
+      // workspace is not theirs, has no proposals and must not be told an
+      // assistant is connected to a workshop they are not staff of. Passing
+      // `undefined` here restores `AppShell`'s honest default message.
+      //
+      // ⚠️ NOT A SECURITY CONTROL (CLAUDE.md §8). `AgentProposalService.list`
+      // calls `assertWorkshopStaff` and migration 064's SELECT policy carries
+      // the same clause, so a customer reading this endpoint is refused twice
+      // regardless of what the shell renders.
+      assistantUnavailableReason={bare ? undefined : assistantUnavailableReason}
+      assistantProposals={bare ? undefined : assistantProposals}
+      onAssistantDecision={bare ? undefined : onAssistantDecision}
       renderLink={({ href, children: linkChildren, active, title }) => (
         <Link
           href={href}

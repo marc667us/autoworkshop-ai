@@ -45,7 +45,7 @@ import type { TenantContext } from '../tenancy/tenant-context';
  */
 const MAY_START_THREAD = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
-  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+  'technician', 'storekeeper', 'cashier', 'quality_control_inspector', 'platform_administrator',
   'customer',
 ] as const;
 

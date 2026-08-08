@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { assertWorkshopStaff } from '../authz/workshop-roles';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
 import { PricingInputError, parsePricingInput } from './pricing-rules';
@@ -20,11 +21,21 @@ import { PRICING_DEFAULTS } from './quotation-rules';
  * `verify/029` (13 checks, every negative paired with a control) precisely so
  * that adding the screen is not what makes the defect reachable.
  *
- * ⚠️ READS ARE TENANT-WIDE, WRITES ARE OWNER-ONLY AND ORGANIZATION-SCOPED. That
- * split is 029's, not this file's. `quotation.service.ts` reads this row while
- * building a quotation and runs as whichever role is preparing it — reception, a
- * manager, a technician — so narrowing the READ would break quotation
- * preparation for everybody, a far worse outcome than the defect being fixed.
+ * ⚠️ 029'S *POLICY* READ IS TENANT-WIDE; WRITES ARE OWNER-ONLY AND
+ * ORGANIZATION-SCOPED. That split is 029's, not this file's.
+ * `quotation.service.ts` reads this row DIRECTLY (its own SELECT, ~line 236)
+ * while building a quotation and runs as whichever role is preparing it —
+ * reception, a manager, a technician — so narrowing the POLICY would break
+ * quotation preparation for everybody, a far worse outcome than the defect
+ * being fixed.
+ *
+ * 🔴 THAT IS NOT A REASON TO LEAVE `describe()` OPEN, AND IT WAS READ AS ONE.
+ * The policy has to stay wide because quotation preparation depends on it; the
+ * SCREEN does not. `describe()` was ungated while only `save()` checked a role,
+ * so a signed-in `customer` — a real membership role in this same organisation,
+ * which organisation-scoped RLS cannot tell apart from staff — could read the
+ * workshop's labour rate, tax rate and standard warranty terms straight off
+ * `GET .../pricing`. Those are the numbers a workshop quotes with.
  *
  * ⚠️ `withTenant`, BECAUSE THE PREDICATE IS THE ORGANIZATION AND THE ROLE. Both
  * reach Postgres only through `tenantSessionStatements`. Under `withUser` every
@@ -65,6 +76,21 @@ export class PricingService {
    * and is not, which is how the zero survives. The screen says so plainly.
    */
   async describe(ctx: TenantContext) {
+    // 🔴 STAFF-WIDE, NOT OWNER-ONLY — AND THE CHOICE IS DELIBERATE.
+    //
+    // `assertGoverns` (owner + platform admin) is the WRITE rule and reusing it
+    // here would break the read for everybody who legitimately needs the rates
+    // on screen: reception quoting at the counter, a manager checking a tax
+    // rate, a supervisor explaining a line to a customer. Migration 029's whole
+    // point is that the read is wider than the write, and `mayEdit` below is
+    // what tells an ordinary staff member the form is read-only for them —
+    // gating the read to the owner would make that field unreachable rather
+    // than merely false.
+    //
+    // What must be refused is the caller RLS cannot see as separate: a
+    // `customer` inside this same organisation. `assertWorkshopStaff` is that
+    // line and nothing narrower belongs here.
+    assertWorkshopStaff(ctx, 'The workshop pricing screen');
     return this.db.withTenant(ctx, async (client) => {
       const { rows } = await client.query(
         `SELECT currency, default_labour_rate, tax_name, tax_rate_percent,

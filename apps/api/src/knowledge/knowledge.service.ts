@@ -42,13 +42,13 @@ import type { TenantContext } from '../tenancy/tenant-context';
  */
 const MAY_READ_LIBRARY = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
-  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+  'technician', 'storekeeper', 'cashier', 'quality_control_inspector', 'platform_administrator',
 ] as const;
 
 /** Every workshop role may READ the library. A workshop that hides its manuals has no library. */
 const MAY_WRITE = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor',
-  'technician', 'quality_controller', 'platform_administrator',
+  'technician', 'quality_control_inspector', 'platform_administrator',
 ] as const;
 
 export interface FaultCodeRow {

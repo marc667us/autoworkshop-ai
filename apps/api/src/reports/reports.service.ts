@@ -46,7 +46,7 @@ const MAY_READ_MONEY = [
 /** Everyone else may read the operational reports — they describe their own work. */
 const MAY_READ_OPERATIONS = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
-  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+  'technician', 'storekeeper', 'cashier', 'quality_control_inspector', 'platform_administrator',
 ] as const;
 
 export interface ReportColumn {

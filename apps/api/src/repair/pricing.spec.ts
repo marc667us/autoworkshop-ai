@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ForbiddenException } from '@nestjs/common';
 import {
   MAX_SANE_LABOUR_RATE,
   MAX_VALIDITY_DAYS,
@@ -7,6 +8,9 @@ import {
   parsePricingInput,
 } from './pricing-rules';
 import { PRICING_DEFAULTS } from './quotation-rules';
+import { PricingService } from './pricing.service';
+import { WORKSHOP_STAFF_ROLES } from '../authz/workshop-roles';
+import type { TenantContext } from '../tenancy/tenant-context';
 
 /**
  * Input rules for the workshop's pricing — Slice D.
@@ -196,5 +200,70 @@ describe('parsePricingInput', () => {
     }
     expect(message).toMatch(/tax rate is required/i);
     expect(message).not.toMatch(/between 0 and 100/i);
+  });
+});
+
+/**
+ * 🔴 WHO MAY *READ* THE RATES. `save()` called `assertGoverns` and `describe()`
+ * called nothing at all, so a signed-in `customer` — a real membership role
+ * inside this same organisation, which organisation-scoped RLS cannot tell
+ * apart from staff — could read the workshop's labour rate, tax rate and
+ * standard warranty terms off `GET .../pricing`.
+ *
+ * ⚠️ THE GATE IS `assertWorkshopStaff`, NOT `assertGoverns`, AND THE SECOND
+ * TEST BELOW IS WHY. Reusing the owner-only WRITE rule for the READ would take
+ * the screen away from reception, the manager and the supervisor, who quote
+ * with these numbers daily — and would make `mayEdit` (the field that tells an
+ * ordinary staff member the form is read-only for them) unreachable. A gate
+ * that refuses everybody passes every refusal test and breaks the product.
+ */
+describe('the pricing screen is the workshop’s, not a customer’s', () => {
+  const ctx = (activeRole: string): TenantContext =>
+    ({
+      tenantId: 't', organizationId: 'o', branchId: null,
+      userId: 'u', activeRole, correlationId: 'c',
+    }) as TenantContext;
+
+  function makeService() {
+    // Throws if entered, so a gate placed AFTER the SELECT — which would still
+    // 403 having already read the rates — fails here rather than passing.
+    const withTenant = vi.fn(async () => {
+      throw new Error('withTenant was entered — the gate ran too late, or not at all');
+    });
+    return { svc: new PricingService({ withTenant } as never), withTenant };
+  }
+
+  it('REFUSES a customer, without touching the database', async () => {
+    const { svc, withTenant } = makeService();
+    await expect(svc.describe(ctx('customer'))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(withTenant).not.toHaveBeenCalled();
+  });
+
+  it('admits EVERY workshop staff role, not only the owner', async () => {
+    const { svc, withTenant } = makeService();
+    for (const role of WORKSHOP_STAFF_ROLES) {
+      withTenant.mockClear();
+      await expect(svc.describe(ctx(role))).rejects.toThrow(/withTenant was entered/);
+      expect(withTenant, role).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('still refuses the non-staff roles that share this tenancy', async () => {
+    const { svc } = makeService();
+    for (const role of ['supplier_user', 'fleet_manager', 'towing_operator', '']) {
+      await expect(svc.describe(ctx(role)), role || '(empty)').rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    }
+  });
+
+  it('keeps the WRITE narrower than the read', async () => {
+    // The split migration 029 exists for. Reception may see the rates and may
+    // not change them; if these two ever converge, one of them is wrong.
+    const { svc } = makeService();
+    await expect(svc.save(ctx('reception_staff'), { ...valid })).rejects.toThrow(
+      /only the workshop owner/i,
+    );
+    await expect(svc.describe(ctx('reception_staff'))).rejects.toThrow(/withTenant was entered/);
   });
 });

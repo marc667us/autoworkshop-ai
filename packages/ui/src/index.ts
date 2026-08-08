@@ -34,13 +34,19 @@ export type { DialogProps } from './Dialog';
 export { Drawer, overlayKeyframes } from './Drawer';
 export type { DrawerProps } from './Drawer';
 
-export { AiAssistantPanel, ASSISTANT_ACTIONS, assistantActionsFor } from './AiAssistantPanel';
+export {
+  AiAssistantPanel,
+  ASSISTANT_ACTIONS,
+  assistantActionsFor,
+  DEFAULT_ASSISTANT_UNAVAILABLE_REASON,
+} from './AiAssistantPanel';
 export type {
   AiAssistantPanelProps,
   AgentProposal,
   AssistantAction,
   ActionClass,
   ProposalSource,
+  ProposalMechanism,
 } from './AiAssistantPanel';
 
 export { useFocusTrap, useScrollLock } from './useFocusTrap';

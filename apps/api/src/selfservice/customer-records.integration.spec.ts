@@ -459,7 +459,7 @@ describe('slice 12 — a customer reaches their own records and nothing else', (
     ).resolves.toBeDefined();
     await expect(reception.listFeedback(ctxFor(userA, 'reception_staff'))).resolves.toBeDefined();
     await expect(variations.list(ctxFor(userA, 'workshop_owner'))).resolves.toBeDefined();
-    await expect(quality.queue(ctxFor(userA, 'quality_controller'))).resolves.toBeDefined();
+    await expect(quality.queue(ctxFor(userA, 'quality_control_inspector'))).resolves.toBeDefined();
   });
 
   // ── and staff are not locked out of either question ─────────────────────

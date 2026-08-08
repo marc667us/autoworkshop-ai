@@ -14,7 +14,13 @@ import { SideNav } from './SideNav';
 import { Breadcrumbs } from './Breadcrumbs';
 import { ThemeToggle } from './ThemeProvider';
 import { Drawer, overlayKeyframes } from './Drawer';
-import { AiAssistantPanel, ASSISTANT_ACTIONS, assistantActionsFor } from './AiAssistantPanel';
+import {
+  AiAssistantPanel,
+  ASSISTANT_ACTIONS,
+  assistantActionsFor,
+  DEFAULT_ASSISTANT_UNAVAILABLE_REASON,
+  type AgentProposal,
+} from './AiAssistantPanel';
 import { useIsTabletOrBelow } from './useMediaQuery';
 
 /**
@@ -84,9 +90,51 @@ export interface AppShellProps {
     title?: string;
   }) => React.ReactNode;
   children: React.ReactNode;
-  
+
 /** §2 "Contextual Drawers or Panels" — e.g. the AI assistant (§13). */
   drawer?: React.ReactNode;
+
+  /**
+   * 🔴 WHY THE ASSISTANT'S UNAVAILABLE MESSAGE IS A PROP.
+   *
+   * It used to be a string literal in this file: "The assistant connects in
+   * Phase 8, once the agent host and MCP gateway are in place." That was true
+   * for all seven apps when it was written, and it is now FALSE for
+   * workshop-web — `apps/api/src/agents` serves real proposals there. A shell
+   * that tells a workshop its assistant is not connected, while the API is
+   * writing proposals about their own service requests, is the "green deploy is
+   * not a visible feature" failure with the shell as the thing hiding it.
+   *
+   * ⚠️ THE DEFAULT IS THE OLD STRING, AND THAT IS THE POINT. Six apps have no
+   * agent host, so leaving them untouched must keep the honest message rather
+   * than silently promoting them to "connected". Only an app that passes `null`
+   * — an explicit statement, not an omission — gets the live panel.
+   */
+  assistantUnavailableReason?: string | null;
+  /**
+   * What the agent has proposed, already mapped to the panel's shape by the
+   * app. Read on the SERVER (the token is in an httpOnly cookie) and passed
+   * down, because this component cannot fetch and must not hold a credential.
+   */
+  assistantProposals?: readonly AgentProposal[];
+  /**
+   * Record a human decision on a Class C/D proposal.
+   *
+   * ⚠️ A SERVER ACTION, supplied by the app, for the same reason `accountControl`
+   * is a node: the decision is an authenticated POST and this package must stay
+   * renderable with no server and no Next runtime.
+   *
+   * ⚠️ AND IT IS NOT THE AUTHORIZATION POINT. `AgentProposalService.decide`
+   * re-checks staff membership, refuses a second decision on the same row, and
+   * RLS refuses again beneath it. What comes back here is the OUTCOME, so the
+   * panel can show the API's own sentence — never a judgement made locally.
+   */
+  onAssistantDecision?: (
+    proposalId: string,
+    decision: 'approved' | 'rejected',
+  ) => Promise<{ ok: boolean; error?: string }>;
+  /** True while the app is still loading proposals — §70 loading state. */
+  assistantLoading?: boolean;
 }
 
 /**
@@ -172,6 +220,10 @@ export function AppShell({
   renderLink,
   children,
   drawer,
+  assistantUnavailableReason = DEFAULT_ASSISTANT_UNAVAILABLE_REASON,
+  assistantProposals,
+  onAssistantDecision,
+  assistantLoading = false,
 }: AppShellProps) {
   const groups = React.useMemo(() => visibleGroups(workspace, grants), [workspace, grants]);
 
@@ -204,6 +256,66 @@ export function AppShell({
   React.useEffect(() => {
     setMobileNavOpen(false);
   }, [pathname]);
+
+  // ── THE DECISION ROUND TRIP ────────────────────────────────────────────────
+  //
+  // Three pieces of state, and each earns its place:
+  //
+  //  · `assistantBusy`  — §70 requires a loading state, and a decision that
+  //                       takes a cold-started API 20 seconds with no feedback
+  //                       gets pressed again. The second press is the one that
+  //                       produces "this proposal was already approved".
+  //  · `assistantError` — the API's own sentence. Swallowing it is how a
+  //                       refused decision reads as a broken button.
+  //  · `decided`        — 🔴 THE OPTIMISM PROBLEM, SOLVED HONESTLY. `proposals`
+  //                       is server data; this component cannot refetch it (no
+  //                       router in this package, by design) and the server
+  //                       action's `revalidatePath` only takes effect on the
+  //                       NEXT navigation. Without this the card sits unchanged
+  //                       after a successful approval and the reviewer presses
+  //                       again.
+  //
+  // ⚠️ `decided` IS WRITTEN ONLY AFTER THE SERVER SAYS `ok`. It mirrors a
+  // decision that has already happened; it never predicts one. An optimistic
+  // version — flipping the card on click and reverting on failure — would show
+  // "approved" for a proposal the server refused, which is exactly the
+  // "config reads correct while the mechanism is inert" class this repository
+  // keeps paying for.
+  const [assistantBusy, setAssistantBusy] = React.useState(false);
+  const [assistantError, setAssistantError] = React.useState<string | null>(null);
+  const [decided, setDecided] = React.useState<Record<string, 'approved' | 'rejected'>>({});
+
+  const decideProposal = React.useCallback(
+    async (proposalId: string, decision: 'approved' | 'rejected') => {
+      if (!onAssistantDecision) return;
+      setAssistantBusy(true);
+      setAssistantError(null);
+      try {
+        const outcome = await onAssistantDecision(proposalId, decision);
+        if (outcome.ok) setDecided((prev) => ({ ...prev, [proposalId]: decision }));
+        else setAssistantError(outcome.error ?? 'The decision was not recorded.');
+      } catch {
+        // A server action can reject — a dropped connection mid-POST. The panel
+        // must say so rather than leave the button looking merely slow.
+        setAssistantError('The decision could not be sent. Nothing has been changed.');
+      } finally {
+        setAssistantBusy(false);
+      }
+    },
+    [onAssistantDecision],
+  );
+
+  // The proposals as they now stand: server truth, with confirmed decisions
+  // from this session applied over the top.
+  const shownProposals = React.useMemo(
+    () =>
+      (assistantProposals ?? []).map((p) => {
+        const d = decided[p.id];
+        if (!d) return p;
+        return { ...p, status: d === 'approved' ? ('approved' as const) : ('rejected' as const) };
+      }),
+    [assistantProposals, decided],
+  );
 
   // Stable close handlers. The drawers no longer depend on callback identity
   // internally, but a stable reference still avoids pointless work on every
@@ -404,9 +516,20 @@ export function AppShell({
         >
           <AiAssistantPanel
             actions={assistantActionsFor(ASSISTANT_ACTIONS, grants as readonly string[])}
-            // No agent is connected yet: the ADK host and MCP gateway are Phase 8.
-            // Saying so plainly beats an input box that swallows questions.
-            unavailableReason="The assistant connects in Phase 8, once the agent host and MCP gateway are in place. Its actions are listed here so the panel it will fill is real, not a surprise."
+            // 🔴 THE UNAVAILABLE STATE IS NOT DELETED, it is now decided by the
+            // app. Six of the seven workspaces still have no agent host, and
+            // for them this prop is absent and the honest default renders. Only
+            // an app that passes `null` claims a connection.
+            unavailableReason={assistantUnavailableReason}
+            proposals={shownProposals}
+            loading={assistantLoading}
+            error={assistantError}
+            busy={assistantBusy}
+            // ⚠️ Handed over ONLY when the app supplied a way to decide. Without
+            // it the panel renders no buttons at all — better than buttons that
+            // silently do nothing, which is a control that lies.
+            onApprove={onAssistantDecision ? (id) => void decideProposal(id, 'approved') : undefined}
+            onReject={onAssistantDecision ? (id) => void decideProposal(id, 'rejected') : undefined}
           />
         </Drawer>
       </div>

@@ -168,6 +168,38 @@ const FEATURES = [
   { cap: 'CAN_CREATE_JOB',      dedicated: false, frag: ['job-cards','create-job-card','new-job-card'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
   { cap: 'CAN_GRANT_MEMBERSHIP',dedicated: false, frag: ['staff','staff-and-roles','users-and-roles','roles-and-permissions'], roles: ['platform_administrator','workshop_owner'] },
   { cap: 'CAN_CREATE_BRANCH',   dedicated: false, frag: ['branches'], roles: ['platform_administrator','workshop_owner'] },
+  // ── 🔴 THE AGENT LAYER IS DELIBERATELY *NOT* DECLARED HERE (2026-08-08) ───
+  //
+  // `apps/api/src/agents` gates every route — `/agents/proposals`,
+  // `/agents/proposals/:id/decision`, `/agents/proposals/:id/apply-leads`,
+  // `/agents/discover/*` — on `assertWorkshopStaff`, which admits ALL NINE
+  // staff roles. By this file's own definition that means all nine hold the
+  // capability, and a row saying so would report a REAL gap today:
+  //
+  // Leads and Discovery are carried by the DEFAULT (§34), OWNER (§46) and
+  // MANAGER (§47) trees. RECEPTION (§48) and TECHNICIAN (§49) carry NEITHER, so
+  // `reception_staff` and `technician` can call these endpoints and cannot reach
+  // any of it by clicking. That is the gap, stated exactly.
+  //
+  // The entries were placed in the groups where their domain already lives
+  // (Customer Reception / Parts and Supply, and the role-tree equivalents)
+  // rather than in a new "Sales" group, because CLAUDE.md's prohibited list
+  // names "changing approved navigation without review" and §34's eleven groups
+  // are asserted in `resolve.test.ts`. Neither of the two uncovered trees has a
+  // group where "find suppliers on the web" honestly belongs.
+  //
+  // ⚠️ WHY NO ROW RATHER THAN A NARROWED ONE. Writing `roles:` as the subset
+  // whose trees happen to carry the entry would make this audit pass by
+  // asserting something FALSE about the API — the exact failure a regression
+  // guard cannot survive, and the reason the parser-failure check above exists.
+  // So the gap is recorded here in words, where it can be read and closed,
+  // instead of being hidden behind a green run.
+  //
+  // TWO WAYS TO CLOSE IT, either of which should also add the row:
+  //   1. Narrow the API's gate to the roles the product intends (a change to
+  //      `apps/api/src/agents`, which is another change's territory today), or
+  //   2. Get owner review for a dedicated Sales group carried by all five
+  //      workshop trees, which gives every staff role one route.
 ];
 
 console.log('ROUTES PER TREE (counts):');

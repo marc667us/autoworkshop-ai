@@ -636,6 +636,17 @@ export class FinanceService {
    * revenue is how a business believes it is solvent when it is not.
    */
   async revenueByMonth(ctx: TenantContext, months = 12): Promise<Array<Record<string, unknown>>> {
+    // 🔴 STAFF ONLY. `customer` is a real role inside this same
+    // organisation and RLS cannot tell it apart from staff — see
+    // `authz/workshop-roles.ts`. Their OWN records are a different query.
+    //
+    // ⚠️ THIS METHOD WAS THE ONE LEFT UNGATED while `listInvoices`,
+    // `getInvoice` and `listPayments` in this same file all had the check —
+    // and it is the widest read of the four: not one customer's invoices but
+    // the ORGANISATION'S MONTHLY TURNOVER, net of refunds. There is no
+    // customer-scoped version of this figure, so the answer is a refusal
+    // rather than a predicate.
+    assertWorkshopStaff(ctx, 'The workshop revenue report');
     return this.db.withTenant(ctx, async (client) => {
       const rows = await client.query<Record<string, unknown>>(
         `WITH received AS (

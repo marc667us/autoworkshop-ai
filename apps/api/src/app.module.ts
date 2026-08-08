@@ -23,6 +23,7 @@ import { ReportsModule } from './reports/reports.module';
 import { CallsModule } from './calls/calls.module';
 import { SettingsModule } from './settings/settings.module';
 import { SecurityModule } from './security/security.module';
+import { AgentsModule } from './agents/agents.module';
 import { OperationsModule } from './operations/operations.module';
 
 /**
@@ -59,6 +60,9 @@ import { OperationsModule } from './operations/operations.module';
     CallsModule,
     SecurityModule,
     OperationsModule,
+    // The agent layer: triage, supplier discovery, lead discovery.
+    // Runs with no agent host configured — see AgentsModule's header.
+    AgentsModule,
   ],
   controllers: [HealthController],
 })

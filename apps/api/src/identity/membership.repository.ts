@@ -177,4 +177,65 @@ export class MembershipRepository {
       membershipId: row.membership_id,
     };
   }
+
+  /**
+   * ENROLMENT — an identity becomes a CUSTOMER of a workshop that publishes
+   * itself (migration 061).
+   *
+   * 🔴 THE DEFECT THIS EXISTS FOR: until 061, `registerWorkshop` above and the
+   * admin-only `MembershipService.grant()` were the ONLY two writers of
+   * `identity.memberships` in the product, and neither produces a `customer`.
+   * So on production the customer role could not exist, and every customer
+   * route — which all sit behind `TenantGuard` — answered 401 to a person who
+   * had just signed in successfully. It survived every test because
+   * `scripts/seed-dev-identity.sh` INSERTs the membership with raw SQL, so
+   * locally the role always existed.
+   *
+   * ⚠️ Same rules as `registerWorkshop`: the caller is the token SUBJECT, never
+   * a user id from a body, and the ROLE is not a parameter here or in the
+   * function — it is the literal `'customer'` in migration 061. The refusals
+   * (unpublished workshop, an account that already has a role there) live in
+   * the database for the same reason the duplicate-workshop check does: a
+   * double-submitted form races two requests past any application-code check.
+   *
+   * Runs without a tenant context — the caller has none yet. That is precisely
+   * why the function is SECURITY DEFINER, and why
+   * `rehearse/061_customer_enrolment_render_privileges.sql` drives it under a
+   * NOSUPERUSER NOBYPASSRLS role: locally the definer owner bypasses RLS, so a
+   * green local run proves nothing about production.
+   */
+  async enrolAsCustomer(
+    subject: string,
+    organizationId: string,
+  ): Promise<{
+    tenantId: string;
+    organizationId: string;
+    branchId: string | null;
+    membershipId: string;
+    /** False when the membership already existed — the funnel calls this often. */
+    created: boolean;
+  }> {
+    const rows = await this.db.queryWithoutTenant<{
+      o_tenant_id: string;
+      o_organization_id: string;
+      o_branch_id: string | null;
+      o_membership_id: string;
+      o_created: boolean;
+    }>(
+      // The `o_` prefixes are the function's real column names — see migration
+      // 061 for why they cannot be the bare ones.
+      `SELECT o_tenant_id, o_organization_id, o_branch_id, o_membership_id, o_created
+         FROM identity.enrol_as_customer($1, $2)`,
+      [subject, organizationId],
+    );
+    const row = rows[0];
+    if (!row) throw new Error('enrol_as_customer returned no row');
+    return {
+      tenantId: row.o_tenant_id,
+      organizationId: row.o_organization_id,
+      branchId: row.o_branch_id,
+      membershipId: row.o_membership_id,
+      created: row.o_created,
+    };
+  }
 }

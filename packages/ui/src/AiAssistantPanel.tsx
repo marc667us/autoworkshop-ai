@@ -53,6 +53,22 @@ export interface ProposalSource {
   href?: string;
 }
 
+/**
+ * WHAT ACTUALLY PRODUCED THE ANSWER.
+ *
+ * 🔴 `'rules'` MEANS NO MODEL RAN. The API's agent host falls back to
+ * deterministic keyword matching when the LLM is unreachable, and it records
+ * which of the two answered on every proposal (`source` on `agents.proposals`).
+ *
+ * Rendering the two identically would present a keyword match as a machine's
+ * judgement — the reader would extend it trust it has not earned, and would
+ * have no way to tell that the thing they believe is reading the complaint is
+ * in fact matching the word "brake". This repository's recorded failure class
+ * is "a truth about A used as evidence for B"; this is that, with the reader's
+ * confidence as the currency. So it is disclosed on the card, in words.
+ */
+export type ProposalMechanism = 'model' | 'rules';
+
 export interface AgentProposal {
   id: string;
   /** "the action it proposes" (§8). */
@@ -74,9 +90,42 @@ export interface AgentProposal {
    * requires AI output be surfaced as candidate leads, never as diagnosis.
    */
   confidence?: number;
-  status: 'proposed' | 'awaiting-approval' | 'running' | 'complete' | 'rejected' | 'failed';
+  /**
+   * Model, or deterministic fallback rules. Optional ONLY because a caller that
+   * has no such fact (a fixture, Storybook, a future non-agent proposal) must
+   * not be forced to assert one — an absent mechanism renders as no claim at
+   * all, which is honest. Every proposal coming from `agents.proposals` carries
+   * it, because the column is NOT NULL.
+   */
+  source?: ProposalMechanism;
+  /**
+   * ⚠️ `approved` AND `applied` ARE THE API'S OWN STATES, not UI inventions.
+   * `agents.proposals.status` moves proposed → awaiting-approval → approved →
+   * applied, and a lead proposal is only written to `crm.leads` at the LAST of
+   * those. Collapsing `approved` into `complete` — which was the alternative —
+   * would have told a reviewer their approval had already taken effect while
+   * the leads were still unwritten, and the Apply button they still had to
+   * press would have looked like a duplicate.
+   *
+   * `running`, `complete` and `failed` have no server counterpart today; they
+   * belong to the interactive actions above, which no agent serves yet.
+   */
+  status:
+    | 'proposed'
+    | 'awaiting-approval'
+    | 'running'
+    | 'complete'
+    | 'approved'
+    | 'applied'
+    | 'rejected'
+    | 'failed';
   /** Populated when status is 'failed' — §70 requires the failure be visible. */
   error?: string;
+  /**
+   * Where the full record lives, when a screen shows more than this card can.
+   * Rendered as a plain link — the panel cannot route, it has no router.
+   */
+  detailHref?: string;
 }
 
 /** A role-aware quick action from the §8 list. */
@@ -111,6 +160,20 @@ const CLASS_LABEL: Record<ActionClass, { text: string; changesData: boolean }> =
   privileged: { text: 'Changes data — privileged', changesData: true },
 };
 
+/**
+ * The message shown by every workspace that has NOT been wired to an agent.
+ *
+ * ⚠️ IT IS STILL TRUE FOR SIX OF THE SEVEN APPS. `apps/api/src/agents` serves
+ * the WORKSHOP workspace; customer, supplier, fleet, insurance, towing and
+ * admin have no agent behind them, and this sentence is what an honest panel
+ * says there. It is the DEFAULT rather than a hardcoded string precisely so
+ * that wiring one app cannot silently make the other six claim a connection
+ * they do not have — see `AppShell`'s `assistantUnavailableReason`.
+ */
+export const DEFAULT_ASSISTANT_UNAVAILABLE_REASON =
+  'The assistant connects in Phase 8, once the agent host and MCP gateway are in place. ' +
+  'Its actions are listed here so the panel it will fill is real, not a surprise.';
+
 export interface AiAssistantPanelProps {
   /** Actions offered to this viewer. Filter with `assistantActionsFor`. */
   actions?: readonly AssistantAction[];
@@ -121,8 +184,26 @@ export interface AiAssistantPanelProps {
   onReject?: (proposalId: string) => void;
   /** True while a request is in flight — §70 loading state. */
   busy?: boolean;
-  /** Shown when the assistant is unavailable, e.g. the local LLM is down. */
-  unavailableReason?: string;
+  /**
+   * Shown INSTEAD of the panel when there is no assistant to talk to.
+   *
+   * ⚠️ `null` MEANS "there IS one", and is the only way to say so. `undefined`
+   * is not that statement — it is the absence of one — so it falls back to the
+   * honest default above. A wired app passes `null` deliberately; an app that
+   * forgets keeps the message that was already true for it.
+   */
+  unavailableReason?: string | null;
+  /**
+   * A failed decision, in the API's own words.
+   *
+   * §70 requires the failure be visible, and a decision is the one place in
+   * this panel where silence is actively misleading: a reviewer who pressed
+   * Approve and saw nothing move assumes it worked. "This proposal was already
+   * approved" is a sentence they can act on, so it is shown verbatim.
+   */
+  error?: string | null;
+  /** Rendered under the heading — the panel's own empty/loading nuance. */
+  loading?: boolean;
 }
 
 /** Filter the §8 actions by the viewer's grants. Presentation only. */
@@ -140,7 +221,13 @@ export function AiAssistantPanel({
   onApprove,
   onReject,
   busy = false,
+  // ⚠️ NO DEFAULT HERE, DELIBERATELY. The default belongs to `AppShell`, which
+  // is what every app actually renders. Defaulting it in this component would
+  // mean `<AiAssistantPanel proposals={…} />` — the Storybook and test usage —
+  // silently rendered "unavailable" over a list of real proposals.
   unavailableReason,
+  error,
+  loading = false,
 }: AiAssistantPanelProps) {
   if (unavailableReason) {
     return (
@@ -215,7 +302,34 @@ export function AiAssistantPanel({
           Assistant activity
         </h3>
 
-        {proposals.length === 0 ? (
+        {/* §70/`05.txt` §2 — a failed decision must be VISIBLE. `role="alert"`
+            so it is announced: the reviewer's eyes are on the button they just
+            pressed, not on the top of the panel. */}
+        {error ? (
+          <p
+            role="alert"
+            style={{
+              margin: `${primitive.space[3]} 0 0`,
+              color: themeVar.statusBlocked,
+              fontSize: primitive.fontSize.sm,
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
+
+        {loading ? (
+          <p
+            role="status"
+            style={{
+              margin: `${primitive.space[3]} 0 0`,
+              color: themeVar.textSecondary,
+              fontSize: primitive.fontSize.sm,
+            }}
+          >
+            Loading what the assistant has proposed…
+          </p>
+        ) : proposals.length === 0 ? (
           <p
             style={{
               margin: `${primitive.space[3]} 0 0`,
@@ -287,6 +401,24 @@ function ProposalCard({
         </div>
       ) : null}
 
+      {/* 🔴 WHICH MECHANISM ANSWERED. Never a colour or an icon alone: "a model
+          read this" and "a keyword list matched this" are different claims
+          about how much the reader should trust it, and §66 forbids colour as
+          the only signal anyway.
+
+          The `model` line is stated too, rather than left implicit. If only the
+          fallback were labelled, an unlabelled card would be ambiguous between
+          "a model wrote it" and "this proposal predates the field" — and the
+          reader would have to know which to assume. */}
+      {proposal.source === 'rules' ? (
+        <p style={{ margin: 0, color: themeVar.statusAttention }}>
+          Produced by fixed keyword rules — the AI model was not reachable. Read it as a checklist,
+          not as a judgement.
+        </p>
+      ) : proposal.source === 'model' ? (
+        <p style={{ margin: 0, color: themeVar.textSecondary }}>Produced by the AI model.</p>
+      ) : null}
+
       {proposal.status === 'running' ? (
         <p role="status" style={{ margin: 0, color: themeVar.textSecondary }}>
           Working…
@@ -301,6 +433,27 @@ function ProposalCard({
 
       {proposal.status === 'rejected' ? (
         <p style={{ margin: 0, color: themeVar.textSecondary }}>Rejected — nothing was changed.</p>
+      ) : null}
+
+      {/* ⚠️ APPROVED IS NOT DONE, and saying otherwise would be the expensive
+          half of this distinction. `AgentProposal.status`'s own note explains
+          why the two states are kept apart; this is where a reader learns that
+          there is still something to press.
+          ⚠️ THE NEXT STEP IS NAMED BUT NOT ROUTED, deliberately. This package
+          has no router and each of the seven workspaces — and, in the workshop,
+          each of the five ROLE TREES — reaches the Leads screen by a different
+          path. A hardcoded "Sales → Leads" was written here first and was
+          already wrong by the time the nav entry settled into Customer
+          Reception. A menu path stated in a component that cannot see the menu
+          is a claim nothing keeps true. */}
+      {proposal.status === 'approved' ? (
+        <p style={{ margin: 0, color: themeVar.statusAttention }}>
+          Approved — not applied yet. Open the Leads screen to write the approved records.
+        </p>
+      ) : null}
+
+      {proposal.status === 'applied' ? (
+        <p style={{ margin: 0, color: themeVar.textSecondary }}>Approved and applied.</p>
       ) : null}
 
       {proposal.result ? <p style={{ margin: 0 }}>{proposal.result}</p> : null}

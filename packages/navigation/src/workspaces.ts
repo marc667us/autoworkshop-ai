@@ -167,6 +167,22 @@ const workshopGroups: NavGroup[] = [
     ['new-complaints', 'New Complaints', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['vehicle-intake', 'Vehicle Intake'],
+    // ⚠️ THE AGENT LAYER GOES IN EXISTING §34 GROUPS, NOT A NEW ONE.
+    // The first version of this change added a twelfth group, "Sales".
+    // CLAUDE.md's prohibited list names "changing approved navigation without
+    // review", and `resolve.test.ts` asserts this tree has exactly the ELEVEN
+    // groups of §34 — the spec caught it. So each entry goes where its DOMAIN
+    // already lives: finding potential customers is a front-of-house job, and
+    // this group already turns an enquiry into a customer. `Discovery` sits in
+    // Parts and Supply for the mirrored reason — it finds SUPPLIERS and PARTS.
+    // They share an implementation, not a purpose. A dedicated Sales group may
+    // be the better long-term answer; that is the owner's call to approve, not
+    // one to take by quietly writing it.
+    //
+    // Ungated, like `service-requests` above and for the same reason: the API
+    // gate is `assertWorkshopStaff`, which admits every staff role, and both
+    // the service and RLS refuse a `customer` independently.
+    ['leads', 'Leads'],
   ]),
   group('workshop-floor', 'Workshop Floor', 'factory', [
     // §21: "The Repair Staging item shall display the number of active jobs."
@@ -204,6 +220,9 @@ const workshopGroups: NavGroup[] = [
     ['procurement', 'Procurement', { warningKey: 'workshop.parts.reorderAlerts' }],
     ['goods-receipt', 'Goods Receipt'],
     ['suppliers', 'Suppliers'],
+    // The supplier/parts half of the agent layer. See the note beside `leads`
+    // for why the two live in different groups.
+    ['discovery', 'Discovery'],
     ['marketplace', 'Marketplace'],
   ]),
   group('communication', 'Communication', 'chat', [
@@ -597,6 +616,8 @@ const workshopOwnerGroups: NavGroup[] = [
     ['customer-complaints', 'Customer Complaints', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['vehicle-intake', 'Vehicle Intake'],
+    // The agent layer's lead list — reasoning in the DEFAULT workshop tree.
+    ['leads', 'Leads'],
     ['repair-staging', 'Repair Staging', { counterKey: 'workshop.jobs.active' }],
     ['job-cards', 'Job Cards'],
   ]),
@@ -621,6 +642,8 @@ const workshopOwnerGroups: NavGroup[] = [
     ['parts-reservations', 'Parts Reservations'],
     ['procurement', 'Procurement', { warningKey: 'workshop.parts.reorderAlerts' }],
     ['suppliers', 'Suppliers'],
+    // Agent-assisted supplier/parts discovery.
+    ['discovery', 'Discovery'],
     ['marketplace', 'Marketplace'],
   ]),
   // §29 keeps sensitive financial items permission-restricted. The owner role
@@ -690,6 +713,8 @@ const workshopManagerGroups: NavGroup[] = [
     ['customer-complaint-inbox', 'Customer Complaint Inbox', { counterKey: 'workshop.complaints.new' }],
     ['appointments', 'Appointments', { counterKey: 'workshop.appointments.today' }],
     ['vehicle-intake', 'Vehicle Intake'],
+    // The agent layer's lead list — reasoning in the DEFAULT workshop tree.
+    ['leads', 'Leads'],
   ]),
   group('workshop-floor', 'Workshop Floor', 'factory', [
     ['repair-staging', 'Repair Staging', { counterKey: 'workshop.jobs.active' }],
@@ -716,6 +741,10 @@ const workshopManagerGroups: NavGroup[] = [
     ['reservations', 'Reservations'],
     ['purchase-requisitions', 'Purchase Requisitions', { warningKey: 'workshop.parts.reorderAlerts' }],
     ['supplier-inquiries', 'Supplier Inquiries'],
+    // The supplier/parts half of the agent layer — reasoning in the DEFAULT
+    // workshop tree. It belongs beside Supplier Inquiries: both are "find
+    // somebody who can supply this", one by asking and one by reading a page.
+    ['discovery', 'Discovery'],
   ]),
   group('communication', 'Communication', 'chat', [
     ['customer-messages', 'Customer Messages', { counterKey: 'workshop.messages.unread' }],
@@ -742,6 +771,8 @@ const workshopReceptionGroups: NavGroup[] = [
   group('customers', 'Customers', 'users', [
     ['customer-search', 'Customer Search'],
     ['register-customer', 'Register Customer'],
+    // The agent layer's lead list — reasoning in the DEFAULT workshop tree.
+    // Reception is where a stranger becomes a customer, so the queue of people
     ['customer-messages', 'Customer Messages', { counterKey: 'workshop.messages.unread' }],
   ]),
   group('vehicles', 'Vehicles', 'car', [

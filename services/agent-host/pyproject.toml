@@ -1,0 +1,40 @@
+[project]
+name = "autoworkshop-agent-host"
+version = "0.1.0"
+description = "Stateless agent host for AutoWorkshop AI: triage, supplier discovery, lead discovery. Holds no credentials and cannot reach the database (ADR-010)."
+requires-python = ">=3.11"
+
+# NOTE ON DEPENDENCIES AND ADR-010.
+# There is deliberately NO database driver here — no psycopg, no asyncpg, no
+# SQLAlchemy. That absence is the point: this service receives data as JSON and
+# returns proposals as JSON. `tests/test_adr010_boundary.py` asserts it, so a
+# future `pip install psycopg` that sneaks into this list fails the suite.
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "httpx>=0.27",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "scrapegraphai==2.1.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# The `py.typed` marker ships with the package so a consuming app gets this
+# service's type hints when it installs it (§0.3 reusability).
+[tool.setuptools.package-data]
+app = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `-p no:cacheprovider` keeps the service tree clean when run from CI.
+addopts = "-p no:cacheprovider"

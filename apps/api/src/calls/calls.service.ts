@@ -59,7 +59,7 @@ import type { TenantContext } from '../tenancy/tenant-context';
 /** Every workshop role may hold a conversation; so may a customer. As slice 7. */
 const MAY_START_CALL = [
   'workshop_owner', 'workshop_manager', 'workshop_supervisor', 'reception_staff',
-  'technician', 'storekeeper', 'cashier', 'quality_controller', 'platform_administrator',
+  'technician', 'storekeeper', 'cashier', 'quality_control_inspector', 'platform_administrator',
   'customer',
 ] as const;
 

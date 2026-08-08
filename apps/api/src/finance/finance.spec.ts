@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { ForbiddenException } from '@nestjs/common';
 import {
   FinanceInputError,
   invoiceStatusFor,
@@ -6,6 +7,8 @@ import {
   mayRefund,
   parseInvoiceTransition,
 } from './finance-rules';
+import { FinanceService } from './finance.service';
+import type { TenantContext } from '../tenancy/tenant-context';
 
 /**
  * ⚠️ `*.spec.ts`, NOT `*.test.ts`. The package vitest config collected only
@@ -134,5 +137,64 @@ describe('the invoice status derived from money', () => {
 
   it('never goes negative when credits exceed the total', () => {
     expect(invoiceStatusFor({ grossTotal: 100, paid: 1, credited: 500 })).toBe('paid');
+  });
+});
+
+/**
+ * 🔴 THE FOURTH READ IN THIS FILE, AND THE ONLY ONE THAT WAS OPEN.
+ *
+ * `listInvoices`, `getInvoice` and `listPayments` all call `assertWorkshopStaff`.
+ * `revenueByMonth` did not, and it is the WIDEST of the four: the whole
+ * organisation's monthly turnover net of refunds. `customer` is a real
+ * membership role whose `organizationId` IS the workshop's, so organisation-
+ * scoped RLS cannot separate it from staff — the service is the only line.
+ *
+ * These assert the REFUSAL HAPPENS BEFORE ANY QUERY: `withTenant` is a spy that
+ * throws if it is entered at all, so a gate placed after the SQL — which would
+ * still 403, having already read the money — fails here.
+ */
+describe('revenue by month is the workshop’s, not a customer’s', () => {
+  const ctx = (activeRole: string): TenantContext =>
+    ({
+      tenantId: 't', organizationId: 'o', branchId: null,
+      userId: 'u', activeRole, correlationId: 'c',
+    }) as TenantContext;
+
+  function makeService() {
+    const withTenant = vi.fn(async () => {
+      throw new Error('withTenant was entered — the gate ran too late, or not at all');
+    });
+    return { svc: new FinanceService({ withTenant } as never), withTenant };
+  }
+
+  it('REFUSES a customer, without touching the database', async () => {
+    const { svc, withTenant } = makeService();
+    await expect(svc.revenueByMonth(ctx('customer'))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(withTenant).not.toHaveBeenCalled();
+  });
+
+  it('names what the refused customer CAN reach', async () => {
+    // A refusal that names no alternative is a wall — the costliest defect
+    // class recorded in this repository.
+    const { svc } = makeService();
+    await expect(svc.revenueByMonth(ctx('customer'))).rejects.toThrow(/your own pages/i);
+  });
+
+  it('refuses the other non-staff roles that share this tenancy', async () => {
+    const { svc } = makeService();
+    for (const role of ['supplier_user', 'fleet_manager', 'insurance_assessor']) {
+      await expect(svc.revenueByMonth(ctx(role)), role).rejects.toBeInstanceOf(ForbiddenException);
+    }
+  });
+
+  it('lets staff through to the query — the gate is not a wall for the workshop', async () => {
+    // The negative above is worthless without this control: a check that
+    // refused everybody would pass the refusal tests and break the screen.
+    const { svc, withTenant } = makeService();
+    for (const role of ['workshop_owner', 'cashier', 'technician']) {
+      withTenant.mockClear();
+      await expect(svc.revenueByMonth(ctx(role))).rejects.toThrow(/withTenant was entered/);
+      expect(withTenant, role).toHaveBeenCalledTimes(1);
+    }
   });
 });
