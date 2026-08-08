@@ -75,9 +75,27 @@ and `parts-requests-screen`. So the funnel could not be completed and
 step, plus `packages/ui/src/form-has-submit.spec.ts` which fails if any form
 loses its button again.
 
-**Still open from LIST 1:** I8 (Playwright), I10 (investigated, NOT built —
-`assertWithinApprovalLimit` is called from `variation.service.ts` only; the
-`quotation` and `purchase_order` scopes remain unenforced), I11.
+**🔴 DEPLOY GOTCHA THAT COST THIS SESSION AN HOUR:** `deploy-api.yml` and
+`deploy-customer-web.yml` gate every deploy step on `if: inputs.confirm ==
+'APPLY'`. Dispatched WITHOUT it they skip everything and still report SUCCESS —
+the live API sat three commits behind while looking deployed. **Always
+`-f confirm=APPLY`.**
+
+**✅ LIVE SUITE (owner policy, HARD, all projects):** `.github/workflows/live-suite.yml`
+— run it after EVERY deploy. Final run this session: **16 passed, 0 failed,
+0 skipped**. It reports three numbers, goes red if fewer than 10 checks
+register, and runs automatically after `Release`.
+
+**✅ FIXED + LIVE:** the request-for-service form had NO submit button (2 of 49
+forms didn't) · an opt-in preview step · sign-out now clears the switcher
+cookies · the default role no longer resolves from a UUID (an account with
+admin+owner+technician was pinned to `customer`) · I10 quotation limit enforced.
+
+**Still open from LIST 1:** I8 (Playwright — NOT RUN this session; still
+unmeasured since 2026-07-29), I10 purchase_order half (deliberately not built —
+`parts.purchase_requisitions` has NO price column and `purchase-orders` has only
+a LIST endpoint, so a money limit there would mean inventing an amount; it needs
+a priced PO, i.e. a schema change), I11.
 ⚠️ I12 is CLOSED locally, but nobody has driven it on LIVE — that still needs
 migration 060 applied and the API redeployed, i.e. it waits on R1.
 
