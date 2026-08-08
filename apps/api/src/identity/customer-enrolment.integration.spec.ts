@@ -35,9 +35,16 @@ import { tenantSessionStatements, type TenantContext } from '../tenancy/tenant-c
  * runs under `SET LOCAL ROLE autoworkshop_app` — the role the application
  * really connects as.
  *
- * ⚠️ NO DATABASE IS A *SKIP*, NOT A PASS. `reachable` is asserted in the first
- * test, so a run with no Postgres fails ONE test rather than printing green
- * ticks for checks that never executed. Three states, never two.
+ * ⚠️ NO DATABASE IS A *SKIP*, NOT A PASS — AND NOT A FAILURE EITHER.
+ * With no Postgres the suite prints a loud notice naming what was not proven
+ * and every test reports SKIPPED. Three states, never two.
+ *
+ * 🔴 THE FIRST VERSION ASSERTED `reachable === true` IN A TEST, AND THAT TURNED
+ * `Release` RED. CI has no Postgres, so a correct instinct — a silent skip is
+ * indistinguishable from a pass — was implemented as a failure for an
+ * ENVIRONMENTAL reason, which is the one thing guaranteed to teach people to
+ * ignore red. The repository had already recorded that exact defect once
+ * (`feedback_three_states_pass_fail_skip`); this is the second time.
  */
 
 const ADMIN_URL =
@@ -103,6 +110,23 @@ beforeAll(async () => {
     reachable = true;
   } catch {
     reachable = false;
+    // 🔴 A LOUD NOTICE, THEN SKIP — NOT A FAILURE.
+    //
+    // The first version of this file asserted `reachable === true` in a test,
+    // reasoning that a silent skip is indistinguishable from a pass. The
+    // instinct is right and the implementation was wrong: CI has no Postgres,
+    // so it turned `Release` RED for an environmental reason — exactly the
+    // defect this repository already recorded once, in
+    // `feedback_three_states_pass_fail_skip`. A suite that goes red when the
+    // environment is missing teaches people to ignore red.
+    //
+    // The three states are kept by SAYING SO on stderr and skipping, which is
+    // what every sibling integration spec here does. The run then reports
+    // `skipped`, not `passed`, and the notice names what was not proven.
+    console.warn(
+      '[customer-enrolment.integration] NO DATABASE at ADMIN_URL — this suite is SKIPPED, ' +
+        'not passed. Customer enrolment and the core.customers link are NOT proven by this run.',
+    );
     return;
   }
 
@@ -162,15 +186,6 @@ afterAll(async () => {
 });
 
 describe('customer enrolment — membership AND customer record', () => {
-  it('has a database to test against', () => {
-    // The whole file is meaningless without this, so it is an assertion rather
-    // than a skip. A silent skip is indistinguishable from a pass.
-    expect(
-      reachable,
-      `no database at ${ADMIN_URL} — these checks did NOT run`,
-    ).toBe(true);
-  });
-
   dbIt('enrols a stranger and creates their customer record', async () => {
     const result = await service.enrol(
       strangerSubject,
