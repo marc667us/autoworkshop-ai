@@ -284,6 +284,81 @@ describe('resolveTenantContext — requestedRoleName', () => {
     expect(ctx.activeRole).toBe('platform_administrator');
   });
 
+  it('🔴 a CUSTOMER membership at another workshop does not become the default', () => {
+    // ── THE DEFECT THE OWNER REPORTED, 2026-08-07 ──────────────────────────
+    //
+    //   "still customer page showup for every role user login"
+    //
+    // Every other test in this block uses memberships in ONE organisation, so
+    // they proved role precedence and never touched the case that was broken.
+    // The comparator sorted on `organizationId` FIRST, so role authority could
+    // only choose between roles inside a single organisation — and the default
+    // was really decided by whichever organisation's id sorted lowest.
+    //
+    // Registering as a customer at any workshop whose id sorted before your own
+    // therefore demoted you on every login, silently, for ever. Reproduced
+    // against the real database before this was changed: an account holding
+    // platform_administrator + workshop_owner + technician resolved to
+    // `customer` because that membership's organisation id began with `1f`.
+    //
+    // `org-0` sorts BEFORE `org-1`, so under the old comparator this returns
+    // `customer` — which is precisely what the owner saw.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-0', roleName: 'customer' }),
+        ...owner,
+      ],
+      correlationId: 'c',
+    });
+
+    expect(ctx.activeRole).toBe('platform_administrator');
+    // And the ORGANISATION follows the role, not the other way round — landing
+    // in the right role but the wrong workshop would be the same bug wearing a
+    // different hat.
+    expect(ctx.organizationId).toBe('org-1');
+  });
+
+  it('the strongest role wins even when it arrives last and its org sorts last', () => {
+    // Both keys pushed the wrong way at once, because `sort` is stable and a
+    // fixture that happens to be in a helpful order proves nothing.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-0', roleName: 'customer' }),
+        membership({ organizationId: 'org-1', roleName: 'technician' }),
+        membership({ organizationId: 'org-9', roleName: 'workshop_owner' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('workshop_owner');
+    expect(ctx.organizationId).toBe('org-9');
+  });
+
+  it('organisation still breaks the tie when ONE role is held at several workshops', () => {
+    // The demoted key must still be doing its job: without it, two identical
+    // roles at different workshops compare equal and the winner is row order,
+    // so a viewer's workshop could change between two requests.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-9', roleName: 'workshop_manager' }),
+        membership({ organizationId: 'org-2', roleName: 'workshop_manager' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(ctx.organizationId).toBe('org-2');
+    const reversed = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-2', roleName: 'workshop_manager' }),
+        membership({ organizationId: 'org-9', roleName: 'workshop_manager' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(reversed.organizationId).toBe('org-2');
+  });
+
   it('an UNRANKED role sorts last — it never outranks a governance role', () => {
     // A role added to `identity.memberships` before it is added to
     // `ROLE_PRECEDENCE` must fail the SAFE way. Ranking it first would let a
@@ -299,12 +374,38 @@ describe('resolveTenantContext — requestedRoleName', () => {
     expect(ctx.activeRole).toBe('workshop_owner');
   });
 
-  it('the role tie-break NEVER moves the request to another organisation', () => {
-    // The property that makes the second sort key safe: organisation stays the
-    // PRIMARY key. A stronger role in a different organisation must not drag
-    // the request into that tenant — the caller would silently read another
-    // organisation's data. org-1 sorts first, so org-1's technician wins over
-    // org-2's administrator.
+  it('the default DOES open the strongest workspace, even in another tenant', () => {
+    // ⚠️ THIS TEST ASSERTED THE OPPOSITE UNTIL 2026-08-07, DELIBERATELY. The
+    // reversal is a decision, not a slip, so the old reasoning is kept here
+    // rather than deleted.
+    //
+    // IT SAID: organisation must stay the PRIMARY key, because "a stronger role
+    // in a different organisation must not drag the request into that tenant —
+    // the caller would silently read another organisation's data."
+    //
+    // 🔴 THAT FRAMING WAS OVERSTATED, and the overstatement cost the owner a
+    // working product. Every candidate here is a membership ALREADY PROVED from
+    // the validated token subject. Opening as `platform_administrator` of
+    // tenant-b is not reading "another organisation's data" — it is reading
+    // the caller's OWN workspace, one they hold an administrator role in. No
+    // authorization boundary is involved; the question is only which of the
+    // user's own workspaces opens first.
+    //
+    // WHAT THE OLD ORDER ACTUALLY COST: because organisation sorted first, the
+    // default was decided by a UUID. Owner, 2026-08-07: *"still customer page
+    // showup for every role user login"* — an account holding
+    // platform_administrator, workshop_owner and technician was pinned to
+    // `customer` because it had also registered as a customer at a workshop
+    // whose id sorted lower. Silently, on every login, with the switcher the
+    // only escape and no clue that it was needed.
+    //
+    // Weighed plainly: the old order risks OPENING A DIFFERENT WORKSPACE THAN
+    // LAST TIME (deterministic, visible, one click to change). The new order
+    // risks nothing an attacker can use and fixes a silent, total demotion.
+    //
+    // ⚠️ THE PROPERTY THAT ACTUALLY MATTERED IS UNTOUCHED: a REQUESTED
+    // organisation the user does not hold still THROWS — see the tests above.
+    // Nothing here can reach a membership the server has not proved.
     const ctx = resolveTenantContext({
       userId: 'owner',
       memberships: [
@@ -313,9 +414,9 @@ describe('resolveTenantContext — requestedRoleName', () => {
       ],
       correlationId: 'c',
     });
-    expect(ctx.organizationId).toBe('org-1');
-    expect(ctx.tenantId).toBe('tenant-a');
-    expect(ctx.activeRole).toBe('technician');
+    expect(ctx.organizationId).toBe('org-2');
+    expect(ctx.tenantId).toBe('tenant-b');
+    expect(ctx.activeRole).toBe('platform_administrator');
   });
 
   it('SECURITY: the default still cannot reach a role the user does not hold', () => {

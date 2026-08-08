@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import type { WorkspaceId } from '@autoworkshop/navigation';
 import { workspaceAuth } from './workspace-auth';
 import { postLogoutOrigin } from './origin';
+import { clearWorkspacePreferences } from './workspace-preferences';
 
 /**
  * SIGNING OUT FOR REAL — the wiring T-0005 finding 5 was missing.
@@ -89,6 +90,22 @@ export async function performSignOut(
   // Step 2 — `redirect: false` or Auth.js throws its own redirect and step 3
   // never executes, leaving the Keycloak SSO session alive.
   await instance.signOut({ redirect: false });
+
+  // 🔴 Step 2b — THE SWITCHER COOKIES, WHICH `signOut()` DOES NOT TOUCH.
+  //
+  // `instance.signOut()` clears Auth.js's OWN session cookie and nothing else.
+  // `aw.activeRole` and `aw.activeOrganization` are set by the role and
+  // organisation switchers, so they survived every sign-out this app has ever
+  // performed — and the next person to sign in on that browser inherited the
+  // previous person's selection.
+  //
+  // Owner, 2026-08-07: signed in as a customer, signed out, signed back in as
+  // admin, "the dash board still and menu items still showed that a customer".
+  //
+  // Before the redirect, because `redirect()` throws and nothing after it runs.
+  // See `workspace-preferences.ts` for why this is not a privilege escalation
+  // and is still a real fault.
+  await clearWorkspacePreferences();
 
   // Step 3 — throws NEXT_REDIRECT, which is how Next performs a redirect from a
   // server action. Nothing after this line runs.

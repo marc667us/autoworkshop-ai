@@ -28,7 +28,10 @@ import { cookies } from 'next/headers';
  * organization a logged-in user is acting in, which would be a confusing (if
  * not dangerous) surprise on a page that writes.
  */
-export const ACTIVE_ORG_COOKIE = 'aw.activeOrganization';
+// Re-exported rather than redefined — see the note in `active-role.ts`. One
+// definition, beside the sign-out code that has to clear it.
+export { ACTIVE_ORG_COOKIE } from '@autoworkshop/auth';
+import { ACTIVE_ORG_COOKIE } from '@autoworkshop/auth';
 
 /** The stored selection, or `undefined` when the viewer has not chosen. */
 export async function activeOrganizationId(): Promise<string | undefined> {

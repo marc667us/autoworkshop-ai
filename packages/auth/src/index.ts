@@ -11,6 +11,12 @@ export {
 } from './tokens';
 export type { KeycloakTokenSet } from './tokens';
 export { performSignOut } from './sign-out';
+export {
+  ACTIVE_ROLE_COOKIE,
+  ACTIVE_ORG_COOKIE,
+  WORKSPACE_PREFERENCE_COOKIES,
+  clearWorkspacePreferences,
+} from './workspace-preferences';
 export { postLogoutOrigin } from './origin';
 export {
   prewarmKeycloak,

@@ -154,13 +154,46 @@ export function resolveTenantContext(params: {
     // candidate is an already-proved membership) and is what makes stacking
     // roles on one account safe. The role switcher is how they go the other way.
     //
-    // ORGANISATION STAYS THE PRIMARY KEY, deliberately: the tie-break may only
-    // choose between roles WITHIN one organisation, never move the request to a
-    // different tenant.
+    // 🔴 ROLE AUTHORITY IS THE PRIMARY KEY. ORGANISATION ONLY BREAKS ITS TIES.
+    //
+    // THIS ORDER WAS THE OTHER WAY ROUND AND IT WAS THE DEFECT THE OWNER
+    // REPORTED ON 2026-08-07: *"still customer page showup for every role user
+    // login"*.
+    //
+    // With `organizationId` first, role precedence could only choose between
+    // roles inside ONE organisation — so the default was decided by whichever
+    // organisation's UUID happened to sort first, and the role that came with
+    // it. Registering as a customer at any workshop whose id sorted low
+    // silently demoted the account on every subsequent login.
+    //
+    // REPRODUCED against the real data rather than argued: an account holding
+    // `platform_administrator`, `workshop_owner` and `technician` at one
+    // workshop, plus `customer` at another whose id sorted first, resolved to
+    //
+    //     customer@1f290945 | platform_administrator@aaaaaaaa | ... -> customer
+    //
+    // The comment above already said the intent was "the default is the
+    // STRONGEST role held". The implementation did not do that. This is the
+    // third time in this repository that a confident comment has described a
+    // rule the code did not implement, so the code is changed to match the
+    // stated intent rather than the comment softened to match the code.
+    //
+    // ⚠️ THE OLD COMMENT'S WORRY — that a tie-break might "move the request to a
+    // different tenant" — is real but is not an authorization concern. EVERY
+    // candidate here is a membership the server has already proved from the
+    // validated token subject, so choosing among them grants nothing. The
+    // choice is about which of the user's OWN workspaces opens first, and
+    // opening the weakest one because of a UUID is the worse answer: it hides
+    // the whole application behind a switcher the user must first realise they
+    // need.
+    //
+    // Organisation remains the tie-break so the result is still STABLE across
+    // requests when one role is held at several workshops — an arbitrary but
+    // fixed choice, never a viewer whose tenant changes between two requests.
     selected = [...active].sort(
       (a, b) =>
-        a.organizationId.localeCompare(b.organizationId) ||
-        rolePrecedence(a.roleName) - rolePrecedence(b.roleName),
+        rolePrecedence(a.roleName) - rolePrecedence(b.roleName) ||
+        a.organizationId.localeCompare(b.organizationId),
     )[0];
   }
 

@@ -30,7 +30,16 @@ import { cookies } from 'next/headers';
  * signed-in user is acting in — which on a page that WRITES would be a
  * genuinely dangerous surprise, not merely a confusing one.
  */
-export const ACTIVE_ROLE_COOKIE = 'aw.activeRole';
+// 🔴 RE-EXPORTED, NOT REDEFINED. The name used to be declared here, while the
+// code that must DELETE it on sign-out lives in `@autoworkshop/auth` — two
+// declarations of one string, in packages that cannot import each other's
+// version. On 2026-08-07 sign-out did not clear this cookie at all and the next
+// person to sign in inherited the previous person's role; a second copy of the
+// name is how that stays possible after it is fixed. The definition now lives
+// beside the code that ends the session, and this import path is unchanged so
+// nothing that already reads it had to move.
+export { ACTIVE_ROLE_COOKIE } from '@autoworkshop/auth';
+import { ACTIVE_ROLE_COOKIE } from '@autoworkshop/auth';
 
 /** The stored selection, or `undefined` when the viewer has not chosen. */
 export async function activeRoleName(): Promise<string | undefined> {
