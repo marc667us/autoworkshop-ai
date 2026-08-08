@@ -1304,19 +1304,28 @@ function MechanicCard({
         /*
           ⚠️ THIS ONE GOES TO THE FORM, NOT THE DASHBOARD — and it carries the
           WORKSHOP. The label promises "sign in to request service"; landing on
-          a dashboard instead makes the visitor find this card again, which is
-          the funnel losing the person it just persuaded. The signed-in branch
-          above sends exactly this href with exactly this workshop.
-          Falls back to the dashboard only when the host app supplies no
-          request-service route at all, rather than building a link to nowhere.
+          a dashboard instead makes the visitor hunt for this card again, which
+          is the funnel losing the person it just persuaded.
+
+          🔴 AND IT SIGNS IN ON THE HOST THAT OWNS THE DESTINATION. On the APEX
+          `requestServiceHref` is an ABSOLUTE customer-web URL, because the form
+          lives in a different app. An earlier version of this line put that
+          absolute URL into the APEX's own `/api/auth/signin?callbackUrl=…`,
+          which is the "SEPARATE HOSTS = SEPARATE SESSIONS" trap this repository
+          has already been bitten by: signing in on the apex grants no session on
+          customer-web, so the visitor authenticates as one thing and arrives at
+          the other as a stranger. From the owner's seat that reads as the
+          customer app appearing after logging in — a role conflict that is
+          really a host conflict.
+
+          So an absolute href signs in at ITS OWN origin; a relative one (which
+          is what customer-web passes) uses the local route. Falls back to the
+          dashboard only when the host app supplies no request-service route at
+          all, rather than building a link to nowhere.
         */
         /* eslint-disable-next-line @next/next/no-html-link-for-pages -- route handler, see hero */
         <a
-          href={`/api/auth/signin?callbackUrl=${encodeURIComponent(
-            requestServiceHref
-              ? `${requestServiceHref}?workshop=${mechanic.organizationId}`
-              : '/home/dashboard',
-          )}`}
+          href={signInHrefFor(requestServiceHref, mechanic.organizationId)}
           style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}
         >
           Sign in to request service
@@ -1324,4 +1333,34 @@ function MechanicCard({
       )}
     </article>
   );
+}
+
+/**
+ * Where "Sign in to request service" should send somebody.
+ *
+ * 🔴 THE ORIGIN MATTERS MORE THAN THE PATH. `requestServiceHref` is RELATIVE in
+ * customer-web (the form is local) and ABSOLUTE on the apex (the form is in
+ * another app on another host). Auth.js sessions do not cross hosts here — the
+ * cookie is named per workspace and set on one origin — so a sign-in must
+ * happen on the origin that owns the page the visitor is going to. Signing in
+ * on the apex and redirecting to customer-web lands them there signed OUT.
+ */
+export function signInHrefFor(
+  requestServiceHref: string | undefined,
+  organizationId: string,
+): string {
+  if (!requestServiceHref) {
+    return `/api/auth/signin?callbackUrl=${encodeURIComponent('/home/dashboard')}`;
+  }
+  const target = `${requestServiceHref}?workshop=${organizationId}`;
+  if (/^https?:\/\//i.test(requestServiceHref)) {
+    const url = new URL(target);
+    // Sign in AT that origin, with a path-only callback — Auth.js refuses a
+    // cross-origin callbackUrl anyway, so an absolute one would be dropped and
+    // the visitor would land on that app's landing instead of the form.
+    return `${url.origin}/api/auth/signin?callbackUrl=${encodeURIComponent(
+      `${url.pathname}${url.search}`,
+    )}`;
+  }
+  return `/api/auth/signin?callbackUrl=${encodeURIComponent(target)}`;
 }
