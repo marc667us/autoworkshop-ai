@@ -239,10 +239,12 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3002/*"
+        "http://localhost:3002/*",
+        "https://autoworkshop-supplier.onrender.com/*"
       ],
       "webOrigins": [
-        "http://localhost:3002"
+        "http://localhost:3002",
+        "https://autoworkshop-supplier.onrender.com"
       ],
       "protocolMappers": [
         {
