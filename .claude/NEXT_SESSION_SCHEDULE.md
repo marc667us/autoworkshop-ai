@@ -77,7 +77,9 @@ loses its button again.
 
 **Still open from LIST 1:** I8 (Playwright), I10 (investigated, NOT built —
 `assertWithinApprovalLimit` is called from `variation.service.ts` only; the
-`quotation` and `purchase_order` scopes remain unenforced), I11, I12.
+`quotation` and `purchase_order` scopes remain unenforced), I11.
+⚠️ I12 is CLOSED locally, but nobody has driven it on LIVE — that still needs
+migration 060 applied and the API redeployed, i.e. it waits on R1.
 
 ---
 
