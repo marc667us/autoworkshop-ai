@@ -361,8 +361,21 @@ export function MarketplaceLanding({
                 <a href="#find-parts" style={BUTTON_GREEN}>
                   Browse parts now
                 </a>
+                {/*
+                  🔴 `callbackUrl` OR A SIGNED-IN OWNER LANDS BACK HERE.
+                  Auth.js returns the visitor to where they started, and this
+                  button is ON the landing — so a workshop owner pressed Sign
+                  in, signed in perfectly, and was handed the consumer
+                  shopfront again. Reported three times as "the customer page
+                  comes up when the owner logs in"; the account resolves
+                  correctly and always did (measured: one membership,
+                  workshop_owner). `/` still renders this landing for a
+                  signed-in visitor — that is a deliberate owner request and is
+                  untouched. This changes only where the BUTTON goes, because
+                  pressing it means "let me in", not "show me the shop".
+                */}
                 {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-                <a href="/api/auth/signin" style={BUTTON_SECONDARY}>
+                <a href="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard" style={BUTTON_SECONDARY}>
                   Sign in
                 </a>
                 {basketHref ? <BasketLink href={basketHref} /> : null}
@@ -1288,8 +1301,24 @@ function MechanicCard({
           Request for Service
         </a>
       ) : (
+        /*
+          ⚠️ THIS ONE GOES TO THE FORM, NOT THE DASHBOARD — and it carries the
+          WORKSHOP. The label promises "sign in to request service"; landing on
+          a dashboard instead makes the visitor find this card again, which is
+          the funnel losing the person it just persuaded. The signed-in branch
+          above sends exactly this href with exactly this workshop.
+          Falls back to the dashboard only when the host app supplies no
+          request-service route at all, rather than building a link to nowhere.
+        */
         /* eslint-disable-next-line @next/next/no-html-link-for-pages -- route handler, see hero */
-        <a href="/api/auth/signin" style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}>
+        <a
+          href={`/api/auth/signin?callbackUrl=${encodeURIComponent(
+            requestServiceHref
+              ? `${requestServiceHref}?workshop=${mechanic.organizationId}`
+              : '/home/dashboard',
+          )}`}
+          style={{ ...BUTTON_SECONDARY, marginTop: 'auto', alignSelf: 'flex-start' }}
+        >
           Sign in to request service
         </a>
       )}

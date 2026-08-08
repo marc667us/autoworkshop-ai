@@ -146,7 +146,36 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           // client shell that renders the button.
           signOutAction={signOutAction}
           switchUserAction={switchUserAction}
-          signInHref="/api/auth/signin"
+          /*
+           * 🔴 SIGN IN LANDS ON THE DASHBOARD, NOT BACK ON THE LANDING.
+           *
+           * Reported three times by the owner as "customer page comes up when
+           * owner logs in", and the first two diagnoses were wrong — I chased
+           * role resolution and a stale role cookie. The MEASURED cause
+           * (`Diagnose identity RLS`, 2026-08-08) is that the account holds
+           * exactly ONE membership, `workshop_owner`, and resolves correctly.
+           * Nothing was mis-resolving.
+           *
+           * What actually happens: `app/page.tsx` renders the PUBLIC
+           * marketplace landing for everyone with no redirect — deliberately,
+           * because the owner asked that the landing stay reachable when signed
+           * in. Auth.js then returns the visitor to where they started, which
+           * for somebody who pressed Sign in on the landing is the landing. A
+           * workshop owner therefore signed in successfully and was handed a
+           * consumer shopfront, which is indistinguishable from "the customer
+           * app came up".
+           *
+           * ⚠️ "REACHABLE WHEN LOGGED IN" AND "WHERE I LAND AFTER SIGNING IN"
+           * ARE DIFFERENT REQUESTS, and conflating them is what caused this.
+           * `/` still renders the landing for a signed-in visitor — that
+           * request is untouched and `page.tsx` still has no redirect. This
+           * only changes where the SIGN IN BUTTON sends you, because pressing
+           * it means "let me in", not "show me the shop".
+           *
+           * `/home/dashboard` is the dashboard's one canonical URL (§18) and is
+           * role-aware, so every workspace tree lands its own audience.
+           */
+          signInHref="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard"
           signedIn={signedIn}
           // T-0016, as ONE shared component so all seven apps mount the identical
           // control. It lists only the viewer's own memberships and the API
