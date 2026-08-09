@@ -1,7 +1,7 @@
 # Next session — start here
 
-**Rewritten 2026-08-09 (pt2) at session close. Tip `ef82dce` on `master`.**
-Working tree clean. **4 commits, NONE PUSHED.**
+**Updated 2026-08-09 (pt3). Tip `d6b643d` on `master` — PUSHED AND DEPLOYED.**
+Working tree clean.
 
 ▶ **FIRST TWO COMMANDS:**
 ```bash
@@ -14,25 +14,42 @@ Owner policy: five slices + issue resolution every session. Never the scheduler.
 
 ---
 
-# ═══ 🔴 READ THIS FIRST: NOTHING FROM TODAY IS ON PRODUCTION ═══
+# ═══ ✅ DEPLOYED 2026-08-09 18:38–18:50 UTC — `aaa15d4` → `d6b643d` ═══
 
-Four commits are local. Production is still `aaa15d4`, which is healthy and
-unchanged — today's work has not touched it.
+The five stranded commits are on production. The pass, in order, and what each
+one actually proved:
 
-```bash
-git push origin master                                  # triggers Release → apex
-gh workflow run apply-migrations.yml  -f confirm=APPLY   # migrations 073, 074, 075
-gh workflow run deploy-api.yml        -f confirm=APPLY   # the towing routes
-gh workflow run live-suite.yml                           # THEN this. ALWAYS.
-```
+| Step | Run | Result |
+|---|---|---|
+| `git push origin master` | — | `aaa15d4..d6b643d` |
+| Release (auto, on push) | `31329537341` | success — apex rebuilt |
+| `apply-migrations -f confirm=APPLY` | `31329576051` | **3 applied, 71 skipped, 74 in repo** — 073, 074, 075 |
+| Apply-migrations re-check (auto, post-Release) | `31329738077` | success — **PENDING 0** |
+| `deploy-api -f confirm=APPLY` | `31329772251` | success — image built, pushed, Render deploy waited for and read back |
+| Live suite | `31329916776` | **25 passed / 0 failed / 0 skipped** |
 
-⚠️ Push and migrate in **one deliberate pass**. Pushing alone deploys the apex
-and the API against a schema that does not yet have 073/074/075 — the
-"migrations applied ≠ feature live" trap in its other direction.
+⚠️ The first Live suite (`31329738097`, auto-chained off Release) failed 2 —
+customer-web 502. That was a **free-tier cold start**, not a defect: the same two
+checks passed on the very next run four minutes later. Do not chase it.
+
+**Verified by hand afterwards, because the live suite does not cover today's
+work at all** — it has no towing and no fleet checks:
+
+- All **8 towing route families answer 401** on `/api/v1/towing/*` (dashboard,
+  requests, recoveries, drivers, vehicles, incidents, invoices, settings) —
+  deployed and gated, not 404.
+- ⚠️ **The API has a global prefix `api/v1`** (`apps/api/src/main.ts:10`). A probe
+  without it returns 404 on every route and looks exactly like "not deployed".
+  One route also returned curl `000` once and 401 on three retries — a transport
+  failure is not an authorization fact.
+- The **`unnamed` alert fix (075) is applied but not exercised** — proving it
+  needs a real registration on live, which has not been run.
+
+**Still-open live gaps this pass did NOT close** — see the section below.
 
 ---
 
-# ═══ WHAT SHIPPED (local only) ═══
+# ═══ WHAT SHIPPED (now on production) ═══
 
 | Commit | |
 |---|---|
@@ -141,6 +158,26 @@ towing-web builds all 10 routes · API boots, all towing routes **401 not 404**.
 **Nothing has been run against production this session.** The last live
 measurement was at 12:50 UTC: five services up, 18 parts, 1 mechanic, all three
 owner buttons present.
+
+---
+
+# ═══ 🔴 NEW GAPS FOUND WHILE VERIFYING THE DEPLOY ═══
+
+**C1 — towing-web has NO deploy path at all.** Ten screens exist in the repo and
+**no user can reach any of them.** There is no `deploy-towing-web.yml` and no
+`autoworkshop-towing` Render service; the only deploy workflows name
+`autoworkshop-{web,api,customer-web,supplier-web,keycloak,postgres}`. The API
+behind those screens IS live. **Provisioning a sixth Render service is an owner
+decision** — A4 already flags that a fifth service shares the free instance-hour
+pool. Ask before provisioning.
+
+**C2 — `POST /api/v1/registration/fleet` returns 404.** Migration 075 created
+`identity.register_fleet` in the database, but no controller calls it —
+`apps/api/src/identity/registration.controller.ts` has `workshop`, `supplier`
+and `customer` only. The door exists in the schema and nothing opens it. This is
+the *inverse* of "a route with no caller": a **caller with no route**. It is
+step 2 of the fleet build below, not a regression — but until it lands, a
+`fleet_administrator` still cannot be created through the product.
 
 ---
 
