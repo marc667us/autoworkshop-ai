@@ -1,12 +1,12 @@
 # Next session — start here
 
-**Rewritten 2026-08-09 at session close. Tip `1576d62` on `master`, pushed.**
-Working tree clean. 9 commits this session.
+**Rewritten 2026-08-09 (pt2) at session close. Tip `ef82dce` on `master`.**
+Working tree clean. **4 commits, NONE PUSHED.**
 
 ▶ **FIRST TWO COMMANDS:**
 ```bash
 bash scripts/start-session.sh          # kills stale servers, applies local migrations
-bash scripts/record-live-state.sh      # NEW — photographs what is actually deployed
+bash scripts/record-live-state.sh      # photographs what is actually deployed
 ```
 
 Owner policy: five slices + issue resolution every session. Never the scheduler.
@@ -14,130 +14,141 @@ Owner policy: five slices + issue resolution every session. Never the scheduler.
 
 ---
 
-# ═══ EVERYTHING IS DEPLOYED AND VERIFIED ═══
+# ═══ 🔴 READ THIS FIRST: NOTHING FROM TODAY IS ON PRODUCTION ═══
 
-Unusually for this repository, there is **nothing broken on production** at
-close. Measured, not assumed:
-
-| | |
-|---|---|
-| **Live suite** | **25 passed / 0 failed / 0 skipped** (anonymous) |
-| | **0 / 0 / 4 SKIPPED** (signed-in — no credentials, see A1) |
-| **Playwright** | **138 passed / 0 failed / 2 skipped** |
-| **Unit** | 17/17 tasks, API 908 passed / 0 failed / 1 skipped |
-| **Lint** | 16/16 · nav coverage 0 gaps |
-| **Migrations** | **072 of 072 applied to production** (`6 applied, 65 skipped`) |
-| **Services** | five, all answering: apex · customer · **supplier (NEW)** · api · keycloak |
-
-Both of the owner's buttons are in the served apex HTML, and the supplier one
-signs in at the supplier app's **own origin** with a path-only callback.
-
----
-
-# ═══ WHAT SHIPPED 2026-08-09 ═══
-
-## 🔴 The `supplier_owner` role could not exist in production
-
-Before building the button, the 08-08 question was asked of the role: *which
-production code path WRITES this membership?* **None.** `identity.memberships`
-had exactly two writers — `register_workshop` (always `workshop_owner`) and the
-admin-only `grant()`. The role was in `ROLE_PRECEDENCE`, the permission matrix,
-the supplier nav tree and the whole `supplier-web` app, and nothing could
-create one. Shipping the button first would have produced accounts that sign in
-and are refused by every supplier route — **the customer-role defect of 08-08,
-one week later** — and it would have passed every test, because
-`seed-dev-identity.sh` writes that membership with raw SQL.
-
-Migration **068** is the missing path. The button came second.
-
-## Verification, not a free-for-all (069 · 070 · 071 · 072)
-
-A registrant works inside their own organisation immediately and is **not** in
-the public registries until a platform administrator approves. The registries
-already default to invisible, so **approval is what publishes**. The alert is a
-**trigger**, so it commits with the registration rather than in a second
-autocommit statement a crash can lose. Admin queue at
-`/directory/registrations`.
-
-## Six HIGH defects, across two gates, neither sufficient alone
-
-**Codex found 3** (fixed in 071) · **the Supervisor then found 3 more Codex
-missed** (fixed in 072). The two worth carrying:
-
-1. 🔴 **`SECURITY DEFINER` DOES NOT EXEMPT ANYTHING FROM FORCE RLS.** The admin
-   alert was inert on Render. Measured: local owner (`rolbypassrls=t`) sees
-   **2** administrators, a NOBYPASSRLS role sees **0**. My rehearsal ran as the
-   bypassing owner so it could not have caught it — while quoting that exact
-   scar in the migration's header.
-2. 🔴 **A workshop could publish ITSELF**, bypassing the entire verification
-   gate. `DirectoryService.setPublication` never consulted the queue.
-
-## Also shipped
-`GET /leads` (crm.leads had a writer and no reader since 064) · migration 067
-(five more settings tables admitted a customer: **1/1/1/1 → 0/0/0/0**) ·
-signed-in live-suite job · admin verification screen · `.dockerignore`
-(verified: image builds, context 2.75 MB) · `New job card` quick-create.
-
----
-
-# ═══ 🔴 FIVE TRAPS THIS SESSION ADDED TO THE RECORD ═══
-
-1. **`it.runIf(x)` IS EVALUATED AT COLLECTION TIME**, before `beforeAll` — nine
-   tests could never have run and reported "skipped" against a healthy
-   database. Use a runtime `ctx.skip()`.
-2. **PIPING TO `tail` MASKS THE REAL EXIT CODE.** Bit three times in one day:
-   a Docker build reported "exit 0" having produced no image; `pnpm build` and
-   Playwright the same. **Capture `$?` separately, and read the COUNT.**
-3. **THE DRIFT CHECK I BUILT TO CATCH SILENT FAILURES WAS SILENTLY FAILING.**
-   It printed `PENDING 0 — production matches` four lines below the runner's own
-   `6 pending`, because it grepped for `apply` and a dry run prints `PENDING`.
-   **And I "verified it against real output" — locally, where nothing was
-   pending, so 0 was right for the wrong reason.** Testing a detector only
-   against the negative case proves nothing.
-4. **MIGRATIONS APPLIED ≠ FEATURE LIVE.** Production got the schema and the API
-   was not redeployed; four new routes 404'd. Found only because the new
-   route checks were added. **Deploying the DB and the code are two acts.**
-5. **A GREEN SUITE MEASURED AGAINST AN EMPTY SHOP.** Playwright's 138/2 baseline
-   was taken while the marketplace had no stock, hiding a *serious*
-   colour-contrast violation on a button that only renders when there is stock,
-   and a nav test that could never have caught the defect it is named for.
-
----
-
-# ═══ OPEN WORK, RANKED ═══
-
-| # | Item |
-|---|---|
-| **A1** | 🔴 **`LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD` are not set**, so the signed-in half of the live suite SKIPS 4 and **nothing verifies what a real owner sees on production** — the gap that cost four misdiagnoses on 08-08. `gh secret set LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD`. Owner-only (real credentials). |
-| **A2** | **Nobody has driven the supplier funnel end to end on live.** Everything is deployed and probed anonymously; no human has actually registered a supplier through the button. That is the first thing to do next session. |
-| **A3** | **"Add new" buttons: 2 of ~40 list screens have one.** `New job card` was added, but it renders for **reception only** — `create-job-card` is in one nav tree, so the OWNER who asked for it cannot see it. Widening is a navigation change and needs review (`CLAUDE.md` forbids changing approved navigation silently). Pinned in `quick-create.spec.ts`. **The real gap is that most entities have no create screen at all.** |
-| **A4** | **A fifth Render service now shares the free instance-hour pool.** It ran out once (2026-07-28) and suspended everything. If services start suspending, `autoworkshop-supplier` is the newest consumer. |
-| **A5** | 057's `knowledge.diagnostic_trees` + `learning.course_materials` applied and EMPTY. |
-| **A6** | Migration **065 unused** (harmless, do not renumber). |
-| **B** | **Blocked on the MX record:** email delivery, password reset, email verification. **SPF TXT is live; only the MX is missing.** |
-| **C** | **Owner only:** the A1 secrets · KC password in PUBLIC git history · `RENDER_API_KEY` unrotated · ScrapeGraph key pasted into a transcript 2026-08-08. |
-
----
-
-# ═══ DEPLOY CHAIN — FIVE LINKS NOW ═══
+Four commits are local. Production is still `aaa15d4`, which is healthy and
+unchanged — today's work has not touched it.
 
 ```bash
-# 🔴 EVERY ONE NEEDS -f confirm=APPLY OR IT DOES NOTHING AND GOES GREEN.
-gh workflow run apply-migrations.yml    -f confirm=APPLY   # database
-gh workflow run deploy-api.yml          -f confirm=APPLY   # API
-gh workflow run deploy-customer-web.yml -f confirm=APPLY   # customer
-gh workflow run deploy-supplier-web.yml -f confirm=APPLY   # supplier (NEW)
-#   apex (workshop-web) deploys on push to master, via Release
-gh workflow run point-web-at-keycloak.yml -f confirm=APPLY # apex env: it OWNS
-                                                           # the whole set
-gh workflow run live-suite.yml                             # THEN THIS. ALWAYS.
+git push origin master                                  # triggers Release → apex
+gh workflow run apply-migrations.yml  -f confirm=APPLY   # migrations 073, 074, 075
+gh workflow run deploy-api.yml        -f confirm=APPLY   # the towing routes
+gh workflow run live-suite.yml                           # THEN this. ALWAYS.
 ```
 
-⚠️ **`apply-migrations.yml` now also runs itself after every Release** as an
-inspection, reporting IN REPO / APPLIED / PENDING and going **red** when
-production is behind. It cannot apply on that path (`inputs` is null on a
-`workflow_run`, so confirm falls back to empty).
+⚠️ Push and migrate in **one deliberate pass**. Pushing alone deploys the apex
+and the API against a schema that does not yet have 073/074/075 — the
+"migrations applied ≠ feature live" trap in its other direction.
 
-⚠️ **Render drops the first connection after a firewall change** —
-`SSL connection has been closed unexpectedly` is not a TLS fault, it is the
-allow-list not having propagated. **Retry once** before diagnosing.
+---
+
+# ═══ WHAT SHIPPED (local only) ═══
+
+| Commit | |
+|---|---|
+| `9a03e45` | 18 organisation-scoped foreign keys — migration 073 |
+| `d79d07f` | Towing: 7 tables, 14 routes, 10 screens — migration 074 |
+| `7cefd88` | Fleet registration door + a live "unnamed" defect — migration 075 |
+| `ef82dce` | ADR-020 — how a fleet sees workshop data |
+
+**Coverage moved 255 → 265 of 380 distinct screens (67% → 70%).**
+
+## 🔴 The coverage audit had been measuring two apps out of seven
+
+The owner said functionality was missing while `audit-menu-coverage.mjs` printed
+`0 dead ends`. Both were true: it measured six role trees across workshop-web
+and customer-web only, and `COMPLETION_PLAN.md` says the other five apps are
+"out of scope for this plan". It now measures **11 trees across all 7 apps** and
+prints a deduped headline. **113 dead ends remain.**
+
+| App | Working |
+|---|---|
+| workshop-web | 213 · customer-web 40 · **towing-web 10/10 (NEW)** |
+| supplier-web | **4 of 39** |
+| admin-web | **5 of 26** |
+| fleet-web | **0 of 29** |
+| insurance-web | **0 of 28** |
+
+---
+
+# ═══ ▶ NEXT: FLEET, AND BOTH BLOCKERS ARE ALREADY CLEARED ═══
+
+Build order is settled. Do NOT re-derive it.
+
+1. **Fleet domain schema** — vehicles, drivers, maintenance plans, downtime,
+   cost centres, approval limits, service policies. Org-scoped to the
+   `fleet_operator` org, composite keys from the first line (copy 074's shape).
+2. **Fleet API** — including the membership aggregation ADR-020 describes.
+3. **The 29 screens.**
+
+**Blocker 1, CLEARED by 075:** nothing could create a `fleet_administrator` at
+all. `identity.register_fleet` is the missing door.
+
+**Blocker 2, CLEARED by ADR-020:** a third of the 29 screens are rows in the
+WORKSHOP's organisation. Owner chose the membership route — the fleet's user
+holds an ordinary `customer` membership at each workshop, resolved by
+`memberships_for_subject`, and the API reuses `SelfServiceService` with a
+`TenantContext` per workshop. **No policy is widened.** Proven, not inferred:
+one account held **2 active memberships** and the lookup saw both.
+
+⚠️ ADR-020's consequence for the build: an empty Repairs screen must say *"you
+have not added a workshop yet"* and link to enrolment — never render blank.
+
+---
+
+# ═══ 🔴 DEFECTS FOUND TODAY THAT ARE STILL LIVE ON PRODUCTION ═══
+
+**Every registration admin alert says "unnamed".** Since migration 070, for
+WORKSHOP and SUPPLIER registrations too — not just fleet. The trigger reads the
+organisation name before opening any door; `identity.organizations` has only
+`tenant_isolation` (no tenant context during registration), an INSERT-only
+bootstrap policy, and `enrolment_bootstrap_select` gated on `app.bootstrap_org`,
+**which no registration function ever set**. Invisible locally because the
+definer's owner is a superuser. **Fixed in 075 — but not deployed.**
+
+**14 two-column `(x, tenant_id)` foreign keys remain**, each with the same
+cross-organisation hole 073 closed for eighteen others. `fk_line_invoice_scope`,
+`fk_claim_policy_scope` and twelve more, all named in
+`docs/05-database/RELATIONSHIPS.md` §8. That is a migration of its own.
+(Two more are correctly 2-column — their parent IS `identity.organizations`.)
+
+---
+
+# ═══ LESSONS THIS SESSION ADDED ═══
+
+1. 🔴 **RLS ANSWERS REACHABILITY FOR READS, NOT REFERENCES.** RI checks bypass
+   RLS even under FORCE. Measured: org A could not read org B's job card
+   (0 rows) and could still write a warranty citing it (`INSERT 0 1`).
+2. 🔴 **A COMPOSITE `ON DELETE SET NULL` NULLS EVERY KEY COLUMN**, including
+   NOT NULL `tenant_id`. Name the column: `SET NULL (job_card_id)` (PG15+).
+3. 🔴 **`NO ACTION`, NOT `RESTRICT`,** when the child is also org-CASCADEd —
+   RESTRICT is checked immediately and offboarding an organisation can abort on
+   trigger firing order.
+4. 🔴 **A MIGRATION'S OWN ORPHAN CHECK WAS INERT UNDER FORCE RLS.** 6 rows as
+   owner, 0 as the Render role. Set `app.current_role='admin'` **and assert the
+   escape is live** rather than assuming it.
+5. 🟢 **RLS IS TESTABLE LOCALLY: `SET ROLE autoworkshop_app`** (NOBYPASSRLS =
+   Render's shape). verify/074 does it. **Stop writing "only meaningful under
+   rehearsal".**
+6. 🔴 **MY OWN DETECTOR WAS WRONG TWICE BEFORE THE BUG WAS REAL** — wrong
+   `event_key`, then wrong `resource_id`; both reported "no admin alert"
+   against an alert that fired. Use a **before/after delta**, never a guessed
+   column filter.
+7. 🔴 **THIRD ROLE THAT COULD NOT EXIST** (`customer` → `supplier_owner` →
+   `fleet_administrator`). **Ask it of every role before building its screens.**
+8. 🔴 **`pnpm typecheck | tail` REPORTED EXIT 0 WHILE TYPECHECK FAILED** —
+   fourth instance. Capture `$?` separately.
+
+---
+
+# ═══ GATES AT CLOSE (all local) ═══
+
+migrations **75/75** · verify/073 **8/8** · verify/074 **7/7** · verify/075
+**5/5** · rehearse/075 green under NOBYPASSRLS · API **924 passed / 0 failed /
+1 skipped** · lint **16/16** · typecheck **17/17** · nav coverage **0 gaps** ·
+towing-web builds all 10 routes · API boots, all towing routes **401 not 404**.
+
+**Nothing has been run against production this session.** The last live
+measurement was at 12:50 UTC: five services up, 18 parts, 1 mechanic, all three
+owner buttons present.
+
+---
+
+# ═══ STILL OPEN FROM 08-09 pt1 (unchanged) ═══
+
+- **A1** `LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD` unset → the signed-in half
+  of the live suite SKIPS 4. **Owner-only.**
+- **A2** Nobody has driven the supplier funnel end to end on live as a human.
+- **A3** "Add new" on 2 of ~40 list screens. (Towing's 10 all have one.)
+- **A4** A fifth Render service shares the free instance-hour pool.
+- **B** MX record still blocks all email.
