@@ -45,6 +45,14 @@ on:
         description: 'Whose organisation to seed into — the account you sign in as'
         required: false
         default: 'marc667us@yahoo.com'
+      create_workshop_if_missing:
+        description: 'If the account owns NOTHING, register a workshop for it first (yes/no)'
+        required: false
+        default: 'no'
+      workshop_name:
+        description: 'Name for that workshop, only used when one is created'
+        required: false
+        default: 'AutoWorkshop Demo Garage'
       demo_tag:
         description: 'Tag written into every seeded row so it can be found again'
         required: false
@@ -70,6 +78,8 @@ jobs:
       DB_NAME: autoworkshop-postgres
       OWNER_EMAIL: ${{ inputs.owner_email }}
       DEMO_TAG: ${{ inputs.demo_tag }}
+      CREATE_WORKSHOP: ${{ inputs.create_workshop_if_missing }}
+      NEW_WORKSHOP_NAME: ${{ inputs.workshop_name }}
       CUSTOMER_CARS: ${{ inputs.customer_cars }}
       FLEET_CARS: ${{ inputs.fleet_cars }}
       CONFIRM: ${{ inputs.confirm }}
