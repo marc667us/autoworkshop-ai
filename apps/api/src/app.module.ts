@@ -26,6 +26,7 @@ import { SecurityModule } from './security/security.module';
 import { AgentsModule } from './agents/agents.module';
 import { CrmModule } from './crm/crm.module';
 import { OperationsModule } from './operations/operations.module';
+import { TowingModule } from './towing/towing.module';
 
 /**
  * Modular monolith root.
@@ -61,6 +62,7 @@ import { OperationsModule } from './operations/operations.module';
     CallsModule,
     SecurityModule,
     OperationsModule,
+    TowingModule,
     // The agent layer: triage, supplier discovery, lead discovery.
     // Runs with no agent host configured — see AgentsModule's header.
     AgentsModule,
