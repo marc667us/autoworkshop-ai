@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { getWorkspace, visibleGroups, workspaceForRole } from '@autoworkshop/navigation';
-import { isForeignToWorkshop, navRoleFor } from './viewer-contract';
+import { isForeignToWorkshop, isForeignToWorkspace, navRoleFor } from './viewer-contract';
 
 /**
  * The regression guard for the 45-screen leak.
@@ -104,7 +104,10 @@ describe('both gates call the guard — not just the predicate', () => {
     // imports is what makes this bite.
     readFileSync(new URL(f, import.meta.url), 'utf8').replace(/^\s*import[^;]*;/gm, '');
 
-  const CALL = 'isForeignToWorkshop(';
+  // ⚠️ THE GUARD IS NOW WORKSPACE-SCOPED, so the call to pin is
+  // `isForeignToWorkspace(`. The old name asked "foreign to the WORKSHOP",
+  // which both guards asked in every app — refusing four apps' own users.
+  const CALL = 'isForeignToWorkspace(';
 
   it('requireNavRoute refuses a foreign role', () => {
     expect(read('./require-route.ts')).toContain(CALL);
@@ -128,5 +131,60 @@ describe('both gates call the guard — not just the predicate', () => {
       // undefined)`, and the first version of this check compared against that
       // prose instead of the code.
     }
+  });
+});
+
+/**
+ * 🔴 THE HALF THE ORIGINAL FIX GOT WRONG, AND THE TESTS ABOVE COULD NOT SEE.
+ *
+ * Every assertion above is about the WORKSHOP tree, so all twelve stayed green
+ * while both route guards refused a customer on customer-web, a supplier on
+ * supplier-web, a towing operator on towing-web and a fleet administrator on
+ * fleet-web — the four apps those roles exist for. The guards were handed a
+ * `workspaceId` and asked a question that ignored it.
+ *
+ * It survived because the live suite's signed-in job has been SKIPPED since it
+ * was written (no `LIVE_OWNER_EMAIL`), and because three of these four roles
+ * could not be created in production at all until 2026-08-08/09. Anonymous
+ * visitors have no role, and `undefined` is foreign to nothing.
+ */
+describe('a role is refused ELSEWHERE and admitted at HOME', () => {
+  const HOME: ReadonlyArray<readonly [string, string]> = [
+    ['customer', 'customer'],
+    ['supplier_owner', 'supplier'],
+    ['fleet_administrator', 'fleet'],
+    ['insurance_assessor', 'insurance'],
+    ['towing_operator', 'towing'],
+  ];
+
+  it.each(HOME)('%s is NOT foreign to its own workspace (%s)', (role, home) => {
+    expect(isForeignToWorkspace(home, role)).toBe(false);
+  });
+
+  it.each(HOME)('%s IS still foreign to the workshop', (role) => {
+    // The original leak fix, unchanged: this is what stops a customer reaching
+    // the 45-item workshop staff tree.
+    expect(isForeignToWorkspace('workshop', role)).toBe(true);
+    expect(isForeignToWorkshop(role)).toBe(true);
+  });
+
+  it('a role is foreign to every workspace that is not its own', () => {
+    for (const [role, home] of HOME) {
+      for (const [, other] of HOME) {
+        if (other === home) continue;
+        expect(isForeignToWorkspace(other, role)).toBe(true);
+      }
+    }
+  });
+
+  it('workshop staff and an unresolved role are admitted to the workshop', () => {
+    // `undefined` means "not yet resolved" — the staff-mid-render case the
+    // default tree exists for, and the signed-out visitor. Unchanged.
+    expect(isForeignToWorkspace('workshop', undefined)).toBe(false);
+    expect(isForeignToWorkspace('workshop', 'technician')).toBe(false);
+    // ⚠️ `platform_administrator` is deliberately unmapped and therefore lands
+    // on the workshop, exactly as before — sweeping it in alongside the
+    // customer would turn a leak fix into a lockout.
+    expect(isForeignToWorkspace('workshop', 'platform_administrator')).toBe(false);
   });
 });

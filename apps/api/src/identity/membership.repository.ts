@@ -235,6 +235,77 @@ export class MembershipRepository {
   }
 
   /**
+   * REGISTRATION — an identity becomes a FLEET OPERATOR (migration 075).
+   *
+   * 🔴 THE THIRD ROLE THAT COULD NOT EXIST, and the last of the three to get a
+   * caller. `customer` (2026-08-08) and `supplier_owner` (2026-08-09) each
+   * shipped with a navigation tree, a permission matrix entry and an entire web
+   * app before anybody asked which production path WRITES the role. The answer
+   * was "none" all three times.
+   *
+   * `fleet_administrator` was found the same way and migration 075 built the
+   * door — and then the door had no handle for a day: `identity.register_fleet`
+   * existed in the database while `POST /registration/fleet` answered 404, so
+   * fleet-web could be deployed, could render all 29 of its routes, and could
+   * not be signed into by anybody at all. A CALLER WITH NO ROUTE, which is the
+   * exact inverse of the customer defect where a route had no caller. Both ship
+   * green.
+   *
+   * ⚠️ SAME RULES AS `registerSupplier`, for the same reasons: the caller is the
+   * token SUBJECT and never a user id from a body, and the ROLE
+   * (`fleet_administrator`) and the ORG TYPE (`fleet_operator`) are literals
+   * inside migration 075 rather than parameters.
+   *
+   * 🔴 AND THE DOUBLE-SUBMIT GUARANTEE IS MIGRATION 076's, NOT 075's. This
+   * comment first said "enforced in the database so a double-submitted form
+   * cannot race two tenants into existence" — copied from `registerSupplier`,
+   * where it is true. It was FALSE here: 075 shipped the `IF EXISTS` membership
+   * check with no advisory lock, so two concurrent submissions could each see
+   * no membership and create a tenant apiece, and a fleet could race a WORKSHOP
+   * registration because that one holds a lock this function never took. Codex
+   * found it reviewing the route. 076 adds
+   * `pg_advisory_xact_lock('identity.register:' || user)` — the same key as
+   * 071/072 — and asserts from `pg_get_functiondef` that all three registration
+   * functions hold it.
+   *
+   * ⚠️ `queryWithoutTenant`, NECESSARILY. The caller has no membership yet —
+   * that is the entire situation this route exists for.
+   */
+  async registerFleet(
+    subject: string,
+    fleetName: string,
+    locationName: string | undefined,
+  ): Promise<{
+    tenantId: string;
+    organizationId: string;
+    branchId: string;
+    membershipId: string;
+  }> {
+    const rows = await this.db.queryWithoutTenant<{
+      o_tenant_id: string;
+      o_organization_id: string;
+      o_branch_id: string;
+      o_membership_id: string;
+    }>(
+      // ⚠️ THE `o_` PREFIXES ARE THE FUNCTION'S REAL COLUMN NAMES, not a local
+      // alias choice. Migration 075 needs them because a `RETURNS TABLE` column
+      // called `organization_id` makes every unqualified reference inside the
+      // body ambiguous — at RUNTIME, not at CREATE time.
+      `SELECT o_tenant_id, o_organization_id, o_branch_id, o_membership_id
+         FROM identity.register_fleet($1, $2, $3)`,
+      [subject, fleetName, locationName ?? ''],
+    );
+    const row = rows[0];
+    if (!row) throw new Error('register_fleet returned no row');
+    return {
+      tenantId: row.o_tenant_id,
+      organizationId: row.o_organization_id,
+      branchId: row.o_branch_id,
+      membershipId: row.o_membership_id,
+    };
+  }
+
+  /**
    * ENROLMENT — an identity becomes a CUSTOMER of a workshop that publishes
    * itself (migration 061).
    *

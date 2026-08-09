@@ -7,7 +7,7 @@ import {
   type PermissionKey,
 } from '@autoworkshop/navigation';
 import { viewerRole, currentViewer } from './viewer';
-import { isForeignToWorkshop } from './viewer-contract';
+import { isForeignToWorkspace } from './viewer-contract';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 
 /**
@@ -83,7 +83,11 @@ export async function renderModulePage(
   // and the raw tree, never this function. A check that walks past the gap it
   // was written for is the recurring failure in this repository, and this is
   // another instance.
-  if (isForeignToWorkshop((await currentViewer(workspaceId))?.activeRole)) notFound();
+  // ⚠️ SCOPED TO THE WORKSPACE BEING RENDERED — see `isForeignToWorkspace`.
+  // Unscoped, this refused every non-workshop role on its OWN app, which for
+  // fleet-web meant the dashboard 404'd the instant registration succeeded.
+  if (isForeignToWorkspace(workspaceId, (await currentViewer(workspaceId))?.activeRole))
+    notFound();
 
   const workspace = workspaceForRole(base, await viewerRole(workspaceId));
 

@@ -32,7 +32,14 @@ interface ApiRegistration {
   id: string;
   organizationId: string;
   organizationName: string | null;
-  kind: 'workshop' | 'supplier';
+  // ⚠️ THIS LOCAL COPY IS WHY THE MISLABEL WAS INVISIBLE. It said
+  // `'workshop' | 'supplier'` while the database's CHECK constraint admitted a
+  // third value from migration 075, so TypeScript proved a two-branch render was
+  // exhaustive over a union that was already wrong. `string` at the end keeps
+  // the display honest when the schema gains a fourth kind before this file
+  // hears about it — the render names an unknown kind rather than borrowing a
+  // known one.
+  kind: 'workshop' | 'supplier' | 'fleet' | (string & {});
   status: RegistrationStatus;
   submittedByName: string | null;
   submittedByEmail: string | null;
@@ -105,7 +112,21 @@ async function Queue() {
               <>
                 <div style={{ fontWeight: 600 }}>{r.organizationName ?? 'unnamed'}</div>
                 <div style={{ fontSize: primitive.fontSize.xs, color: themeVar.textSecondary }}>
-                  {r.kind === 'supplier' ? 'Parts supplier' : 'Workshop'}
+                  {/* ⚠️ NAME EVERY KIND, AND FALL BACK TO THE RAW VALUE.
+                      This read `kind === 'supplier' ? … : 'Workshop'`, so the
+                      first fleet registration would have been presented to an
+                      administrator as a WORKSHOP — and they would have approved
+                      it believing that. A ternary is a two-value assumption;
+                      `kind` is now three and the database will admit a fourth
+                      before this file hears about it, so an unknown kind shows
+                      itself rather than borrowing the name of a known one. */}
+                  {r.kind === 'supplier'
+                    ? 'Parts supplier'
+                    : r.kind === 'fleet'
+                      ? 'Fleet operator'
+                      : r.kind === 'workshop'
+                        ? 'Workshop'
+                        : r.kind}
                 </div>
               </>
             ),

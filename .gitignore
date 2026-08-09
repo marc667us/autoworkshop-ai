@@ -146,3 +146,8 @@ infrastructure/keycloak/render/realm-prod.json
 # Never committed: a private key in a public repo is an incident this project
 # has already had once.
 infrastructure/docker/mailpit-tls/
+
+# Soak logs — `scripts/live-soak.sh` writes timestamped samples here. The
+# SCRIPT is the artifact worth reviewing; its output is a measurement of one
+# afternoon and would otherwise land in every future diff.
+tmp/

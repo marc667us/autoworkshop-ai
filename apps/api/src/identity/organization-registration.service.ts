@@ -45,7 +45,17 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * that is later reversed must actually take the listing down.
  */
 
-export type RegistrationKind = 'workshop' | 'supplier';
+/**
+ * ⚠️ `'fleet'` ADDED 2026-08-09 WITH THE ROUTE THAT FIRST WRITES IT.
+ *
+ * Migration 075 widened `organization_registrations_kind_check` to admit it, and
+ * `POST /registration/fleet` is the first production path that produces one — so
+ * before that route existed no row of this kind could reach here and the
+ * two-value union was true. It stopped being true in the same commit, which is
+ * why this moves with it: a value the database can store and the type cannot
+ * name is how `kind` ends up read through an `else`.
+ */
+export type RegistrationKind = 'workshop' | 'supplier' | 'fleet';
 export type RegistrationStatus = 'pending' | 'approved' | 'rejected';
 
 export interface RegistrationRow {
@@ -305,6 +315,24 @@ export class OrganizationRegistrationService {
             WHERE organization_id = $1`,
           [updated.organization_id, publish],
         );
+      } else if (updated.kind === 'fleet') {
+        // 🔴 A FLEET HAS NO PUBLIC REGISTRY, AND THIS BRANCH EXISTS TO SAY SO.
+        //
+        // Until it did, `else` meant "supplier": approving a fleet ran the
+        // `catalogue.suppliers` UPDATE below, matched ZERO rows because a fleet
+        // has no supplier listing, and then wrote an audit record claiming
+        // `published: true`. An administrator would have been told they
+        // published a business into a marketplace it can never appear in, and
+        // nothing would ever have contradicted them.
+        //
+        // Nothing to publish is the CORRECT outcome here, not a gap: a fleet is
+        // not listed to the public at all. Approval is what lets it trade, and
+        // that is carried by the registration's own status, which the caller has
+        // already updated. Recorded explicitly in the audit below rather than
+        // left as a silent no-op.
+        //
+        // Found by the Supervisor reviewing `POST /registration/fleet` — the
+        // route that made this reachable in the first place.
       } else {
         // 🔴 BY `organization_id`, AND THIS USED TO MATCH ON NAME.
         //
@@ -338,7 +366,14 @@ export class OrganizationRegistrationService {
         detail: {
           kind: updated.kind,
           organizationId: updated.organization_id,
-          published: publish,
+          // ⚠️ `published` MUST NOT CLAIM A LISTING THAT CANNOT EXIST. A fleet
+          // has no public registry, so approving one publishes nothing — and an
+          // audit record saying otherwise is exactly how an administrator ends
+          // up certain they approved a business that never appears anywhere.
+          published: updated.kind === 'fleet' ? false : publish,
+          ...(updated.kind === 'fleet'
+            ? { publicationNote: 'a fleet operator has no public registry; approval is what lets it trade' }
+            : {}),
           note: trimmed ?? null,
         },
       });

@@ -5,7 +5,7 @@ import {
   workspaceForRole,
 } from '@autoworkshop/navigation';
 import { currentViewer, viewerRole } from './viewer';
-import { grantsFor, isForeignToWorkshop } from './viewer-contract';
+import { grantsFor, isForeignToWorkspace } from './viewer-contract';
 
 /**
  * The gate a concrete page must call when its WORKSPACE is not gated as a whole
@@ -84,7 +84,11 @@ export async function requireNavRoute(
   // is what CLAUDE.md §8 forbids by name, and refusing without hiding leaves 45
   // menu entries that 404 — the signpost-that-404s failure this repository has
   // already paid for three times.
-  if (isForeignToWorkshop(viewer?.activeRole)) notFound();
+  // ⚠️ SCOPED TO THE WORKSPACE BEING RENDERED. This asked
+  // `isForeignToWorkshop` while holding `workspaceId` and ignoring it, so a
+  // customer was refused on CUSTOMER-web and a fleet administrator on
+  // FLEET-web — the apps those roles exist for. See `isForeignToWorkspace`.
+  if (isForeignToWorkspace(workspaceId, viewer?.activeRole)) notFound();
 
   // A signed-out visitor has no role and no grants, so they fall through to the
   // workspace default tree with `NO_GRANTS` — which is correct: they see what an

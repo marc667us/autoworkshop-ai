@@ -131,6 +131,62 @@ const NON_WORKSHOP_ROLES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * WHERE EACH OF THOSE ROLES ACTUALLY LIVES.
+ *
+ * 🔴 THE DEFECT THIS FIXES, AND IT REFUSED FOUR APPS' OWN USERS. The set above
+ * answers "is this role foreign to THE WORKSHOP", which is the right question in
+ * workshop-web and the wrong one everywhere else — yet `requireNavRoute` and
+ * `renderModulePage` both asked it while holding the `workspaceId` that would
+ * have made it right. Every one of them is passed a workspace and ignored it.
+ *
+ * The consequence, by reading: a signed-in `customer` on CUSTOMER-web, a
+ * `supplier_owner` on SUPPLIER-web, a `towing_operator` on TOWING-web and a
+ * `fleet_administrator` on FLEET-web were each refused with `notFound()` on
+ * their own workspace's screens — the four apps those roles exist for.
+ *
+ * ⚠️ IT SURVIVED BECAUSE NOBODY HAS EVER SIGNED IN ON LIVE. The live suite's
+ * signed-in job has been SKIPPED for want of `LIVE_OWNER_EMAIL` since it was
+ * written (gap A1), and the four roles above could not be created in production
+ * at all until 2026-08-08/09 — `customer`, `supplier_owner` and
+ * `fleet_administrator` each had no writer. The anonymous half of every gate
+ * passes, because an anonymous visitor has no role and `undefined` is not
+ * foreign to anything.
+ *
+ * ⚠️ ANY ROLE NOT NAMED HERE IS WORKSHOP STAFF, which keeps the original fix
+ * exactly as it was: `undefined` (staff mid-resolution) and
+ * `platform_administrator` (deliberately unmapped, see above) both land on
+ * `workshop`, so neither becomes foreign anywhere it was not before.
+ */
+const HOME_WORKSPACE: Readonly<Record<string, string>> = {
+  customer: 'customer',
+  supplier_owner: 'supplier',
+  fleet_administrator: 'fleet',
+  insurance_assessor: 'insurance',
+  towing_operator: 'towing',
+};
+
+/**
+ * Whether this role belongs to a DIFFERENT workspace than the one being
+ * rendered — the question both route guards meant to ask.
+ *
+ * `false` for an ABSENT role, exactly as `isForeignToWorkshop` is and for the
+ * same reason: absent means "not yet resolved", which is the staff-mid-render
+ * case the default tree exists for, and also the signed-out visitor.
+ *
+ * 🔴 STILL NOT THE CONTROL. CLAUDE.md §8: hidden ≠ secure. This removes a
+ * screen from someone who should not see it; the API's `TenantGuard`, the
+ * services' role checks and Postgres RLS deny independently, and every page
+ * must remain safe if this call were deleted.
+ */
+export function isForeignToWorkspace(
+  workspaceId: string,
+  activeRole: string | undefined,
+): boolean {
+  if (activeRole === undefined) return false;
+  return (HOME_WORKSPACE[activeRole] ?? 'workshop') !== workspaceId;
+}
+
+/**
  * Whether this role belongs to a different workspace than the workshop.
  *
  * `false` for an ABSENT role, deliberately: absent means "not yet resolved",

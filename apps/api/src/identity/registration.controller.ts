@@ -56,6 +56,26 @@ const RegisterSupplierBody = z.object({
 });
 
 /**
+ * The body of `POST /registration/fleet`.
+ *
+ * ⚠️ TWO FIELDS, AND NO ROLE. Same rule as the supplier body above: the role
+ * (`fleet_administrator`) and the organisation type (`fleet_operator`) are
+ * literals inside migration 075. A `roleName` field accepted here would turn a
+ * self-service sign-up into privilege escalation as a REST call.
+ */
+// ⚠️ EXPORTED, UNLIKE ITS SIBLINGS, SO THE STRICTNESS CAN BE ASSERTED AGAINST
+// THE REAL OBJECT. `fleet-registration.spec.ts` runs an attack body carrying
+// `roleName` through `validatedBody(RegisterFleetBody)`. A test that rebuilt the
+// schema locally would prove only that the copy is strict, and the copy is not
+// what the route uses — the exact shape of "a check that walks through its own
+// gap" this repository keeps finding.
+type RegisterFleetBody = z.infer<typeof RegisterFleetBody>;
+export const RegisterFleetBody = z.object({
+  fleetName: z.string().trim().min(2).max(120),
+  locationName: z.string().trim().min(1).max(120).optional(),
+});
+
+/**
  * The body of `POST /registration/customer`.
  *
  * ⚠️ ONE FIELD, AND `.strict()` VIA `validatedBody` REJECTS ANY OTHER. The
@@ -246,6 +266,83 @@ export class RegistrationController {
       }
       if (message.includes('a supplier needs a name')) {
         throw new BadRequestException('A supplier needs a name.');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * `POST /registration/fleet` — become a fleet operator.
+   *
+   * 🔴 THE HANDLE ON A DOOR THAT HAD NONE. Migration 075 created
+   * `identity.register_fleet` on 2026-08-09 and nothing called it, so
+   * `fleet_administrator` remained a role no production path could write —
+   * while `fleet-web` was deployed the same day and rendered all 29 of its
+   * routes to nobody. `POST /registration/fleet` answered 404. A caller with no
+   * route is as unshipped as a route with no caller, and both go green.
+   *
+   * ⚠️ ON `UserGuard`, NECESSARILY — the same reasoning as the supplier and
+   * customer routes below and above. The caller has no membership yet, which is
+   * the entire point, so `TenantGuard` would refuse the exact person this route
+   * exists for. What makes that safe is stated in migration 075: the role and
+   * the organisation type are literals rather than parameters, an account that
+   * already belongs to an organisation is refused by the DATABASE, and the
+   * bootstrap RLS door pins every inserted row to this user.
+   *
+   * 🔴 THE CONCURRENCY HALF OF THAT CAME LATER, IN 076, AND THIS COMMENT
+   * CLAIMED IT BEFORE IT WAS TRUE. 075's membership check took no lock, so two
+   * simultaneous submits could each find no membership and create a tenant
+   * apiece — and a fleet submit could race a workshop one, which holds a lock
+   * 075 never joined. 076 takes the same per-identity advisory lock as 071/072.
+   * Written down because the sentence read as a guarantee and was the reason
+   * nobody looked.
+   *
+   * ⚠️ THE FLEET IS NOT VERIFIED BY THIS CALL. Migration 075 widened the
+   * verification queue's `kind` to accept `'fleet'`, so registering enqueues the
+   * organisation for a platform administrator exactly as a supplier does. The
+   * response says so rather than leaving the screen to guess — a sign-up that
+   * quietly does half of what the person expects is worse than one that explains
+   * itself.
+   */
+  @Post('fleet')
+  async registerFleet(
+    @Req() req: UserRequest,
+    @Body(validatedBody(RegisterFleetBody)) parsed: RegisterFleetBody,
+  ) {
+    const subject = await this.subjectOf(req);
+    try {
+      const created = await this.memberships.registerFleet(
+        subject,
+        parsed.fleetName,
+        parsed.locationName,
+      );
+      return {
+        ...created,
+        roleName: 'fleet_administrator',
+        verificationStatus: 'pending',
+      };
+    } catch (err) {
+      // 🔴 THE DATABASE'S REFUSAL MUST REACH THE USER AS AN ANSWER, NOT A 500.
+      // `registerWorkshop` shipped that exact defect: a double-submitted form
+      // returned "Internal server error" for a guard that had worked perfectly,
+      // and the person concluded registration was broken when it had already
+      // succeeded.
+      //
+      // ⚠️ MATCHED ON THE MESSAGES MIGRATION 075 RAISES, and that coupling is
+      // deliberate — the strings are quoted in the migration. If either is
+      // reworded this falls back to a 500 rather than the wording drifting
+      // unnoticed into a silently-wrong error page.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('already belongs to an organisation')) {
+        throw new ConflictException(
+          'This account already belongs to an organisation. Sign in with a different account to register a fleet, or ask a platform administrator to add you to an existing fleet.',
+        );
+      }
+      if (message.includes('no active application user')) {
+        throw new BadRequestException('This account is not active.');
+      }
+      if (message.includes('a fleet needs a name')) {
+        throw new BadRequestException('A fleet needs a name.');
       }
       throw err;
     }
