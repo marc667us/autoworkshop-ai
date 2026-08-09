@@ -270,15 +270,24 @@ jobs:
           #
           # Show the body and name the policy, or the next person reads a policy
           # rejection as a broken endpoint.
-          if ! curl -fsS -X PUT -H "Authorization: Bearer ${KC_TOKEN}" \
-                 -H 'Content-Type: application/json' --data @/tmp/pw.json \
-                 "${KC_URL}/admin/realms/autoworkshop/users/${USER_ID}/reset-password" \
-                 -o /tmp/pwerr.txt; then
-            echo "::group::keycloak response"; head -c 400 /tmp/pwerr.txt; echo "::endgroup::"
-            echo "::error::Keycloak refused the password. The realm requires length>=12 with an upper case, a lower case, a digit and a SPECIAL character, and forbids reusing the last 3. Regenerate the secret to match, then re-run."
-            rm -f /tmp/pw.json /tmp/pwerr.txt
-            exit 1
-          fi
+          # ⚠️ NO `-f`. `--fail` DISCARDS THE RESPONSE BODY on an HTTP error, so
+          # `-o file` writes nothing and the diagnostic this block exists for is
+          # empty — which is exactly what happened: "keycloak response" printed
+          # `head: cannot open /tmp/pwerr.txt`. Read the status code instead and
+          # keep the body.
+          PW_CODE="$(curl -sS -X PUT -H "Authorization: Bearer ${KC_TOKEN}" \
+                       -H 'Content-Type: application/json' --data @/tmp/pw.json \
+                       -o /tmp/pwerr.txt -w '%{http_code}' \
+                       "${KC_URL}/admin/realms/autoworkshop/users/${USER_ID}/reset-password" || echo 000)"
+          case "$PW_CODE" in
+            2*) echo "password set (HTTP ${PW_CODE})" ;;
+            *)
+              echo "::group::keycloak response (HTTP ${PW_CODE})"
+              head -c 600 /tmp/pwerr.txt || true; echo; echo "::endgroup::"
+              echo "::error::Keycloak refused the password (HTTP ${PW_CODE}). The realm requires length>=12 with an upper case, a lower case, a digit and a SPECIAL character, forbids the username or email inside it, and forbids reusing the last 3. The body above says which."
+              rm -f /tmp/pw.json /tmp/pwerr.txt
+              exit 1 ;;
+          esac
           rm -f /tmp/pw.json
 
           # 🔴 THE KEYCLOAK USER ID IS THE `sub` CLAIM, and therefore the
