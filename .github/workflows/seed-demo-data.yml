@@ -167,7 +167,22 @@ jobs:
           SELECT m.role_name, m.status, o.name AS organisation, o.org_type
             FROM identity.users u
             CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
-            JOIN identity.organizations o ON o.id = m.organization_id
+            -- 🔴 A **LEFT** JOIN, AND THAT ONE LETTER MADE THIS REPORT LIE.
+            --
+            -- `identity.organizations` is under RLS too. An INNER join therefore
+            -- dropped every row whose organisation this connection cannot see —
+            -- and printed `(0 rows)`, which reads as "this account belongs to
+            -- nothing". It does belong; only the ORGANISATION NAME was
+            -- invisible. I reported that account as owning nothing on the
+            -- strength of this query, and the seeding step — which asks
+            -- `memberships_for_subject` and joins nothing — immediately
+            -- contradicted it with "already belongs to an organisation".
+            --
+            -- A join to an RLS-protected table silently converts "you may not
+            -- see this column" into "this row does not exist". Same family as
+            -- the FORCE RLS count that read zero an hour earlier, arriving by a
+            -- different door.
+            LEFT JOIN identity.organizations o ON o.id = m.organization_id
            WHERE lower(u.email) = lower(:'email');
           SQL
 
