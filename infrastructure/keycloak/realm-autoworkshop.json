@@ -340,10 +340,12 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3005/*"
+        "http://localhost:3005/*",
+        "https://autoworkshop-towing.onrender.com/*"
       ],
       "webOrigins": [
-        "http://localhost:3005"
+        "http://localhost:3005",
+        "https://autoworkshop-towing.onrender.com"
       ],
       "protocolMappers": [
         {
