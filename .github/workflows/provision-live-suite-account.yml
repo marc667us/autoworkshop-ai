@@ -259,9 +259,26 @@ jobs:
                             "value": os.environ["ACCOUNT_PASSWORD"],
                             "temporary": False}))
           PY
-          curl -fsS -X PUT -H "Authorization: Bearer ${KC_TOKEN}" \
-            -H 'Content-Type: application/json' --data @/tmp/pw.json \
-            "${KC_URL}/admin/realms/autoworkshop/users/${USER_ID}/reset-password"
+          # 🔴 THE REALM HAS A PASSWORD POLICY AND IT REJECTS WITH A BARE 400.
+          # Measured 2026-08-09: `length(12) and notUsername and notEmail and
+          # upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and
+          # passwordHistory(3)`. A 32-character ALPHANUMERIC password — strong by
+          # any reasonable measure — was refused for want of one punctuation
+          # mark, and `curl -f` reported only `error: 400` with no body. The
+          # Keycloak user had already been created by then, so the run failed
+          # halfway leaving an account nobody could sign into.
+          #
+          # Show the body and name the policy, or the next person reads a policy
+          # rejection as a broken endpoint.
+          if ! curl -fsS -X PUT -H "Authorization: Bearer ${KC_TOKEN}" \
+                 -H 'Content-Type: application/json' --data @/tmp/pw.json \
+                 "${KC_URL}/admin/realms/autoworkshop/users/${USER_ID}/reset-password" \
+                 -o /tmp/pwerr.txt; then
+            echo "::group::keycloak response"; head -c 400 /tmp/pwerr.txt; echo "::endgroup::"
+            echo "::error::Keycloak refused the password. The realm requires length>=12 with an upper case, a lower case, a digit and a SPECIAL character, and forbids reusing the last 3. Regenerate the secret to match, then re-run."
+            rm -f /tmp/pw.json /tmp/pwerr.txt
+            exit 1
+          fi
           rm -f /tmp/pw.json
 
           # 🔴 THE KEYCLOAK USER ID IS THE `sub` CLAIM, and therefore the
