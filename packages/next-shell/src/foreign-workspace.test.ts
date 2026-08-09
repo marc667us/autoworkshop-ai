@@ -182,9 +182,31 @@ describe('a role is refused ELSEWHERE and admitted at HOME', () => {
     // default tree exists for, and the signed-out visitor. Unchanged.
     expect(isForeignToWorkspace('workshop', undefined)).toBe(false);
     expect(isForeignToWorkspace('workshop', 'technician')).toBe(false);
-    // ⚠️ `platform_administrator` is deliberately unmapped and therefore lands
-    // on the workshop, exactly as before — sweeping it in alongside the
-    // customer would turn a leak fix into a lockout.
-    expect(isForeignToWorkspace('workshop', 'platform_administrator')).toBe(false);
+    expect(isForeignToWorkspace('workshop', 'workshop_owner')).toBe(false);
+  });
+
+  /**
+   * 🔴 THE OWNER'S REPORT: "log in as the owner, sign out, log in as admin, I
+   * still see owner page features."
+   *
+   * `platform_administrator` was absent from `ROLE_TO_NAV`, so `navRoleFor()`
+   * returned `undefined` and `workspaceForRole(base, undefined)` handed back the
+   * workshop's DEFAULT STAFF TREE — the owner-looking menu, shown to an
+   * administrator. Sign-out was never the fault: it already clears the switcher
+   * cookies.
+   *
+   * ⚠️ THIS TEST PREVIOUSLY ASSERTED THE OPPOSITE, and it caught this change
+   * rather than sleeping through it — which is what it is for. The old
+   * assertion was correct while an administrator had nowhere else to go;
+   * admin-web now exists and is deployed, so naming their home is no longer the
+   * lockout the code warned about.
+   */
+  it('a platform administrator belongs to admin-web, NOT the workshop menu', () => {
+    expect(isForeignToWorkspace('admin', 'platform_administrator')).toBe(false);
+    expect(isForeignToWorkspace('workshop', 'platform_administrator')).toBe(true);
+    // And still not swept in with the customer: `isForeignToWorkshop` is what
+    // workshop-web's layout renders the foreign-workspace state from, so this is
+    // the same answer by a second route.
+    expect(isForeignToWorkshop('platform_administrator')).toBe(false);
   });
 });

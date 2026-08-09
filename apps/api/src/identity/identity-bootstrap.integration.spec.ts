@@ -38,8 +38,31 @@ beforeAll(async () => {
     reachable = true;
     // The bootstrap function is the only way to see a subject without a tenant
     // context, which is precisely the thing under test.
+    // 🔴 A SUBJECT THAT ACTUALLY HAS A MEMBERSHIP, NOT WHICHEVER ROW COMES BACK
+    // FIRST.
+    //
+    // This was `... WHERE status = 'active' LIMIT 1` with no ORDER BY and no
+    // join. The property under test is that `memberships_for_subject` resolves
+    // a membership with NO tenant context set — so a subject with no membership
+    // at all fails it for a reason that has nothing to do with RLS.
+    //
+    // It passed for weeks and then failed on 2026-08-09 without a line of
+    // product code changing: eight active users had accumulated in the local
+    // database, one of them membership-less, and Postgres simply returned that
+    // one first. An unordered LIMIT 1 is not a fixture, it is a coin toss that
+    // usually lands the same way — and this repository already records "7 of 11
+    // defects were in the HARNESS, not the product".
+    //
+    // The join makes the selection describe what the test needs. If nothing
+    // matches, `seededSubject` stays null and the assertion SKIPS by its own
+    // guard rather than failing — an empty database is not a regression.
     const r = await pool.query<{ keycloak_subject: string }>(
-      `SELECT keycloak_subject FROM identity.users WHERE status = 'active' LIMIT 1`,
+      `SELECT u.keycloak_subject
+         FROM identity.users u
+         JOIN identity.memberships m ON m.user_id = u.id AND m.status = 'active'
+        WHERE u.status = 'active'
+        ORDER BY u.keycloak_subject
+        LIMIT 1`,
     );
     seededSubject = r.rows[0]?.keycloak_subject ?? null;
   } catch {

@@ -163,6 +163,35 @@ const HOME_WORKSPACE: Readonly<Record<string, string>> = {
   fleet_administrator: 'fleet',
   insurance_assessor: 'insurance',
   towing_operator: 'towing',
+  /**
+   * 🔴 THE OWNER'S REPORT, 2026-08-09: "if i log in as the owner and sign out
+   * and login as admin i still see owner page features."
+   *
+   * NOT a session bleed. Sign-out is sound — `performSignOut` clears the
+   * `aw.activeRole` / `aw.activeOrganization` switcher cookies, which was fixed
+   * on 08-07 after the owner reported the customer version of this. The cause is
+   * one line further on: `platform_administrator` is absent from `ROLE_TO_NAV`,
+   * so `navRoleFor()` returns `undefined`, and `workspaceForRole(base,
+   * undefined)` hands back the workshop's DEFAULT STAFF TREE — all 45 ungated
+   * items. An administrator signing into the apex was shown the owner's menu
+   * because nothing had said where an administrator belongs.
+   *
+   * ⚠️ THIS WAS A DELIBERATELY DEFERRED DECISION AND THE CIRCUMSTANCES CHANGED.
+   * `NON_WORKSHOP_ROLES` says of this role: "platform admins have a live history
+   * of being unable to use this application without a membership, and sweeping
+   * them in here alongside the customer would turn a leak fix into a LOCKOUT.
+   * Do NOT add them for consistency without deciding what an admin should
+   * actually see." That was correct when there was nowhere else for them to go.
+   * `admin-web` was deployed on 2026-08-09 with five working screens —
+   * organizations, registrations, products, security, operations-dashboard — so
+   * an administrator now HAS a workspace, and naming it is no longer a lockout.
+   *
+   * The consequence, stated: on the apex a platform administrator no longer sees
+   * the workshop staff menu. `workshop-web`'s layout already renders the
+   * foreign-workspace state for exactly this case. Their screens are on
+   * admin-web. Reverting is deleting this one line.
+   */
+  platform_administrator: 'admin',
 };
 
 /**
