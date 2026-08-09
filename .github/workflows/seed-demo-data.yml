@@ -1,0 +1,513 @@
+# Seed a WALKTHROUGH dataset into the owner's own workshop.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# Owner, 2026-08-09: "log in add staff given them permission and use sample data
+# and customer to test use request and complains use 10 cars for owners and 2
+# fleets each of 20 cars and run the systems so i can see the views as
+# marc667us@yahoo.com".
+#
+# So the data must land in the organisation THAT ACCOUNT ALREADY BELONGS TO —
+# seeding a fresh tenant would produce a beautiful demo the owner cannot see.
+# The organisation is RESOLVED from the email, never assumed, and the run fails
+# loudly if that account has no membership rather than inventing one.
+#
+# 🔴 THIS WRITES A LOT OF REAL PRODUCTION DATA into a real organisation:
+# staff memberships, customers, vehicles, service requests and feedback, plus two
+# fleet organisations. Every writing step is gated on `confirm=APPLY`, and every
+# row it creates is tagged so it can be found and removed again — see the
+# `demo_tag` input and the teardown note at the bottom.
+#
+# ⚠️ WHAT CANNOT BE SEEDED, AND WHY. `2 fleets each of 20 cars` has no
+# fleet-specific home: fleet-web has NO domain schema at all — the only vehicle
+# tables in this database are `core.vehicles` (which hangs off a customer) and
+# `towing.recovery_vehicles`. So each fleet is created as a real fleet
+# organisation and its 20 cars are `core.vehicles` under a customer record
+# representing that fleet. That is the honest shape available today; a
+# fleet-owned vehicle is a schema that does not exist yet, and pretending
+# otherwise would be a demo the product cannot support.
+#
+# ⚠️ AND THE FLEET CARS ARE NOT VISIBLE FROM THE OWNER'S WORKSHOP. They belong
+# to the fleets' own organisations, and RLS is what makes that true. ADR-020 is
+# the route by which a fleet's work becomes visible to a workshop — through a
+# membership, not a cross-organisation read — and that is not built yet.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Seed demo data
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write. Anything else inspects and reports only.'
+        required: false
+        default: ''
+      owner_email:
+        description: 'Whose organisation to seed into — the account you sign in as'
+        required: false
+        default: 'marc667us@yahoo.com'
+      demo_tag:
+        description: 'Tag written into every seeded row so it can be found again'
+        required: false
+        default: 'DEMO-2026-08-09'
+      customer_cars:
+        description: 'How many customer-owned cars'
+        required: false
+        default: '10'
+      fleet_cars:
+        description: 'How many cars in EACH of the two fleets'
+        required: false
+        default: '20'
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      OWNER_EMAIL: ${{ inputs.owner_email }}
+      DEMO_TAG: ${{ inputs.demo_tag }}
+      CUSTOMER_CARS: ${{ inputs.customer_cars }}
+      FLEET_CARS: ${{ inputs.fleet_cars }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          echo "will seed into the organisation owned by: ${OWNER_EMAIL}"
+          echo "tag: ${DEMO_TAG}   customer cars: ${CUSTOMER_CARS}   cars per fleet: ${FLEET_CARS}"
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d.get('id','')); break
+          ")"
+          [ -n "$DB_ID" ] || {
+            echo "::group::what /v1/postgres returned"; head -c 500 /tmp/pg_list.json; echo "::endgroup::"
+            echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          # `or []`: Render returns the key PRESENT and null when the list is
+          # empty, so a dict default would never fire.
+          print(json.dumps(d.get('ipAllowList') or []))" > /tmp/ip_allow_original.json
+
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'demo seeding'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          echo "firewall open"
+
+      - name: Who is this account, and what do they already have
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
+          echo "PSQL=$PSQL" >> "$GITHUB_ENV"
+
+          # 🔴 THROUGH `memberships_for_subject`, NEVER A DIRECT READ of
+          # identity.memberships — that table is ENABLE + FORCE ROW LEVEL
+          # SECURITY and answers ZERO rows to this connection however many exist.
+          # A provisioning workflow already shipped that mistake today: the guard
+          # counted 0, registered anyway, and the database refused it.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${OWNER_EMAIL}" <<'SQL'
+          \pset pager off
+          \echo '--- the account ---'
+          SELECT id, keycloak_subject, display_name, status
+            FROM identity.users WHERE lower(email) = lower(:'email');
+
+          \echo '--- what it belongs to ---'
+          SELECT m.role_name, m.status, o.name AS organisation, o.org_type
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+            JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email');
+          SQL
+
+      - name: Inspect only
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<INFO
+
+          DRY RUN — nothing written. The account and its memberships are printed
+          above; that is what the seed would target.
+
+          With confirm=APPLY this would, inside ONE transaction:
+            1. add four staff to that organisation — reception_staff,
+               workshop_manager, technician, storekeeper — each a real
+               identity.users row with an active membership, which IS the
+               permission grant
+            2. create ${CUSTOMER_CARS} customers, one car each
+            3. raise a service request per customer carrying a real complaint,
+               and leave feedback on half of them
+            4. create TWO fleet organisations with ${FLEET_CARS} cars each
+
+          Everything is tagged '${DEMO_TAG}' so it can be found and removed.
+          INFO
+
+      - name: Seed it
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+
+          # 🔴 ONE TRANSACTION. A half-seeded organisation is worse than an empty
+          # one: the owner would open a dashboard showing cars with no customers,
+          # or requests pointing at vehicles that do not exist, and read the
+          # PRODUCT as broken.
+          #
+          # ⚠️ `app.current_role = 'admin'` IS REQUIRED OR THE INSERTS FAIL
+          # SILENTLY. Every table below is under RLS; this repository's own rule
+          # says "RLS seeding needs set_config('app.current_role','admin',true)
+          # or inserts fail silently". Set with `false` (session scope) so it
+          # survives every statement in this script.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" \
+            -v email="${OWNER_EMAIL}" -v tag="${DEMO_TAG}" \
+            -v ncars="${CUSTOMER_CARS}" -v nfleet="${FLEET_CARS}" <<'SQL'
+          \pset pager off
+          BEGIN;
+
+          SELECT set_config('app.current_role', 'admin', false);
+          -- ⚠️ SET IT SO THE ERROR CAN NAME IT. psql substitutes :'email'
+          -- everywhere EXCEPT inside a dollar-quoted block, so the DO below
+          -- cannot see the variable — it would have raised "no active
+          -- membership for <NULL>", which tells the reader nothing. Same shape
+          -- as the `live.subject` guard that could never pass.
+          SELECT set_config('seed.email', :'email', false);
+          -- Same reason: a dollar-quoted block is opaque to psql substitution,
+          -- so anything the fleet loop needs has to arrive as a setting.
+          SELECT set_config('seed.tag', :'tag', false);
+          SELECT set_config('seed.fleetcars', :'nfleet', false);
+          -- 🔴 A SHORT HASH OF THE TAG, NOT A SLICE OF IT. The plate suffix was
+          -- `substr(tag, 6, 4)`, which turns both `LOCALTEST-04` and
+          -- `LOCALTEST-05` into `TEST` — so a second run collided with the first
+          -- on `uq_vehicles_org_registration` and aborted the transaction. A key
+          -- derived from an arbitrary slice of a human string is a key that
+          -- collides on the day somebody names two runs similarly.
+          SELECT set_config('seed.code', upper(substr(md5(:'tag'), 1, 4)), false);
+
+          -- ── who and where ────────────────────────────────────────────────
+          CREATE TEMP TABLE target AS
+          SELECT u.id AS user_id, u.keycloak_subject, m.tenant_id, m.organization_id, m.branch_id
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+           WHERE lower(u.email) = lower(:'email') AND m.status = 'active'
+           LIMIT 1;
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM target) THEN
+              RAISE EXCEPTION
+                'no active membership for %. Seeding a fresh tenant would produce a demo that account cannot see, so nothing has been written.',
+                current_setting('seed.email', true);
+            END IF;
+          END $$;
+
+          SELECT set_config('app.current_tenant', (SELECT tenant_id::text FROM target), false);
+
+          -- ── 1. staff, and the membership IS the permission ───────────────
+          -- A role name is not decoration here: `permission-matrix.ts` derives
+          -- every grant from it, so inserting the membership IS "give them
+          -- permission". No separate permission table to fill.
+          WITH t AS (SELECT * FROM target),
+          staff(email, name, role_name) AS (
+            VALUES
+              ('demo.reception@aiappinvent.com', 'Ama Reception',  'reception_staff'),
+              ('demo.manager@aiappinvent.com',   'Kofi Manager',   'workshop_manager'),
+              ('demo.tech@aiappinvent.com',      'Yaw Technician', 'technician'),
+              ('demo.store@aiappinvent.com',     'Esi Storekeeper','storekeeper')
+          ),
+          ins_user AS (
+            INSERT INTO identity.users (keycloak_subject, email, display_name, status)
+            SELECT 'seed-' || :'tag' || '-' || s.role_name, s.email, s.name, 'active'
+              FROM staff s
+            ON CONFLICT (keycloak_subject) DO UPDATE SET display_name = EXCLUDED.display_name
+            RETURNING id, email
+          )
+          INSERT INTO identity.memberships
+                 (tenant_id, organization_id, branch_id, user_id, role_name, status, created_by)
+          SELECT t.tenant_id, t.organization_id, t.branch_id, iu.id, s.role_name, 'active', t.user_id
+            FROM ins_user iu JOIN staff s ON s.email = iu.email CROSS JOIN t
+          ON CONFLICT DO NOTHING;
+
+          -- ── 2. customers, one car each ───────────────────────────────────
+          WITH t AS (SELECT * FROM target),
+          n AS (SELECT generate_series(1, (:'ncars')::int) AS i),
+          ins_cust AS (
+            INSERT INTO core.customers
+                   (tenant_id, organization_id, display_name, email, phone, customer_type, status, created_by, notes)
+            SELECT t.tenant_id, t.organization_id,
+                   (ARRAY['Akosua Mensah','Kwame Boateng','Adjoa Owusu','Kojo Asante','Abena Sarpong',
+                          'Yaw Darko','Efua Addo','Kwesi Nyarko','Ama Danquah','Fiifi Quartey'])[((n.i - 1) % 10) + 1]
+                     || ' (' || :'tag' || ')',
+                   'demo.customer' || n.i || '@aiappinvent.com',
+                   '+2332000000' || lpad(n.i::text, 2, '0'),
+                   'individual', 'active', t.user_id, :'tag'
+              FROM n CROSS JOIN t
+            RETURNING id, organization_id, tenant_id
+          )
+          INSERT INTO core.vehicles
+                 (tenant_id, organization_id, customer_id, registration_number, vin,
+                  make_id, model_year, colour, current_mileage_km, status, created_by)
+          SELECT c.tenant_id, c.organization_id, c.id,
+                 'GR-' || current_setting('seed.code') || '-' || lpad((row_number() OVER ())::text, 3, '0'),
+                 -- ⚠️ THE VIN CARRIES THE SEED CODE TOO. It did not, so a second
+                 -- run produced the same VINs, `ON CONFLICT DO NOTHING` swallowed
+                 -- all ten vehicle rows, and the seed reported success having
+                 -- created ten customers with no cars. A silent skip that leaves
+                 -- half a demo is worse than a loud failure.
+                 'DEMO' || current_setting('seed.code') || lpad((row_number() OVER ())::text, 9, '0'),
+                 (SELECT id FROM core.vehicle_makes ORDER BY name LIMIT 1),
+                 2015 + ((row_number() OVER ())::int % 9),
+                 (ARRAY['Silver','White','Black','Blue','Red'])[((row_number() OVER ())::int % 5) + 1],
+                 40000 + (row_number() OVER ())::int * 1337,
+                 'active', (SELECT user_id FROM target)
+            FROM ins_cust c
+          ON CONFLICT DO NOTHING;
+
+          -- ── 3. what a customer actually does: ask, and complain ──────────
+          -- `reception.service_requests.complaint` is the customer's own words —
+          -- the request and the complaint are the SAME row in this schema, which
+          -- is why "requests and complaints" is one insert and not two.
+          INSERT INTO reception.service_requests
+                 (tenant_id, organization_id, requested_by, vehicle_id, vehicle_description,
+                  registration_number, complaint, preferred_contact, status, decline_reason)
+          SELECT v.tenant_id, v.organization_id, (SELECT user_id FROM target), v.id,
+                 COALESCE(mk.name, 'Vehicle') || ' ' || v.model_year::text,
+                 v.registration_number,
+                 (ARRAY[
+                   'Knocking noise from the front right when going over bumps.',
+                   'Air conditioning blows warm after about twenty minutes.',
+                   'Engine warning light came on yesterday and stays on.',
+                   'Brakes squeal in the morning and the pedal feels soft.',
+                   'Car pulls to the left and the steering shakes above 80km/h.'
+                 ])[((row_number() OVER ())::int % 5) + 1],
+                 -- ⚠️ 'new', NOT 'pending'. `service_requests_status_check`
+                 -- admits new | accepted | converting | declined | converted.
+                 -- 'pending' is the word the supplier VERIFICATION queue uses
+                 -- and it is not a service-request status — caught by running
+                 -- this against a local database before production, which is
+                 -- the only reason it is not a half-seeded organisation.
+                 --
+                 -- A spread of statuses, not all 'new': a reception queue where
+                 -- every row is untouched shows nothing about how the product
+                 -- handles one that has moved on.
+                 'phone',
+                 (ARRAY['new','new','accepted','new','declined'])[((row_number() OVER ())::int % 5) + 1],
+                 -- 🔴 A DECLINED REQUEST MUST SAY WHY, AND THE DATABASE ENFORCES
+                 -- IT: `ck_service_request_declined` is
+                 -- `status <> 'declined' OR decline_reason IS NOT NULL`. Seeding
+                 -- a declined row with no reason is refused, which is the
+                 -- product being right — a customer told "no" with no
+                 -- explanation is the dead end this codebase keeps designing
+                 -- out. So the demo carries a real reason rather than avoiding
+                 -- the status.
+                 CASE WHEN (ARRAY['new','new','accepted','new','declined'])[((row_number() OVER ())::int % 5) + 1] = 'declined'
+                      THEN 'That model is outside what this workshop is equipped for — referred to a main dealer.'
+                 END
+            FROM core.vehicles v
+            LEFT JOIN core.vehicle_makes mk ON mk.id = v.make_id
+           WHERE v.organization_id = (SELECT organization_id FROM target)
+             AND v.registration_number LIKE 'GR-' || current_setting('seed.code') || '-%';
+
+          -- Feedback on half of them, both happy and not: a demo where every
+          -- rating is five stars shows nothing about how the product handles a
+          -- complaint.
+          INSERT INTO reception.customer_feedback
+                 (tenant_id, organization_id, customer_id, rating, comment, source, recorded_by)
+          SELECT c.tenant_id, c.organization_id, c.id,
+                 (ARRAY[5,4,2,5,3])[((row_number() OVER ())::int % 5) + 1],
+                 (ARRAY[
+                   'Quick turnaround and the car came back clean.',
+                   'Good work, but nobody called me when it was ready.',
+                   'Waited two days longer than promised and had to chase for an update.',
+                   'Fair price and explained the fault clearly.',
+                   'Job was fine; reception was hard to reach on the phone.'
+                 ])[((row_number() OVER ())::int % 5) + 1],
+                 -- ⚠️ customer_portal | staff_recorded | telephone. 'walk_in' is
+                 -- a `reception.walk_ins` word and not a feedback source; the
+                 -- check constraint said so. Spread across all three, because
+                 -- where feedback CAME from is half of what a manager reads it
+                 -- for.
+                 (ARRAY['customer_portal','staff_recorded','telephone','customer_portal','telephone'])[((row_number() OVER ())::int % 5) + 1],
+                 (SELECT user_id FROM target)
+            FROM core.customers c
+           WHERE c.organization_id = (SELECT organization_id FROM target)
+             AND c.notes = :'tag'
+             AND (c.id::text < '8');
+
+
+          -- ── 4. TWO FLEETS, EACH WITH ITS OWN CARS ────────────────────────
+          -- Through `identity.register_fleet`, not by hand-building a tenant.
+          -- That function is the ONLY production path that creates a
+          -- `fleet_administrator`, and a demo fleet assembled by direct INSERT
+          -- would be a fleet the product itself could never produce — the exact
+          -- fixture defect this repository recorded when a customer funnel was
+          -- "proven" against a membership no code path could create.
+          DO $fleets$
+          DECLARE
+            v_seed_by uuid := (SELECT user_id FROM target);
+            v_name    text;
+            v_subject text;
+            v_user    uuid;
+            v_tenant  uuid;
+            v_org     uuid;
+            v_cust    uuid;
+            v_make    uuid := (SELECT id FROM core.vehicle_makes ORDER BY name LIMIT 1);
+            v_tag     text := current_setting('seed.tag', true);
+            v_n       int  := current_setting('seed.fleetcars', true)::int;
+            i int; j int;
+          BEGIN
+            FOR i IN 1..2 LOOP
+              v_name    := 'Demo Fleet ' || i || ' (' || v_tag || ')';
+              v_subject := 'seed-' || v_tag || '-fleet-' || i;
+
+              INSERT INTO identity.users (keycloak_subject, email, display_name, status)
+              VALUES (v_subject, 'demo.fleet' || i || '@aiappinvent.com', v_name, 'active')
+              ON CONFLICT (keycloak_subject) DO UPDATE SET display_name = EXCLUDED.display_name
+              RETURNING id INTO v_user;
+
+              -- Already registered on a previous run? Then reuse it rather than
+              -- asking the function, which would refuse with "already belongs to
+              -- an organisation" and abort the whole transaction.
+              SELECT m.tenant_id, m.organization_id INTO v_tenant, v_org
+                FROM identity.memberships_for_subject(v_subject) m
+               WHERE m.status = 'active' LIMIT 1;
+
+              IF v_tenant IS NULL THEN
+                SELECT o_tenant_id, o_organization_id INTO v_tenant, v_org
+                  FROM identity.register_fleet(v_subject, v_name, 'Main depot');
+                RAISE NOTICE 'registered % as tenant %', v_name, v_tenant;
+              ELSE
+                RAISE NOTICE 'fleet % already exists — reusing tenant %', i, v_tenant;
+              END IF;
+
+              -- ⚠️ THE FLEET'S OWN TENANT, NOT THE WORKSHOP'S. Everything below
+              -- belongs to the fleet, and the tenant context has to follow or
+              -- RLS refuses the writes.
+              PERFORM set_config('app.current_tenant', v_tenant::text, false);
+
+              -- A fleet has no vehicle table of its own — fleet-web has NO
+              -- domain schema at all — so its cars live in `core.vehicles`,
+              -- which hangs off a customer. The fleet is therefore its own
+              -- customer. Honest about the shape available today rather than
+              -- inventing one.
+              SELECT id INTO v_cust FROM core.customers
+               WHERE organization_id = v_org AND display_name = v_name LIMIT 1;
+              IF v_cust IS NULL THEN
+                INSERT INTO core.customers
+                  (tenant_id, organization_id, display_name, email, phone,
+                   customer_type, status, created_by, notes)
+                VALUES (v_tenant, v_org, v_name, 'demo.fleet' || i || '@aiappinvent.com',
+                        '+2332400000' || i, 'business', 'active', v_seed_by, v_tag)
+                RETURNING id INTO v_cust;
+              END IF;
+
+              FOR j IN 1..v_n LOOP
+                INSERT INTO core.vehicles
+                  (tenant_id, organization_id, customer_id, registration_number, vin,
+                   make_id, model_year, colour, current_mileage_km, status, created_by)
+                VALUES (v_tenant, v_org, v_cust,
+                        'FL' || i || '-' || current_setting('seed.code') || '-' || lpad(j::text, 3, '0'),
+                        'DEMOF' || i || current_setting('seed.code') || lpad(j::text, 8, '0'),
+                        v_make, 2016 + (j % 8),
+                        (ARRAY['White','Silver','Blue'])[(j % 3) + 1],
+                        60000 + j * 2111, 'active', v_seed_by)
+                ON CONFLICT DO NOTHING;
+              END LOOP;
+              RAISE NOTICE 'fleet % now has % vehicles', i,
+                (SELECT count(*) FROM core.vehicles WHERE organization_id = v_org);
+            END LOOP;
+
+            -- Put the workshop's tenant back, so anything after this reads the
+            -- organisation the run is actually about.
+            PERFORM set_config('app.current_tenant',
+                               (SELECT tenant_id::text FROM target), false);
+          END
+          $fleets$;
+
+          COMMIT;
+          \echo '--- seeded into the owner organisation ---'
+          SQL
+
+      - name: What the owner will now see
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${OWNER_EMAIL}" -v tag="${DEMO_TAG}" <<'SQL'
+          \pset pager off
+          SELECT set_config('app.current_role', 'admin', false);
+          WITH target AS (
+            SELECT m.organization_id
+              FROM identity.users u
+              CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+             WHERE lower(u.email) = lower(:'email') AND m.status = 'active' LIMIT 1
+          )
+          SELECT 'staff'            AS what, count(*) FROM identity.memberships m, target t
+            WHERE m.organization_id = t.organization_id AND m.status='active'
+          UNION ALL SELECT 'customers', count(*) FROM core.customers c, target t
+            WHERE c.organization_id = t.organization_id
+          UNION ALL SELECT 'vehicles', count(*) FROM core.vehicles v, target t
+            WHERE v.organization_id = t.organization_id
+          UNION ALL SELECT 'service requests', count(*) FROM reception.service_requests r, target t
+            WHERE r.organization_id = t.organization_id
+          UNION ALL SELECT 'feedback', count(*) FROM reception.customer_feedback f, target t
+            WHERE f.organization_id = t.organization_id;
+          SQL
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl || true
