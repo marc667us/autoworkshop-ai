@@ -281,6 +281,30 @@ jobs:
                        "${KC_URL}/admin/realms/autoworkshop/users/${USER_ID}/reset-password" || echo 000)"
           case "$PW_CODE" in
             2*) echo "password set (HTTP ${PW_CODE})" ;;
+            # 🔴 "MUST NOT BE EQUAL TO ANY OF LAST 3 PASSWORDS" IS THIS WORKFLOW
+            # SUCCEEDING, NOT FAILING.
+            #
+            # The password comes from a fixed secret, so a re-run offers Keycloak
+            # the value it already holds and `passwordHistory(3)` refuses it. That
+            # is what happened here: a run set the password, failed later at the
+            # database step, and every retry then died at this line — on an
+            # account whose password was already correct.
+            #
+            # ⚠️ STRICTLY THIS SAYS "one of the last three", not "the current
+            # one". The inference is safe because the secret has not changed
+            # between runs, and it is not relied upon: the sign-in in the
+            # walkthrough is what actually proves the credential works. Treating
+            # it as fatal made a re-runnable workflow single-use.
+            400)
+              if grep -q 'invalidPasswordHistoryMessage' /tmp/pwerr.txt 2>/dev/null; then
+                echo "password unchanged — Keycloak already holds this value (passwordHistory refused a no-op)"
+              else
+                echo "::group::keycloak response (HTTP ${PW_CODE})"
+                head -c 600 /tmp/pwerr.txt || true; echo; echo "::endgroup::"
+                echo "::error::Keycloak refused the password (HTTP ${PW_CODE}). The realm requires length>=12 with an upper case, a lower case, a digit and a SPECIAL character, and forbids the username or email inside it. The body above says which."
+                rm -f /tmp/pw.json /tmp/pwerr.txt
+                exit 1
+              fi ;;
             *)
               echo "::group::keycloak response (HTTP ${PW_CODE})"
               head -c 600 /tmp/pwerr.txt || true; echo; echo "::endgroup::"
