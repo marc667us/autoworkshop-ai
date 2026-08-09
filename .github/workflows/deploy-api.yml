@@ -473,7 +473,13 @@ jobs:
             curl -fsS -X POST -H "Authorization: Bearer ${RENDER_API_KEY}" \
               -H 'Content-Type: application/json' \
               --data "{\"imageUrl\":\"${IMAGE}:${GITHUB_SHA}\"}" \
-              "https://api.render.com/v1/services/${SVC}/deploys" >/dev/null
+              "https://api.render.com/v1/services/${SVC}/deploys" > /tmp/deploy.json
+            python3 -c "
+          import json
+          d = json.load(open('/tmp/deploy.json'))
+          print(d.get('deploy', d).get('id', ''))
+          " > /tmp/deploy_id
+            echo "triggered deploy: $(cat /tmp/deploy_id)"
           fi
           echo "$SVC" > /tmp/svc_id
           echo "service: $SVC"
@@ -485,19 +491,71 @@ jobs:
           SVC="$(cat /tmp/svc_id)"
           PUBLIC_URL="https://${SERVICE_NAME}.onrender.com"
 
+          # On the CREATE path there is no POST /deploys — creating the service
+          # starts one — so the latest deploy IS ours. On the update path we
+          # follow the id the POST returned, because polling `deploys?limit=1`
+          # races Render's own listing: for a few seconds "the latest" is the
+          # PREVIOUS deploy, already `live`, and the read-back would then verify
+          # the OLD build while reporting the new one deployed.
+          DEPLOY_ID=""
+          [ -f /tmp/deploy_id ] && DEPLOY_ID="$(cat /tmp/deploy_id)"
+          if [ -n "$DEPLOY_ID" ]; then
+            DEPLOY_URL="https://api.render.com/v1/services/${SVC}/deploys/${DEPLOY_ID}"
+            echo "following deploy ${DEPLOY_ID}"
+          else
+            DEPLOY_URL="https://api.render.com/v1/services/${SVC}/deploys?limit=1"
+            echo "no deploy id (service was just created) — following the latest"
+          fi
+
+          # 🔴 A POLL THAT RUNS OUT OF PATIENCE MUST FAIL, NOT FALL THROUGH.
+          #
+          # Without `REACHED_LIVE` this loop simply ended after 20 minutes and
+          # the step continued to the read-back below. The PREVIOUS image is
+          # still serving, so the public URL answers 200, the read-back's grep
+          # passes, and the run goes GREEN for a deploy still stuck in
+          # `update_in_progress`. That is this repository's signature failure.
+          REACHED_LIVE=0
           for i in $(seq 1 60); do
             STATUS="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
-              -H 'Accept: application/json' \
-              "https://api.render.com/v1/services/${SVC}/deploys?limit=1" \
-              | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0].get('deploy',d[0])['status'])")"
+              -H 'Accept: application/json' "$DEPLOY_URL" \
+              | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          # The list form returns [] for a few seconds after a service is
+          # created; d[0] would be an IndexError after the service exists.
+          if isinstance(d, list):
+              d = d[0] if d else {}
+          print(d.get('deploy', d).get('status', 'pending'))
+          ")"
             echo "  deploy status: $STATUS"
             case "$STATUS" in
-              live) break ;;
+              live) REACHED_LIVE=1; break ;;
               build_failed|update_failed|canceled|deactivated)
                 echo "::error::deploy ended as $STATUS"; exit 1 ;;
             esac
             sleep 20
           done
+          # ⚠️ ONE LAST LOOK BEFORE CALLING IT FAILED. The loop sleeps 20s
+          # after its 60th check and then gives up without asking again, so a
+          # deploy that turns `live` during that final sleep would be reported
+          # as a failure. Costs one GET; prevents a red run over a deploy that
+          # actually succeeded.
+          if [ "$REACHED_LIVE" != "1" ]; then
+            STATUS="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' "$DEPLOY_URL" \
+              | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          if isinstance(d, list):
+              d = d[0] if d else {}
+          print(d.get('deploy', d).get('status', 'pending'))
+          ")"
+            echo "  final check after the last sleep: $STATUS"
+            if [ "$STATUS" = "live" ]; then REACHED_LIVE=1; fi
+          fi
+          [ "$REACHED_LIVE" = "1" ] || {
+            echo "::error::the deploy never reached 'live' in 20 minutes (last status: ${STATUS}). The previous image may still be serving, so do NOT read a 200 from the public URL as success."
+            exit 1; }
 
           # 🔴 READ IT BACK OVER THE PUBLIC URL. Render calling a deploy "live"
           # proves the health path answered from inside its network. Keycloak

@@ -604,6 +604,24 @@ jobs:
             esac
             sleep 20
           done
+          # ⚠️ ONE LAST LOOK BEFORE CALLING IT FAILED. The loop sleeps 20s
+          # after its 60th check and then gives up without asking again, so a
+          # deploy that turns `live` during that final sleep would be reported
+          # as a failure. Costs one GET; prevents a red run over a deploy that
+          # actually succeeded.
+          if [ "$REACHED_LIVE" != "1" ]; then
+            STATUS="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+              -H 'Accept: application/json' "$DEPLOY_URL" \
+              | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          if isinstance(d, list):
+              d = d[0] if d else {}
+          print(d.get('deploy', d).get('status', 'pending'))
+          ")"
+            echo "  final check after the last sleep: $STATUS"
+            if [ "$STATUS" = "live" ]; then REACHED_LIVE=1; fi
+          fi
           [ "$REACHED_LIVE" = "1" ] || {
             echo "::error::the deploy never reached 'live' in 20 minutes (last status: ${STATUS}). The previous image may still be serving, so do NOT read a 200 from the public URL as success."
             exit 1; }
