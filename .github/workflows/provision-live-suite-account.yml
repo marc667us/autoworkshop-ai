@@ -430,9 +430,19 @@ jobs:
           \if :n
             \echo 'already belongs to an organisation — leaving it alone'
           \else
-            SELECT o_tenant_id, o_organization_id, o_membership_id
-              FROM ${REGISTER_FN}(:'subject', :'oname', :'bname') \gset
-            \echo 'created tenant:' :o_tenant_id
+            -- 🔴 NO COLUMN NAMES, BECAUSE THE THREE FUNCTIONS DO NOT AGREE ON
+            -- THEM. `register_supplier` (068) and `register_fleet` (075) return
+            -- `o_tenant_id …`; `register_workshop` (036) predates that
+            -- convention and returns `tenant_id …`. Naming either set makes this
+            -- work for two kinds and fail on the third with `column
+            -- "o_tenant_id" does not exist` — which is exactly what it did.
+            --
+            -- Counting rows calls the function without asserting its shape, and
+            -- the DO block below proves the OUTCOME, which is the thing actually
+            -- worth checking. A provisioning step should depend on what the
+            -- function DOES, not on what it happens to call its columns.
+            SELECT count(*) AS created FROM ${REGISTER_FN}(:'subject', :'oname', :'bname') \gset
+            \echo 'registration rows returned:' :created
           \endif
 
           -- 🔴 PROVE IT, RATHER THAN TRUSTING THE CALLS ABOVE. A provisioning
