@@ -56,6 +56,18 @@ on:
         description: 'towing-web base URL'
         required: false
         default: 'https://autoworkshop-towing.onrender.com'
+      admin:
+        description: 'admin-web base URL'
+        required: false
+        default: 'https://autoworkshop-admin.onrender.com'
+      fleet:
+        description: 'fleet-web base URL'
+        required: false
+        default: 'https://autoworkshop-fleet.onrender.com'
+      insurance:
+        description: 'insurance-web base URL'
+        required: false
+        default: 'https://autoworkshop-insurance.onrender.com'
       api:
         description: 'API base URL'
         required: false
@@ -81,6 +93,9 @@ jobs:
       APEX: ${{ inputs.apex || 'https://autoworkshop.aiappinvent.com' }}
       CUSTOMER: ${{ inputs.customer || 'https://autoworkshop-customer.onrender.com' }}
       TOWING: ${{ inputs.towing || 'https://autoworkshop-towing.onrender.com' }}
+      ADMIN: ${{ inputs.admin || 'https://autoworkshop-admin.onrender.com' }}
+      FLEET: ${{ inputs.fleet || 'https://autoworkshop-fleet.onrender.com' }}
+      INSURANCE: ${{ inputs.insurance || 'https://autoworkshop-insurance.onrender.com' }}
       API: ${{ inputs.api || 'https://autoworkshop-api.onrender.com' }}
       KEYCLOAK: ${{ inputs.keycloak || 'https://autoworkshop-keycloak.onrender.com' }}
       REALM: autoworkshop
@@ -93,7 +108,7 @@ jobs:
           # first request pays the whole cold start. Measuring before warming is
           # how a healthy platform gets reported as an outage; that happened on
           # 2026-08-07 and cost an hour.
-          for url in "$APEX" "$CUSTOMER" "$TOWING" "$API/api/v1/health" "$KEYCLOAK/realms/$REALM/.well-known/openid-configuration"; do
+          for url in "$APEX" "$CUSTOMER" "$TOWING" "$ADMIN" "$FLEET" "$INSURANCE" "$API/api/v1/health" "$KEYCLOAK/realms/$REALM/.well-known/openid-configuration"; do
             code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 240 "$url" || echo 000)"
             echo "warm  $url -> $code"
           done
@@ -107,6 +122,9 @@ jobs:
           APEX     = os.environ['APEX'].rstrip('/')
           CUSTOMER = os.environ['CUSTOMER'].rstrip('/')
           TOWING   = os.environ['TOWING'].rstrip('/')
+          ADMIN    = os.environ['ADMIN'].rstrip('/')
+          FLEET    = os.environ['FLEET'].rstrip('/')
+          INSURANCE = os.environ['INSURANCE'].rstrip('/')
           API      = os.environ['API'].rstrip('/')
           KEYCLOAK = os.environ['KEYCLOAK'].rstrip('/')
           REALM    = os.environ['REALM']
@@ -206,6 +224,43 @@ jobs:
                   s, _ = fetch(f'{TOWING}{p}')
                   return s == 404, f'HTTP {s} (wanted 404 — permission-gated, must not exist for the public)'
               check(f'towing {screen} is hidden from anonymous', run)
+
+          # ── THE THREE APPS DEPLOYED 2026-08-09, AND A MEASURED FLAP ───────
+          #
+          # 🔴 THESE ARE RETRY-AWARE ON PURPOSE, AND THE RETRY COUNT IS THE
+          # FINDING. Within minutes of being created, all three answered the
+          # SAME url back-to-back as 200, 200, 404, 200, 404, 404 — every 404
+          # being a 10-byte `Not Found` from Render's edge carrying
+          # `x-render-routing: no-server`, returned in ~0.6s. That is far too
+          # fast to be a cold start (a free-tier wake was measured at 136s); it
+          # is Render's router intermittently having no instance for a service
+          # that is otherwise up.
+          #
+          # The six services that existed before this batch answered 5 of 5 at
+          # the same moment, so this is NOT a platform outage — it is the three
+          # newest services on a free allowance that has now been asked to hold
+          # NINE. The codebase has warned about this since the fifth.
+          #
+          # A single sample would therefore report a coin flip, and this suite
+          # must not cry wolf. So each check retries and REPORTS HOW MANY
+          # ATTEMPTS IT TOOK. One attempt is healthy; several is the flap, still
+          # visible, still recorded, without turning the gate into noise.
+          def reachable(label, base, path):
+              def run():
+                  codes = []
+                  for _ in range(4):
+                      s, body = fetch(f'{base}{path}')
+                      codes.append(s)
+                      if s == 200:
+                          note = '' if len(codes) == 1 else \
+                              f' — took {len(codes)} attempts ({codes}); Render router flap'
+                          return True, f'HTTP 200{note}'
+                  return False, f'never answered 200 in 4 attempts: {codes}'
+              check(f'{label} is reachable', run)
+
+          reachable('admin-web', ADMIN, '/home/operations-dashboard')
+          reachable('fleet-web', FLEET, '/home/dashboard')
+          reachable('insurance-web', INSURANCE, '/home/dashboard')
 
           def towing_offers_sign_in():
               s, body = fetch(f'{TOWING}/operations/dashboard')
