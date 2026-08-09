@@ -262,6 +262,94 @@ jobs:
           reachable('fleet-web', FLEET, '/home/dashboard')
           reachable('insurance-web', INSURANCE, '/home/dashboard')
 
+          # ── THE NEW DEPLOYMENTS, SCREEN BY SCREEN ─────────────────────────
+          #
+          # One reachability probe per app is not a test of an app; towing has
+          # twelve checks and these had one each. These are the rest.
+          #
+          # ⚠️ EVERY REQUEST HERE GOES THROUGH `stable`, because these three
+          # services flap (see the note above): a raw sample would fail on
+          # Render's router rather than on the product, and a suite that blames
+          # the product for the platform is worse than no suite.
+          def stable(base, path, attempts=4):
+              """(status, body, codes) — retries past Render's `no-server` 404s."""
+              codes = []
+              body = ''
+              for _ in range(attempts):
+                  s, body = fetch(f'{base}{path}')
+                  codes.append(s)
+                  if s == 200:
+                      break
+              return codes[-1], body, codes
+
+          def renders(label, base, path):
+              """200, and the signed-out shell actually rendered.
+
+              A 200 alone is satisfied by an error page. `Sign in` is the shell's
+              own text (`AccountControl`), so its presence proves the layout,
+              the navigation and the viewer resolution all ran — and that an
+              anonymous visitor has a way in rather than a dead end.
+              """
+              def run():
+                  s, body, codes = stable(base, path)
+                  if s != 200:
+                      return False, f'HTTP {s} after {len(codes)} attempts {codes}'
+                  if not re.search(r'[Ss]ign in', body):
+                      return False, f'200 but NO sign-in affordance — the shell did not render'
+                  tries = '' if len(codes) == 1 else f' (took {len(codes)}: {codes})'
+                  return True, f'renders with the shell{tries}'
+              check(f'{label} {path}', run)
+
+          # admin-web — the FIVE screens that are actually built.
+          for path in ['/home/operations-dashboard', '/directory/organizations',
+                       '/directory/registrations', '/catalogue-and-content/products',
+                       '/security-and-operations/security']:
+              renders('admin', ADMIN, path)
+
+          # fleet-web and insurance-web — NOTHING is built, so what is being
+          # asserted is that the shell and routing work and no route is a dead
+          # end. A sample across groups rather than all 29/28: every one costs up
+          # to four requests against a flapping service.
+          for path in ['/home/dashboard', '/home/tasks', '/fleet-assets/vehicles',
+                       '/fleet-assets/drivers', '/service-management/maintenance-plans',
+                       '/service-management/service-requests']:
+              renders('fleet', FLEET, path)
+
+          for path in ['/home/dashboard', '/home/tasks', '/claims/new-claims',
+                       '/claims/under-review', '/claims/closed-claims',
+                       '/assessment/damage-evidence']:
+              renders('insurance', INSURANCE, path)
+
+          # 🔴 A TRIPWIRE ON THE COVERAGE CLAIM, NOT DECORATION.
+          #
+          # fleet-web is 0 of 29 built and insurance-web 0 of 28. These assert
+          # that their landing screens are still the honest placeholder — the
+          # placeholder names its own screen ("... has not been built yet") and
+          # carries sibling links, which is what makes an unbuilt route a signpost
+          # instead of a dead end.
+          #
+          # ⚠️ THESE ARE MEANT TO FAIL THE DAY SOMEBODY BUILDS THE DASHBOARD.
+          # That failure is the reminder to update the coverage number in
+          # COMPLETION_PLAN.md and the audit, which is exactly the bookkeeping
+          # that drifted far enough for the audit to report 100% while measuring
+          # two apps out of seven.
+          def still_placeholder(label, base, path):
+              def run():
+                  s, body, codes = stable(base, path)
+                  if s != 200:
+                      return False, f'HTTP {s} after {len(codes)} attempts {codes}'
+                  ph = 'has not been built yet' in body
+                  sib = 'Elsewhere in' in body
+                  if ph and sib:
+                      return True, 'still the honest placeholder, with sibling links'
+                  if ph:
+                      return False, 'placeholder WITHOUT sibling links — an unbuilt route became a dead end'
+                  return None, 'no longer a placeholder — a screen was built here; update the coverage count'
+              check(f'{label} {path} is still unbuilt', run)
+
+          still_placeholder('fleet', FLEET, '/home/dashboard')
+          still_placeholder('insurance', INSURANCE, '/home/dashboard')
+
           def towing_offers_sign_in():
               s, body = fetch(f'{TOWING}/operations/dashboard')
               if s != 200:
