@@ -47,6 +47,12 @@ on:
         description: 'Type APPLY to create the account. Anything else inspects only.'
         required: false
         default: ''
+      kind:
+        description: 'Which kind of account: workshop, supplier or fleet'
+        required: false
+        default: 'workshop'
+        type: choice
+        options: [workshop, supplier, fleet]
       display_name:
         description: 'Display name for the account'
         required: false
@@ -73,8 +79,18 @@ jobs:
       KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       DB_NAME: autoworkshop-postgres
+      # 🔴 ALL THREE PAIRS ARE BOUND HERE AND ONE IS SELECTED BELOW. A secret
+      # name cannot be built from an input at this level, and the alternative —
+      # accepting the credentials as workflow INPUTS — would print the password
+      # into the run log. Binding all three and choosing between them keeps the
+      # values secret and the choice explicit.
       LIVE_OWNER_EMAIL: ${{ secrets.LIVE_OWNER_EMAIL }}
       LIVE_OWNER_PASSWORD: ${{ secrets.LIVE_OWNER_PASSWORD }}
+      LIVE_SUPPLIER_EMAIL: ${{ secrets.LIVE_SUPPLIER_EMAIL }}
+      LIVE_SUPPLIER_PASSWORD: ${{ secrets.LIVE_SUPPLIER_PASSWORD }}
+      LIVE_FLEET_EMAIL: ${{ secrets.LIVE_FLEET_EMAIL }}
+      LIVE_FLEET_PASSWORD: ${{ secrets.LIVE_FLEET_PASSWORD }}
+      KIND: ${{ inputs.kind }}
       DISPLAY_NAME: ${{ inputs.display_name }}
       WORKSHOP_NAME: ${{ inputs.workshop_name }}
       CONFIRM: ${{ inputs.confirm }}
@@ -87,15 +103,53 @@ jobs:
           # 🔴 NAMED INDIVIDUALLY. "one of these is missing" sends somebody
           # hunting through four secrets; this says which.
           miss=""
-          [ -n "${KC_ADMIN_PASSWORD:-}" ]   || miss="${miss} KC_BOOTSTRAP_ADMIN_PASSWORD"
-          [ -n "${RENDER_API_KEY:-}" ]      || miss="${miss} RENDER_API_KEY"
-          [ -n "${LIVE_OWNER_EMAIL:-}" ]    || miss="${miss} LIVE_OWNER_EMAIL"
-          [ -n "${LIVE_OWNER_PASSWORD:-}" ] || miss="${miss} LIVE_OWNER_PASSWORD"
+          [ -n "${KC_ADMIN_PASSWORD:-}" ] || miss="${miss} KC_BOOTSTRAP_ADMIN_PASSWORD"
+          [ -n "${RENDER_API_KEY:-}" ]    || miss="${miss} RENDER_API_KEY"
+
+          # ⚠️ ONE ACCOUNT PER KIND, BECAUSE THE DATABASE ENFORCES ONE
+          # ORGANISATION PER PERSON. `register_workshop`, `register_supplier` and
+          # `register_fleet` each refuse an account that already belongs
+          # somewhere, so a single test identity cannot walk through a supplier
+          # AND a fleet. Three identities is not tidiness, it is the product's
+          # own rule.
+          case "$KIND" in
+            workshop)
+              ACCOUNT_EMAIL="${LIVE_OWNER_EMAIL:-}";    ACCOUNT_PASSWORD="${LIVE_OWNER_PASSWORD:-}"
+              SECRET_PREFIX=LIVE_OWNER;  REGISTER_FN=identity.register_workshop
+              ORG_NAME="${WORKSHOP_NAME}"; BRANCH_NAME='Main branch' ;;
+            supplier)
+              ACCOUNT_EMAIL="${LIVE_SUPPLIER_EMAIL:-}"; ACCOUNT_PASSWORD="${LIVE_SUPPLIER_PASSWORD:-}"
+              SECRET_PREFIX=LIVE_SUPPLIER; REGISTER_FN=identity.register_supplier
+              ORG_NAME='Live Suite Parts Supplier'; BRANCH_NAME='Main depot' ;;
+            fleet)
+              ACCOUNT_EMAIL="${LIVE_FLEET_EMAIL:-}";    ACCOUNT_PASSWORD="${LIVE_FLEET_PASSWORD:-}"
+              SECRET_PREFIX=LIVE_FLEET; REGISTER_FN=identity.register_fleet
+              ORG_NAME='Live Suite Fleet'; BRANCH_NAME='Main depot' ;;
+            *) echo "::error::unknown kind '${KIND}' — expected workshop, supplier or fleet"; exit 1 ;;
+          esac
+
+          [ -n "$ACCOUNT_EMAIL" ]    || miss="${miss} ${SECRET_PREFIX}_EMAIL"
+          [ -n "$ACCOUNT_PASSWORD" ] || miss="${miss} ${SECRET_PREFIX}_PASSWORD"
           [ -z "$miss" ] || {
-            echo "::error::missing secret(s):${miss}. Set LIVE_OWNER_EMAIL and LIVE_OWNER_PASSWORD with 'gh secret set' first — this workflow reads them rather than inventing them, so the account it creates always matches what the live suite signs in with."
+            echo "::error::missing secret(s):${miss}. This workflow READS the credentials rather than inventing them, so the account it creates always matches what the suite signs in with. Set them with 'gh secret set'."
             exit 1; }
-          echo "all four secrets present"
-          echo "will provision: ${LIVE_OWNER_EMAIL}"
+
+          # 🔴 MASKED BEFORE IT IS EXPORTED. It came from a secret and is masked
+          # already, but it is about to be written to $GITHUB_ENV under a new
+          # name — and a masked value only stays masked if the NEW name is
+          # registered too.
+          echo "::add-mask::$ACCOUNT_PASSWORD"
+          {
+            echo "ACCOUNT_EMAIL=$ACCOUNT_EMAIL"
+            echo "ACCOUNT_PASSWORD=$ACCOUNT_PASSWORD"
+            echo "REGISTER_FN=$REGISTER_FN"
+            echo "ORG_NAME=$ORG_NAME"
+            echo "BRANCH_NAME=$BRANCH_NAME"
+          } >> "$GITHUB_ENV"
+
+          echo "kind:      ${KIND}"
+          echo "account:   ${ACCOUNT_EMAIL}"
+          echo "will call: ${REGISTER_FN}('<subject>', '${ORG_NAME}', '${BRANCH_NAME}')"
 
       - name: Get a Keycloak admin token
         run: |
@@ -125,7 +179,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsS --max-time 120 -H "Authorization: Bearer ${KC_TOKEN}" \
-            --get --data-urlencode "email=${LIVE_OWNER_EMAIL}" --data-urlencode "exact=true" \
+            --get --data-urlencode "email=${ACCOUNT_EMAIL}" --data-urlencode "exact=true" \
             "${KC_URL}/admin/realms/autoworkshop/users" > /tmp/existing.json
           python3 - <<'PY'
           import json
@@ -147,12 +201,12 @@ jobs:
           DRY RUN — nothing created.
 
           With confirm=APPLY this would:
-            1. create (or update) the Keycloak user ${LIVE_OWNER_EMAIL},
-               enabled, emailVerified, with the password from LIVE_OWNER_PASSWORD
+            1. create (or update) the Keycloak user ${ACCOUNT_EMAIL},
+               enabled, emailVerified, with the password from ${SECRET_PREFIX}_PASSWORD
                and NO required actions (a forced password change would break an
                automated sign-in on its first attempt)
             2. provision the matching identity.users row
-            3. register '${WORKSHOP_NAME}' so the account owns a real workshop
+            3. call ${REGISTER_FN} so the account owns a real organisation
             4. print what the live suite will now be able to prove
 
           It does NOT print the password and does NOT alter any other account.
@@ -178,8 +232,8 @@ jobs:
             python3 - > /tmp/user.json <<PY
           import json, os
           print(json.dumps({
-            "username": os.environ["LIVE_OWNER_EMAIL"],
-            "email": os.environ["LIVE_OWNER_EMAIL"],
+            "username": os.environ["ACCOUNT_EMAIL"],
+            "email": os.environ["ACCOUNT_EMAIL"],
             "firstName": "Live", "lastName": "Suite",
             "enabled": True, "emailVerified": True,
             "requiredActions": [],
@@ -202,7 +256,7 @@ jobs:
           python3 - > /tmp/pw.json <<'PY'
           import json, os
           print(json.dumps({"type": "password",
-                            "value": os.environ["LIVE_OWNER_PASSWORD"],
+                            "value": os.environ["ACCOUNT_PASSWORD"],
                             "temporary": False}))
           PY
           curl -fsS -X PUT -H "Authorization: Bearer ${KC_TOKEN}" \
@@ -274,10 +328,23 @@ jobs:
           # workshop for an account that already owns one — which the database
           # would refuse anyway, with a message about already belonging to an
           # organisation.
-          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v subject="${USER_ID}" -v email="${LIVE_OWNER_EMAIL}" -v dname="${DISPLAY_NAME}" -v wname="${WORKSHOP_NAME}" <<'SQL'
+          # ⚠️ THE FUNCTION NAME IS INTERPOLATED BY THE SHELL, NOT BY psql. A
+          # psql `:'var'` becomes a quoted STRING, which is right for the
+          # arguments and impossible for the function being called. `REGISTER_FN`
+          # comes from the fixed `case` above and can only ever be one of three
+          # literals — it is never user input.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL"             -v subject="${USER_ID}" -v email="${ACCOUNT_EMAIL}"             -v dname="${DISPLAY_NAME}" -v oname="${ORG_NAME}" -v bname="${BRANCH_NAME}" <<SQL
           \set QUIET on
           SELECT identity.provision_user_from_subject(:'subject', :'email', :'dname') AS app_user_id \gset
           \echo 'application user:' :app_user_id
+
+          -- 🔴 SET IT, THEN READ IT. The verification block below asks for
+          -- \`live.subject\`; without this line \`current_setting(..., true)\`
+          -- returns NULL, the lookup matches nothing, and the check RAISES on a
+          -- perfectly provisioned account — a guard that fails every time is as
+          -- useless as one that passes every time, and harder to notice because
+          -- it looks like diligence.
+          SELECT set_config('live.subject', :'subject', false);
 
           SELECT count(*) AS n FROM identity.memberships m
             JOIN identity.users u ON u.id = m.user_id
@@ -288,17 +355,17 @@ jobs:
             \echo 'already belongs to an organisation — leaving it alone'
           \else
             SELECT o_tenant_id, o_organization_id, o_membership_id
-              FROM identity.register_workshop(:'subject', :'wname', 'Main branch') \gset
-            \echo 'created workshop tenant:' :o_tenant_id
+              FROM ${REGISTER_FN}(:'subject', :'oname', :'bname') \gset
+            \echo 'created tenant:' :o_tenant_id
           \endif
 
           -- 🔴 PROVE IT, RATHER THAN TRUSTING THE CALLS ABOVE. A provisioning
           -- step that reports success without reading the result back is how
           -- this project has repeatedly shipped "applied" work that was not
-          -- there. The suite needs an ACTIVE workshop_owner membership; anything
-          -- else and the four signed-in checks will fail for a reason that has
-          -- nothing to do with the product.
-          DO $$
+          -- there. The walkthrough needs an ACTIVE membership; anything else and
+          -- the signed-in checks fail for a reason that has nothing to do with
+          -- the product.
+          DO \$\$
           DECLARE v_role text; v_status text;
           BEGIN
             SELECT m.role_name, m.status INTO v_role, v_status
@@ -308,10 +375,10 @@ jobs:
                AND m.status = 'active'
              LIMIT 1;
             IF v_role IS NULL THEN
-              RAISE EXCEPTION 'the account has no active membership — the live suite would sign in and see nothing';
+              RAISE EXCEPTION 'the account has no active membership — a walkthrough would sign in and see nothing';
             END IF;
             RAISE NOTICE 'verified: role=% status=%', v_role, v_status;
-          END $$;
+          END \$\$;
           SQL
 
       - name: Always restore the database firewall
@@ -339,8 +406,8 @@ jobs:
           {
             echo "### Live-suite account provisioned"
             echo ""
-            echo "- account: \`${LIVE_OWNER_EMAIL}\` (dedicated; not the owner's own)"
-            echo "- owns: ${WORKSHOP_NAME}"
+            echo "- account: \`${ACCOUNT_EMAIL}\` (${KIND}; dedicated, not the owner's own)"
+            echo "- owns: ${ORG_NAME}"
             echo ""
             echo "Run **Live suite**. The signed-in job has reported"
             echo "\`0 passed / 0 failed / 4 SKIPPED\` on every run since it was"
