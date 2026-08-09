@@ -422,9 +422,21 @@ jobs:
           -- it looks like diligence.
           SELECT set_config('live.subject', :'subject', false);
 
-          SELECT count(*) AS n FROM identity.memberships m
-            JOIN identity.users u ON u.id = m.user_id
-           WHERE u.keycloak_subject = :'subject' AND m.status = 'active' \gset
+          -- 🔴 THROUGH `memberships_for_subject`, NEVER A DIRECT READ.
+          -- `identity.memberships` is ENABLE + FORCE ROW LEVEL SECURITY, so this
+          -- connection sees ZERO rows however many exist — and a count of 0 sent
+          -- this straight into a registration the database then refused with
+          -- "this account already belongs to an organisation". The guard was
+          -- inert and the failure it caused looked like the guard working.
+          --
+          -- This repository has the same scar in migration form: "a migration's
+          -- own orphan check was inert under FORCE RLS — 6 rows as owner, 0 as
+          -- the Render role". `memberships_for_subject` is the SECURITY DEFINER
+          -- function that exists precisely to answer this question without a
+          -- tenant context; it is what the API itself calls.
+          SELECT count(*) AS n
+            FROM identity.memberships_for_subject(:'subject')
+           WHERE status = 'active' \gset
           \echo 'existing active memberships:' :n
 
           \if :n
@@ -454,11 +466,12 @@ jobs:
           DO \$\$
           DECLARE v_role text; v_status text;
           BEGIN
-            SELECT m.role_name, m.status INTO v_role, v_status
-              FROM identity.memberships m
-              JOIN identity.users u ON u.id = m.user_id
-             WHERE u.keycloak_subject = current_setting('live.subject', true)
-               AND m.status = 'active'
+            -- Same reason as the count above: a direct read of
+            -- identity.memberships returns nothing under FORCE RLS, so this
+            -- verification would have RAISED on a perfectly provisioned account.
+            SELECT role_name, status INTO v_role, v_status
+              FROM identity.memberships_for_subject(current_setting('live.subject', true))
+             WHERE status = 'active'
              LIMIT 1;
             IF v_role IS NULL THEN
               RAISE EXCEPTION 'the account has no active membership — a walkthrough would sign in and see nothing';
