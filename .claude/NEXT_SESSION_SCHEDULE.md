@@ -26,7 +26,14 @@ one actually proved:
 | `apply-migrations -f confirm=APPLY` | `31329576051` | **3 applied, 71 skipped, 74 in repo** — 073, 074, 075 |
 | Apply-migrations re-check (auto, post-Release) | `31329738077` | success — **PENDING 0** |
 | `deploy-api -f confirm=APPLY` | `31329772251` | success — image built, pushed, Render deploy waited for and read back |
-| Live suite | `31329916776` | **25 passed / 0 failed / 0 skipped** |
+| Live suite | `31329916776` | **25 passed / 0 failed / 4 SKIPPED** |
+| Release + live suite again (doc push `6d8da05`) | `31330153943` / `31330283008` | success — same **25 / 0 / 4** |
+
+⚠️ **The 4 skips are the anonymous-vs-signed-in split.** The suite runs two jobs;
+the anonymous job is 25/0/0 and the **signed-in job is 0 passed / 0 failed / 4
+skipped** because `LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD` are unset (gap A1,
+owner-only). Reading only the anonymous job reports "0 skipped" and hides them —
+it did exactly that once during this pass. **Always read both jobs.**
 
 ⚠️ The first Live suite (`31329738097`, auto-chained off Release) failed 2 —
 customer-web 502. That was a **free-tier cold start**, not a defect: the same two
