@@ -52,6 +52,10 @@ on:
         description: 'customer-web base URL'
         required: false
         default: 'https://autoworkshop-customer.onrender.com'
+      towing:
+        description: 'towing-web base URL'
+        required: false
+        default: 'https://autoworkshop-towing.onrender.com'
       api:
         description: 'API base URL'
         required: false
@@ -76,6 +80,7 @@ jobs:
     env:
       APEX: ${{ inputs.apex || 'https://autoworkshop.aiappinvent.com' }}
       CUSTOMER: ${{ inputs.customer || 'https://autoworkshop-customer.onrender.com' }}
+      TOWING: ${{ inputs.towing || 'https://autoworkshop-towing.onrender.com' }}
       API: ${{ inputs.api || 'https://autoworkshop-api.onrender.com' }}
       KEYCLOAK: ${{ inputs.keycloak || 'https://autoworkshop-keycloak.onrender.com' }}
       REALM: autoworkshop
@@ -88,7 +93,7 @@ jobs:
           # first request pays the whole cold start. Measuring before warming is
           # how a healthy platform gets reported as an outage; that happened on
           # 2026-08-07 and cost an hour.
-          for url in "$APEX" "$CUSTOMER" "$API/api/v1/health" "$KEYCLOAK/realms/$REALM/.well-known/openid-configuration"; do
+          for url in "$APEX" "$CUSTOMER" "$TOWING" "$API/api/v1/health" "$KEYCLOAK/realms/$REALM/.well-known/openid-configuration"; do
             code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 240 "$url" || echo 000)"
             echo "warm  $url -> $code"
           done
@@ -101,6 +106,7 @@ jobs:
 
           APEX     = os.environ['APEX'].rstrip('/')
           CUSTOMER = os.environ['CUSTOMER'].rstrip('/')
+          TOWING   = os.environ['TOWING'].rstrip('/')
           API      = os.environ['API'].rstrip('/')
           KEYCLOAK = os.environ['KEYCLOAK'].rstrip('/')
           REALM    = os.environ['REALM']
@@ -166,8 +172,49 @@ jobs:
 
           up('apex', APEX)
           up('customer-web', CUSTOMER)
+          up('towing-web', TOWING)
           up('api health', f'{API}/api/v1/health')
           up('keycloak realm', f'{KEYCLOAK}/realms/{REALM}/.well-known/openid-configuration')
+
+          # ── TOWING: TEN SCREENS THAT WERE REACHABLE BY NOBODY ──────────────
+          #
+          # 🔴 WRITTEN BECAUSE THIS SUITE WENT 25/0/4 GREEN THE DAY towing
+          # SHIPPED AND TOUCHED NONE OF IT. The app had ten finished screens,
+          # seven tables and fourteen gated routes, and no deploy path at all —
+          # no workflow, no Render service. The API answered 401, which every
+          # gate read as success, while not one screen was reachable. The suite
+          # could not have noticed, because it did not know the app existed.
+          #
+          # ⚠️ EIGHT ANSWER 200 AND TWO ANSWER 404, AND BOTH ARE CORRECT.
+          # `requireNavRoute` calls `notFound()` for a route the viewer's nav
+          # tree does not advertise, and `invoices` (finance.read) and
+          # `settings` (organization.admin) carry permission keys — so an
+          # anonymous visitor must NOT learn they exist. Asserting 404 on those
+          # two is a SECURITY assertion, not a tolerance: a 200 here would mean
+          # a permission-gated screen had started rendering for the public.
+          for screen in ['/operations/dashboard', '/operations/new-requests',
+                         '/operations/dispatch-board', '/operations/drivers',
+                         '/operations/recovery-vehicles', '/operations/active-recoveries',
+                         '/operations/completed-recoveries', '/operations/incidents']:
+              def run(p=screen):
+                  s, _ = fetch(f'{TOWING}{p}')
+                  return s == 200, f'HTTP {s} (wanted 200)'
+              check(f'towing {screen} renders', run)
+
+          for screen in ['/operations/invoices', '/operations/settings']:
+              def run(p=screen):
+                  s, _ = fetch(f'{TOWING}{p}')
+                  return s == 404, f'HTTP {s} (wanted 404 — permission-gated, must not exist for the public)'
+              check(f'towing {screen} is hidden from anonymous', run)
+
+          def towing_offers_sign_in():
+              s, body = fetch(f'{TOWING}/operations/dashboard')
+              if s != 200:
+                  return False, f'dashboard returned {s}'
+              hit = re.search(r'[Ss]ign in', body)
+              return bool(hit), 'the shell offers a way in' if hit \
+                  else 'NO sign-in affordance — an operator has no way in'
+          check('towing-web offers a way to sign in', towing_offers_sign_in)
 
           # ── THE OWNER'S FUNNEL, BY ITS OWN TEXT ────────────────────────────
           # 🔴 GREP THE LIVE HTML FOR THE FEATURE'S OWN WORDS. The button that
@@ -227,7 +274,16 @@ jobs:
           # suite that cries wolf is worse than none, because the next real
           # failure is read as another bad assertion.
           for path in ['/service-requests', '/supplier-requests', '/notifications',
-                       '/plan-work/bays', '/plan-work/tools', '/learning/materials']:
+                       '/plan-work/bays', '/plan-work/tools', '/learning/materials',
+                       # Towing, added 2026-08-09 with the app's first deploy.
+                       # ⚠️ THE PREFIX IS `api/v1` AND THAT IS WHY THESE READ
+                       # `/towing/...` HERE — a probe written without the prefix
+                       # 404s on every route in the API and reads exactly like
+                       # "the feature is not deployed". It cost a false alarm on
+                       # these very routes the day they went live.
+                       '/towing/dashboard', '/towing/requests', '/towing/recoveries',
+                       '/towing/drivers', '/towing/vehicles', '/towing/incidents',
+                       '/towing/invoices', '/towing/settings']:
               def run(p=path):
                   s, _ = fetch(f'{API}/api/v1{p}')
                   # 401/403 = the route is deployed and refuses anonymous callers.
