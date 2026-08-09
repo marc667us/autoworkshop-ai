@@ -292,17 +292,34 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
-          DB_ID="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
-            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" \
-            | python3 -c "
-          import sys, json, os
-          rows = json.load(sys.stdin)
-          for r in rows:
-              d = r.get('postgres', r)
+          # 🔴 THE BODY IS KEPT, AND THE PARSE TOLERATES EVERY SHAPE RENDER
+          # ACTUALLY RETURNS. Piped straight into python this died with
+          # `TypeError: 'NoneType' object is not iterable` — a traceback that
+          # names the language and not the problem. The API had answered 200 with
+          # JSON `null`, which is neither an error curl would catch nor a list.
+          # Keeping the body means the next failure shows what arrived.
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          # A list of {postgres:{...}}, a list of {...}, or a wrapper object —
+          # all three have been seen from this API family.
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
               if d.get('name') == os.environ['DB_NAME']:
-                  print(d['id']); break
+                  print(d.get('id','')); break
           ")"
-          [ -n "$DB_ID" ] || { echo "::error::could not find ${DB_NAME}"; exit 1; }
+          [ -n "$DB_ID" ] || {
+            echo "::group::what /v1/postgres returned"; head -c 500 /tmp/pg_list.json; echo "::endgroup::"
+            echo "::error::could not find a Postgres named ${DB_NAME}. The body above is what the API actually answered."
+            exit 1; }
+          echo "database: ${DB_ID}"
           echo "$DB_ID" > /tmp/db_id
 
           curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
