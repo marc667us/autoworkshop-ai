@@ -200,7 +200,8 @@ jobs:
           # survives every statement in this script.
           "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" \
             -v email="${OWNER_EMAIL}" -v tag="${DEMO_TAG}" \
-            -v ncars="${CUSTOMER_CARS}" -v nfleet="${FLEET_CARS}" <<'SQL'
+            -v ncars="${CUSTOMER_CARS}" -v nfleet="${FLEET_CARS}" \
+            -v mkws="${CREATE_WORKSHOP}" -v wsname="${NEW_WORKSHOP_NAME}" <<'SQL'
           \pset pager off
           BEGIN;
 
@@ -222,6 +223,51 @@ jobs:
           -- derived from an arbitrary slice of a human string is a key that
           -- collides on the day somebody names two runs similarly.
           SELECT set_config('seed.code', upper(substr(md5(:'tag'), 1, 4)), false);
+          SELECT set_config('seed.mkws',   :'mkws',   false);
+          SELECT set_config('seed.wsname', :'wsname', false);
+
+          -- ── give the account a workshop, if it owns nothing and we were
+          --    asked to ───────────────────────────────────────────────────────
+          --
+          -- 🔴 THE ACCOUNT MAY OWN NOTHING, AND THAT IS WHAT WE FOUND ON
+          -- PRODUCTION. `marc667us@yahoo.com` exists there as "Workshop Owner",
+          -- active, with ZERO active memberships — so every tenant-scoped route
+          -- refuses it and there is nothing to look at after signing in.
+          --
+          -- ⚠️ CREATED THROUGH `identity.register_workshop`, THE SAME DOOR A
+          -- REAL SIGN-UP USES, so the owner ends up with exactly what a real
+          -- workshop owner gets rather than a hand-built tenant only a seeder
+          -- could produce.
+          --
+          -- Gated on its own input and OFF by default: giving somebody's live
+          -- account an organisation is not a side effect of loading sample data.
+          DO $mkws$
+          DECLARE v_subject text; v_has int;
+          BEGIN
+            IF lower(coalesce(current_setting('seed.mkws', true), 'no')) NOT IN ('yes','true','1') THEN
+              RETURN;
+            END IF;
+            SELECT keycloak_subject INTO v_subject
+              FROM identity.users WHERE lower(email) = lower(current_setting('seed.email', true));
+            IF v_subject IS NULL THEN
+              RAISE EXCEPTION 'no such account: %', current_setting('seed.email', true);
+            END IF;
+            -- Through the definer function: identity.memberships is FORCE RLS
+            -- and answers zero rows to this connection whatever exists.
+            SELECT count(*) INTO v_has
+              FROM identity.memberships_for_subject(v_subject) WHERE status = 'active';
+            IF v_has > 0 THEN
+              RAISE NOTICE 'account already belongs to an organisation — not creating one';
+              RETURN;
+            END IF;
+            PERFORM identity.register_workshop(v_subject,
+                                               current_setting('seed.wsname', true),
+                                               'Main branch');
+            RAISE NOTICE 'registered "%" for %',
+                         current_setting('seed.wsname', true),
+                         current_setting('seed.email', true);
+          END
+          $mkws$;
 
           -- ── who and where ────────────────────────────────────────────────
           CREATE TEMP TABLE target AS
