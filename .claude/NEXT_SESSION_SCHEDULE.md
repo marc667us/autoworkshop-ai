@@ -173,6 +173,45 @@ owner buttons present.
 
 ---
 
+# ═══ 🔴 NINE RENDER SERVICES, AND THE THREE NEWEST FLAP ═══
+
+**Owner said "deploy all" (2026-08-09 pt3). All seven web apps now have a deploy
+path.** New this pass: `autoworkshop-{admin,fleet,insurance}`, plus customer-web
+redeployed (it was stale since 08-08 — `marketplace-ui` and `navigation` had
+changed under it).
+
+| Service | State |
+|---|---|
+| apex, api, customer, supplier, towing, keycloak | healthy — **5 of 5** back-to-back |
+| **admin, fleet, insurance** | **intermittent** — see below |
+
+🔴 **MEASURED MINUTES AFTER CREATION: the same URL, back-to-back, answered
+200, 200, 404, 200, 404, 404.** Every 404 is a **10-byte `Not Found` from
+Render's edge carrying `x-render-routing: no-server`, returned in ~0.6s** — far
+too fast to be a cold start, which was measured at **136s** on this account. The
+router intermittently has no instance for a service that is otherwise up.
+
+**It is NOT a platform outage.** The six pre-existing services answered 5/5 at
+that same moment. It is the three newest on a free allowance now asked to hold
+**nine**, which the repo has warned about since the fifth.
+
+**The live suite records it rather than hiding or crying wolf:** each of the
+three retries up to four times and reports the attempt count. Latest run
+(`31336053124`) — **48 passed / 0 failed / 4 skipped**, with
+`fleet-web is reachable — took 3 attempts ([404, 404, 200])` and
+`insurance-web — took 2 attempts ([404, 200])` in the output. **A rising attempt
+count is the early warning; if these start failing outright, the free pool is
+the first suspect and these three are the newest consumers.**
+
+⚠️ **AND TWO OF THE THREE HAVE NOTHING TO SHOW.** fleet-web is **0 of 29** built
+screens and insurance-web **0 of 28** — every route renders the honest
+not-built-yet placeholder. admin-web is **5 of 26**. Deploying them made the
+SHELL reachable, not features. Neither can be signed into at all:
+`POST /registration/fleet` is 404, and `insurance_assessor` has no registration
+path whatsoever.
+
+---
+
 # ═══ 🔴 NEW GAPS FOUND WHILE VERIFYING THE DEPLOY ═══
 
 **C1 — towing-web had no deploy path. ✅ CLOSED 2026-08-09 pt3, owner said
