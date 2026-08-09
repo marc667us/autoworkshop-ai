@@ -104,6 +104,22 @@ function walkApp(appDir) {
 // asked. Until this was split, only workshop-web was measured at all, so the
 // customer workspace — a whole seventh of the product — had never appeared in
 // a coverage number.
+//
+// 🔴 AND THE SAME MISTAKE WAS STILL IN THIS LIST, ONE LEVEL UP. Until
+// 2026-08-09 the table below held SIX trees across TWO apps, and printed
+// "100%" for five of them. `COMPLETION_PLAN.md` says so in its own scope line:
+// *"The other four apps — supplier, fleet, insurance, towing, admin — are out
+// of scope for this plan."* So the number was 100% OF THE PART THAT WAS IN
+// SCOPE, and it was read — by me, in a session summary — as 100% of the
+// product.
+//
+// The owner said "still so many functionalities show not built yet" while this
+// script printed 0 dead ends. Both were true. `packages/navigation` defines
+// full menus for all SEVEN workspaces; five of those apps have between 3 and 8
+// pages behind them. A coverage measure that only looks where the work was
+// done cannot report the work that was not.
+//
+// All seven are measured now. The number went down, and it is the true one.
 const TREES = {
   'DEFAULT §34 (supervisor, QC, storekeeper, cashier, platform admin)': ['workshopGroups', 'workshop-web'],
   'OWNER §46': ['workshopOwnerGroups', 'workshop-web'],
@@ -111,6 +127,11 @@ const TREES = {
   'RECEPTION §48': ['workshopReceptionGroups', 'workshop-web'],
   'TECHNICIAN §49': ['workshopTechnicianGroups', 'workshop-web'],
   'CUSTOMER §33': ['customerGroups', 'customer-web'],
+  'SUPPLIER §35': ['supplierGroups', 'supplier-web'],
+  'FLEET §36': ['fleetGroups', 'fleet-web'],
+  'INSURANCE §37': ['insuranceGroups', 'insurance-web'],
+  'TOWING §38': ['towingGroups', 'towing-web'],
+  'PLATFORM ADMIN §32': ['adminGroups', 'admin-web'],
 };
 
 const pagesByApp = new Map();
@@ -124,6 +145,23 @@ console.log('WHAT EACH ROLE SEES IN ITS MENU vs WHAT HAS A PAGE BEHIND IT\n');
 let totalAdvertised = 0;
 const deadEverywhere = new Map();
 
+// 🔴 DEDUPED BY app+route, NOT SUMMED PER TREE. Five of the eleven trees are
+// workshop-web — the one app that is finished — so a per-tree sum counts a
+// screen once per role that can see it, and prints a role-weighted average
+// dominated by that app. `deadEverywhere` right underneath has always keyed on
+// app+route for this reason; the totals now match it.
+//
+// ⚠️ THE CORRECTION IS SMALLER THAN IT LOOKS, AND THE NUMBER WAS CHECKED
+// RATHER THAN TAKEN ON TRUST. The reviewer who found the double-count
+// predicted the honest figure was "roughly 115 of 238, about 48%". It is
+// 255 of 380 (67%) — the five workshop trees overlap far less than that
+// assumed, their union being ~215 distinct routes rather than ~66. The
+// arithmetic is self-checking: 255 working + 2 signposted + 123 dead = 380.
+// A reviewer being right about the DEFECT and wrong about its SIZE is normal;
+// re-measure before repeating either.
+const advertisedOnce = new Set();
+const workingOnce = new Set();
+
 for (const [label, [blockName, app]] of Object.entries(TREES)) {
   const { pages, planned } = pagesFor(app);
   const routes = routesIn(block(blockName));
@@ -134,6 +172,8 @@ for (const [label, [blockName, app]] of Object.entries(TREES)) {
   const explained = routes.filter((r) => planned.has(r));
   const dead = routes.filter((r) => !pages.has(r));
   totalAdvertised += routes.length;
+  for (const rt of routes) advertisedOnce.add(`${app}${rt}`);
+  for (const rt of built) workingOnce.add(`${app}${rt}`);
   // Keyed by app as well as route: `/home/dashboard` exists in both apps and is
   // a different screen in each. Merging them would hide one behind the other.
   for (const d of dead) {
@@ -153,6 +193,20 @@ for (const [app, { pages, planned }] of pagesByApp) {
   );
 }
 console.log();
+
+// 🔴 THE HEADLINE, PRINTED WHETHER OR NOT ANYONE ASKS FOR IT. The per-tree rows
+// above are easy to skim as "lots of 100%" — which is how five apps sitting at
+// 0-19% went unremarked while a session summary reported the product complete.
+// One number, over every workspace the product actually ships.
+const pctAll = Math.round((workingOnce.size / advertisedOnce.size) * 100);
+console.log(
+  `\n══ DISTINCT SCREENS ACROSS ${new Set(Object.values(TREES).map(([, a]) => a)).size} APPS: ` +
+    `${workingOnce.size} of ${advertisedOnce.size} WORKING (${pctAll}%) ══`,
+);
+console.log(
+  `   (${totalAdvertised} menu entries in ${Object.keys(TREES).length} role trees; ` +
+    `the trees overlap, so each screen is counted once here)`,
+);
 
 console.log(`\nDistinct menu entries with NO page anywhere: ${deadEverywhere.size}`);
 // `--all` prints every one. A 12-line sample is fine for a progress read, but
