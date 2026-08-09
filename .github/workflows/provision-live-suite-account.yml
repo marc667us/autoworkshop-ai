@@ -1,0 +1,352 @@
+# Provision the account the live suite signs in as — CLOSING GAP A1.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 🔴 WHY THIS EXISTS, AND WHAT ITS ABSENCE COST.
+#
+# The live suite has two jobs. The anonymous one has been green all along; the
+# SIGNED-IN one has reported `0 passed / 0 failed / 4 SKIPPED` every single run
+# since it was written, because `LIVE_OWNER_EMAIL` / `LIVE_OWNER_PASSWORD` were
+# never set. Four checks — does signing in land on the apex, does the dashboard
+# render the workshop tree, does the lead pipeline render, does signing out end
+# the session — have never once executed against production.
+#
+# On 2026-08-09 that gap hid a real defect for a day: both route guards asked
+# "is this role foreign to the WORKSHOP" while rendering the supplier, customer,
+# towing and fleet apps, so each refused the very role it exists for. Every
+# anonymous check passed throughout, because an anonymous visitor has no role
+# and `undefined` is foreign to nothing. The owner found it by clicking "Add
+# Product" and getting a 404. A signed-in check would have found it first.
+#
+# ⚠️ THIS WRITES REAL PRODUCTION DATA: a Keycloak user, an `identity.users` row,
+# a tenant, an organisation, a branch and a `workshop_owner` membership. That is
+# not a side effect, it is the point — the suite must sign in as somebody who
+# genuinely exists. It is a DEDICATED account, never the owner's own, so a test
+# can never act as the real operator.
+#
+# ⚠️ THE PASSWORD IS NEVER AN INPUT AND IS NEVER PRINTED. Both values are read
+# from the repository secrets the live suite already reads, so this workflow can
+# only ever provision an account that matches what the suite will use — the two
+# cannot drift. Set them first:
+#
+#     gh secret set LIVE_OWNER_EMAIL
+#     gh secret set LIVE_OWNER_PASSWORD
+#
+# 🔴 `-f confirm=APPLY` OR THIS ONLY INSPECTS. Every writing step is gated.
+#
+# To undo: delete the Keycloak user, and the tenant it owns, by hand. There is
+# deliberately no automatic teardown here — a workflow that can delete a live
+# tenant is a workflow that can delete the wrong one.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Provision live-suite account
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to create the account. Anything else inspects only.'
+        required: false
+        default: ''
+      display_name:
+        description: 'Display name for the account'
+        required: false
+        default: 'Live Suite Owner'
+      workshop_name:
+        description: 'The workshop this account will own'
+        required: false
+        default: 'Live Suite Workshop'
+      keycloak_url:
+        description: 'Public Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      KC_URL: ${{ inputs.keycloak_url }}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      LIVE_OWNER_EMAIL: ${{ secrets.LIVE_OWNER_EMAIL }}
+      LIVE_OWNER_PASSWORD: ${{ secrets.LIVE_OWNER_PASSWORD }}
+      DISPLAY_NAME: ${{ inputs.display_name }}
+      WORKSHOP_NAME: ${{ inputs.workshop_name }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without the things this cannot run without
+        run: |
+          set -euo pipefail
+          # 🔴 NAMED INDIVIDUALLY. "one of these is missing" sends somebody
+          # hunting through four secrets; this says which.
+          miss=""
+          [ -n "${KC_ADMIN_PASSWORD:-}" ]   || miss="${miss} KC_BOOTSTRAP_ADMIN_PASSWORD"
+          [ -n "${RENDER_API_KEY:-}" ]      || miss="${miss} RENDER_API_KEY"
+          [ -n "${LIVE_OWNER_EMAIL:-}" ]    || miss="${miss} LIVE_OWNER_EMAIL"
+          [ -n "${LIVE_OWNER_PASSWORD:-}" ] || miss="${miss} LIVE_OWNER_PASSWORD"
+          [ -z "$miss" ] || {
+            echo "::error::missing secret(s):${miss}. Set LIVE_OWNER_EMAIL and LIVE_OWNER_PASSWORD with 'gh secret set' first — this workflow reads them rather than inventing them, so the account it creates always matches what the live suite signs in with."
+            exit 1; }
+          echo "all four secrets present"
+          echo "will provision: ${LIVE_OWNER_EMAIL}"
+
+      - name: Get a Keycloak admin token
+        run: |
+          set -euo pipefail
+          # Split from the parse: piped together, a wrong password returns a
+          # non-JSON body, `json.load` raises under pipefail, and the friendly
+          # message below never prints.
+          printf '%s' \
+            "client_id=admin-cli&grant_type=password&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASSWORD}" \
+            | curl -sS --max-time 150 -d @- \
+                "${KC_URL}/realms/master/protocol/openid-connect/token" > /tmp/kc_token.json || true
+          TOKEN="$(python3 -c "
+          import json
+          try:
+              print(json.load(open('/tmp/kc_token.json')).get('access_token',''))
+          except Exception:
+              print('')
+          ")"
+          [ -n "$TOKEN" ] || {
+            echo "::group::token response"; head -c 300 /tmp/kc_token.json; echo "::endgroup::"
+            echo "::error::could not obtain a Keycloak admin token"; exit 1; }
+          echo "::add-mask::$TOKEN"
+          echo "KC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "admin token acquired"
+
+      - name: What exists already
+        run: |
+          set -euo pipefail
+          curl -fsS --max-time 120 -H "Authorization: Bearer ${KC_TOKEN}" \
+            --get --data-urlencode "email=${LIVE_OWNER_EMAIL}" --data-urlencode "exact=true" \
+            "${KC_URL}/admin/realms/autoworkshop/users" > /tmp/existing.json
+          python3 - <<'PY'
+          import json
+          rows = json.load(open('/tmp/existing.json'))
+          if rows:
+              u = rows[0]
+              print('user already exists:', u['id'], 'enabled=', u.get('enabled'),
+                    'emailVerified=', u.get('emailVerified'))
+              print('this run will RESET its password and ensure the workshop, not create a second')
+          else:
+              print('no such user yet — this run would create one')
+          PY
+
+      - name: Inspect only
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<INFO
+
+          DRY RUN — nothing created.
+
+          With confirm=APPLY this would:
+            1. create (or update) the Keycloak user ${LIVE_OWNER_EMAIL},
+               enabled, emailVerified, with the password from LIVE_OWNER_PASSWORD
+               and NO required actions (a forced password change would break an
+               automated sign-in on its first attempt)
+            2. provision the matching identity.users row
+            3. register '${WORKSHOP_NAME}' so the account owns a real workshop
+            4. print what the live suite will now be able to prove
+
+          It does NOT print the password and does NOT alter any other account.
+          INFO
+
+      - name: Create or update the Keycloak user
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          UID_EXISTING="$(python3 -c "
+          import json
+          rows = json.load(open('/tmp/existing.json'))
+          print(rows[0]['id'] if rows else '')
+          ")"
+
+          if [ -z "$UID_EXISTING" ]; then
+            # ⚠️ `emailVerified: true` AND NO REQUIRED ACTIONS, BOTH DELIBERATE.
+            # This realm has had `verifyEmail` on with no SMTP server, which
+            # BLOCKED sign-up entirely once. And a `UPDATE_PASSWORD` required
+            # action would make the very first automated sign-in land on a
+            # change-password form instead of the dashboard — the suite would
+            # report a product failure for a realm setting.
+            python3 - > /tmp/user.json <<PY
+          import json, os
+          print(json.dumps({
+            "username": os.environ["LIVE_OWNER_EMAIL"],
+            "email": os.environ["LIVE_OWNER_EMAIL"],
+            "firstName": "Live", "lastName": "Suite",
+            "enabled": True, "emailVerified": True,
+            "requiredActions": [],
+            "attributes": {"purpose": ["automated live-suite sign-in; not a real operator"]},
+          }))
+          PY
+            curl -fsS -X POST -H "Authorization: Bearer ${KC_TOKEN}" \
+              -H 'Content-Type: application/json' --data @/tmp/user.json \
+              "${KC_URL}/admin/realms/autoworkshop/users" -D /tmp/h.txt -o /dev/null
+            USER_ID="$(grep -i '^location:' /tmp/h.txt | tr -d '\r' | sed 's|.*/||')"
+            echo "created user $USER_ID"
+          else
+            USER_ID="$UID_EXISTING"
+            echo "reusing user $USER_ID"
+          fi
+          [ -n "$USER_ID" ] || { echo "::error::could not determine the user id"; exit 1; }
+
+          # The password, set from the secret so it always matches the suite.
+          # `temporary: false` — a temporary password forces a reset on first use.
+          python3 - > /tmp/pw.json <<'PY'
+          import json, os
+          print(json.dumps({"type": "password",
+                            "value": os.environ["LIVE_OWNER_PASSWORD"],
+                            "temporary": False}))
+          PY
+          curl -fsS -X PUT -H "Authorization: Bearer ${KC_TOKEN}" \
+            -H 'Content-Type: application/json' --data @/tmp/pw.json \
+            "${KC_URL}/admin/realms/autoworkshop/users/${USER_ID}/reset-password"
+          rm -f /tmp/pw.json
+
+          # 🔴 THE KEYCLOAK USER ID IS THE `sub` CLAIM, and therefore the
+          # `keycloak_subject` every identity row is keyed on. Getting this wrong
+          # produces an account that signs in perfectly and belongs to nothing.
+          echo "USER_ID=${USER_ID}" >> "$GITHUB_ENV"
+          echo "keycloak user ready"
+
+      - name: Find the database and open the firewall for this runner
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          DB_ID="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" \
+            | python3 -c "
+          import sys, json, os
+          rows = json.load(sys.stdin)
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d['id']); break
+          ")"
+          [ -n "$DB_ID" ] || { echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d.get('ipAllowList',[])))" \
+            > /tmp/ip_allow_original.json
+
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json'))
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'live-suite account provisioning'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          echo "firewall open, connection string captured"
+
+      - name: Give the account an application user and a workshop
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          PSQL=/usr/lib/postgresql/*/bin/psql
+          # shellcheck disable=SC2086
+          set -- $PSQL
+          PSQL="$1"
+
+          # ⚠️ IDEMPOTENT ON PURPOSE. `provision_user_from_subject` returns the
+          # existing row's id rather than inserting twice, and the membership
+          # check below means a re-run of this workflow does not attempt a second
+          # workshop for an account that already owns one — which the database
+          # would refuse anyway, with a message about already belonging to an
+          # organisation.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v subject="${USER_ID}" -v email="${LIVE_OWNER_EMAIL}" -v dname="${DISPLAY_NAME}" -v wname="${WORKSHOP_NAME}" <<'SQL'
+          \set QUIET on
+          SELECT identity.provision_user_from_subject(:'subject', :'email', :'dname') AS app_user_id \gset
+          \echo 'application user:' :app_user_id
+
+          SELECT count(*) AS n FROM identity.memberships m
+            JOIN identity.users u ON u.id = m.user_id
+           WHERE u.keycloak_subject = :'subject' AND m.status = 'active' \gset
+          \echo 'existing active memberships:' :n
+
+          \if :n
+            \echo 'already belongs to an organisation — leaving it alone'
+          \else
+            SELECT o_tenant_id, o_organization_id, o_membership_id
+              FROM identity.register_workshop(:'subject', :'wname', 'Main branch') \gset
+            \echo 'created workshop tenant:' :o_tenant_id
+          \endif
+
+          -- 🔴 PROVE IT, RATHER THAN TRUSTING THE CALLS ABOVE. A provisioning
+          -- step that reports success without reading the result back is how
+          -- this project has repeatedly shipped "applied" work that was not
+          -- there. The suite needs an ACTIVE workshop_owner membership; anything
+          -- else and the four signed-in checks will fail for a reason that has
+          -- nothing to do with the product.
+          DO $$
+          DECLARE v_role text; v_status text;
+          BEGIN
+            SELECT m.role_name, m.status INTO v_role, v_status
+              FROM identity.memberships m
+              JOIN identity.users u ON u.id = m.user_id
+             WHERE u.keycloak_subject = current_setting('live.subject', true)
+               AND m.status = 'active'
+             LIMIT 1;
+            IF v_role IS NULL THEN
+              RAISE EXCEPTION 'the account has no active membership — the live suite would sign in and see nothing';
+            END IF;
+            RAISE NOTICE 'verified: role=% status=%', v_role, v_status;
+          END $$;
+          SQL
+
+      - name: Always restore the database firewall
+        if: ${{ always() && inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl /tmp/pw.json /tmp/kc_token.json || true
+
+      - name: What the live suite can now prove
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          {
+            echo "### Live-suite account provisioned"
+            echo ""
+            echo "- account: \`${LIVE_OWNER_EMAIL}\` (dedicated; not the owner's own)"
+            echo "- owns: ${WORKSHOP_NAME}"
+            echo ""
+            echo "Run **Live suite**. The signed-in job has reported"
+            echo "\`0 passed / 0 failed / 4 SKIPPED\` on every run since it was"
+            echo "written; those four checks should now execute."
+            echo ""
+            echo "🔴 If they FAIL rather than skip, that is the point of them —"
+            echo "the four guards that refused a role on its own app were"
+            echo "invisible to every anonymous check for a day."
+          } >> "$GITHUB_STEP_SUMMARY"
