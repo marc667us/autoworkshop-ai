@@ -357,13 +357,22 @@ jobs:
 
           curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
             "https://api.render.com/v1/postgres/${DB_ID}" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);print(json.dumps(d.get('ipAllowList',[])))" \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          # 🔴 \`or []\`, NOT \`get(..., [])\`. The default applies only when the KEY
+          # IS ABSENT. Render returns the key present with a null value when the
+          # allow-list is empty, so the default never fired and the next step
+          # died with 'NoneType is not iterable' — a default that reads correct
+          # and is inert, which is a failure this repository has recorded five
+          # times in other forms.
+          print(json.dumps(d.get('ipAllowList') or []))" \
             > /tmp/ip_allow_original.json
 
           RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
           python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
           import json, sys
-          cur = json.load(open('/tmp/ip_allow_original.json'))
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
           cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
           cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'live-suite account provisioning'})
           print(json.dumps({'ipAllowList': cur}))
@@ -456,7 +465,7 @@ jobs:
           ID="$(cat /tmp/db_id)"
           python3 -c "
           import json
-          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
                     open('/tmp/restore.json','w'))"
           curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H 'Content-Type: application/json' --data @/tmp/restore.json \
