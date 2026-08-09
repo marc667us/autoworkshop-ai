@@ -136,11 +136,31 @@ test.describe('the live site, signed in as the workshop owner', () => {
     await page.goto(`${APEX}/home/dashboard`, { waitUntil: 'domcontentloaded' });
 
     const body = await page.locator('body').innerText();
-    // Two entries only management sees. Requiring several guards against one
-    // label being renamed and the check silently becoming vacuous.
-    const workshopMarkers = ['Customer Reception', 'Workshop Floor'];
-    const missing = workshopMarkers.filter((m) => !body.includes(m));
+
+    // 🔴 THE OWNER HAS THEIR OWN TREE, AND THIS ASSERTED SOMEBODY ELSE'S.
+    //
+    // It demanded 'Customer Reception' and 'Workshop Floor'. Both are groups in
+    // the DEFAULT STAFF tree (`workshopGroups`); neither exists in
+    // `workshopOwnerGroups`, whose eight groups are Home, Workshop Management,
+    // Customers and Vehicles, Workshop Operations, Repair Control, Parts and
+    // Suppliers, Knowledge and Staff, Reports. Since T-0027 the navigation is
+    // resolved per ROLE, so an owner correctly sees the owner tree — and this
+    // check reported a product failure against a product that was right.
+    //
+    // It failed the very first time it ever ran: the signed-in job had been
+    // SKIPPED on every previous run for want of credentials, so the wrong
+    // expectation sat there unexercised.
+    //
+    // ⚠️ MARKERS CHOSEN TO BE ABSENT FROM THE CUSTOMER TREE, because "not a
+    // customer page" is the actual claim. 'Home' is in both trees and would make
+    // this vacuous. Several of them, so renaming one label does not silently
+    // turn the check into nothing.
+    const ownerMarkers = ['Workshop Management', 'Repair Control', 'Customers and Vehicles'];
+    const missing = ownerMarkers.filter((m) => !body.includes(m));
     expect(missing, `the owner's dashboard is missing: ${missing.join(', ')}`).toEqual([]);
+
+    // And positively NOT the customer tree — the failure this test is named for.
+    expect(body, 'an owner was served the customer navigation').not.toContain('My Vehicles');
   });
 
   /**
