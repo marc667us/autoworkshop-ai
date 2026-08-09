@@ -28,6 +28,11 @@ one actually proved:
 | `deploy-api -f confirm=APPLY` | `31329772251` | success — image built, pushed, Render deploy waited for and read back |
 | Live suite | `31329916776` | **25 passed / 0 failed / 4 SKIPPED** |
 | Release + live suite again (doc push `6d8da05`) | `31330153943` / `31330283008` | success — same **25 / 0 / 4** |
+| **towing-web deploy** (`efa7a7b`) | | |
+| `sync-keycloak-client-uris -f confirm=APPLY` | `31332267635` | **4 URIs applied** across 1 client |
+| `deploy-towing-web` DRY RUN | `31332294300` | success — image built, container served 200 with sign-in |
+| `deploy-towing-web -f confirm=APPLY` | `31332411581` | success — `autoworkshop-towing` created, `update_in_progress` → `live` |
+| Live suite, with towing coverage (`20655d5`) | `31332651991` | **45 passed / 0 failed / 4 SKIPPED** (was 25) |
 
 ⚠️ **The 4 skips are the anonymous-vs-signed-in split.** The suite runs two jobs;
 the anonymous job is 25/0/0 and the **signed-in job is 0 passed / 0 failed / 4
@@ -170,13 +175,25 @@ owner buttons present.
 
 # ═══ 🔴 NEW GAPS FOUND WHILE VERIFYING THE DEPLOY ═══
 
-**C1 — towing-web has NO deploy path at all.** Ten screens exist in the repo and
-**no user can reach any of them.** There is no `deploy-towing-web.yml` and no
-`autoworkshop-towing` Render service; the only deploy workflows name
-`autoworkshop-{web,api,customer-web,supplier-web,keycloak,postgres}`. The API
-behind those screens IS live. **Provisioning a sixth Render service is an owner
-decision** — A4 already flags that a fifth service shares the free instance-hour
-pool. Ask before provisioning.
+**C1 — towing-web had no deploy path. ✅ CLOSED 2026-08-09 pt3, owner said
+"yes deploy".** Live at **https://autoworkshop-towing.onrender.com** — the
+**SIXTH** Render service on the shared free allowance (A4). Ten screens, eight
+rendering anonymously and two correctly 404 (below). Shipped: `deploy-towing-web.yml`,
+`apps/towing-web/Dockerfile`, `output: 'standalone'`, the origin on the Keycloak
+client, and **20 new live-suite checks**. Keycloak sync applied 4 URIs.
+
+⚠️ **`/operations/invoices` and `/operations/settings` return 404 anonymously and
+that is CORRECT.** `requireNavRoute` calls `notFound()` for a route the viewer's
+nav tree does not advertise, and those two carry `finance.read` /
+`organization.admin`. The live suite asserts the 404 **as a security assertion** —
+a 200 there would mean a permission-gated screen had started rendering for the
+public. Nobody has yet proved they render for a *permitted* user; that needs
+live credentials (gap A1).
+
+⚠️ **The live realm carries a URI the committed file does not:**
+`https://towing.autoworkshop.aiappinvent.com/*` was already on the towing client.
+The committed realm is stale relative to live, and the add-only sync will never
+reveal that direction of drift.
 
 **C2 — `POST /api/v1/registration/fleet` returns 404.** Migration 075 created
 `identity.register_fleet` in the database, but no controller calls it —
@@ -185,6 +202,33 @@ and `customer` only. The door exists in the schema and nothing opens it. This is
 the *inverse* of "a route with no caller": a **caller with no route**. It is
 step 2 of the fleet build below, not a regression — but until it lands, a
 `fleet_administrator` still cannot be created through the product.
+
+---
+
+# ═══ 🔴 supplier-web SHARES FIVE OF THE DEFECTS FOUND IN REVIEW ═══
+
+`deploy-towing-web.yml` was modelled on `deploy-supplier-web.yml`, so the review
+of the copy is a review of the original. **These are live in supplier-web today
+and were NOT touched** — changing a working deploy path was out of scope:
+
+1. **The deploy poll falls through.** After 60 × 20s the loop just ends and the
+   step continues to the read-back. On an update the PREVIOUS image still serves
+   200 with a sign-in link, so the run goes **green for a deploy still stuck in
+   `update_in_progress`.**
+2. **The new deploy's id is discarded** (`POST /deploys >/dev/null`) and the poll
+   reads `deploys?limit=1` — a race where "latest" is the previous, already-live
+   deploy, so the read-back verifies the **OLD build**.
+3. **`curl … || echo 000` yields `000000`**, not `000` — measured, length 6. Any
+   comparison against `"000"` is false.
+4. **The cold-start retries have no `sleep`** — six instant 502s in under a
+   second, calling a spun-down service dead 30s before it wakes.
+5. **`len(merged) < len(cur)` cannot fire** — a dict that starts as `cur` and is
+   `update()`d can never be shorter. The guard asserts nothing.
+6. `NEXT_PUBLIC_APP_URL` is set as a Render **runtime** var; it is a **build-time
+   inline**, so it is inert while reading as configured.
+
+The fixed forms are all in `deploy-towing-web.yml`. Porting them back is a small,
+self-contained slice.
 
 ---
 
