@@ -49,6 +49,38 @@ on:
         description: 'Tag used by the demo seed, so this finds its rows'
         required: false
         default: 'DEMO-2026-08-09'
+      # ⚠️ ADDED BECAUSE THE READ-BACK GOT EXACTLY ONE CHANCE AND WASTED IT.
+      #
+      # The walk is one-shot by design: it converts every unconverted demo
+      # request and RAISES if it finds none, so a second APPLY run always fails.
+      # The read-back was gated on that same APPLY, which meant the only run that
+      # could ever print the result was the run that wrote it — and on
+      # 2026-08-10 that run's query was malformed, so the write committed
+      # (5 journeys, NOTICEs and COMMIT in the log) while the workflow went red
+      # and showed nobody anything. There was then no way to ask again.
+      #
+      # `verify_only=true` runs the read-back ALONE — no walk.
+      #
+      # ⚠️ "NO WRITE" WOULD BE A FALSE CLAIM, so it is not made (Codex, this
+      # diff). It writes no DATABASE ROW: the walk is gated off and the read-back
+      # is `set_config` plus a SELECT. But it still PATCHes the production
+      # database's Render IP allowlist open, and only ATTEMPTS to close it again
+      # (`if: always()` — it runs unless the runner dies mid-job). That is the
+      # only way any workflow in this repository reaches that database at all:
+      # the runner's IP has to be let in. It is infrastructure mutation, and
+      # calling it read-only would be the same kind of comment-that-is-not-true
+      # this session has already found three of.
+      #
+      # ⚠️ AND THE RESTORE IS WHOLE-SET, NOT A DELTA. It captures the allowlist
+      # at the start and PATCHes that whole list back at the end, so an entry
+      # added from the dashboard WHILE this runs is erased. Pre-existing on every
+      # DB-touching workflow here and NOT introduced by this input — but this
+      # mode makes the exposure cheap to trigger, so: do not run it while someone
+      # is editing that allowlist.
+      verify_only:
+        description: 'true = skip the walk entirely and only re-print what is already there'
+        required: false
+        default: 'false'
 
 permissions:
   contents: read
@@ -117,10 +149,16 @@ jobs:
           echo "PSQL=$(ls /usr/lib/postgresql/*/bin/psql | head -1)" >> "$GITHUB_ENV"
 
       - name: Report only
-        if: ${{ inputs.confirm != 'APPLY' }}
+        if: ${{ inputs.confirm != 'APPLY' && inputs.verify_only != 'true' }}
         run: |
           cat <<INFO
-          REPORT ONLY — nothing written.
+          REPORT ONLY — no database row written.
+
+          (The Render IP allowlist was still opened for this runner, and its
+          restoration is ATTEMPTED at the end of the job — `if: always()`, so it
+          runs unless the runner itself dies. Every workflow here that reaches
+          the production database does this; "nothing written" used to be
+          printed above and was not strictly true. Codex, 2026-08-10.)
 
           With confirm=APPLY this would take five '${DEMO_TAG}' service requests
           and, for each, create a job card and walk it through:
@@ -137,7 +175,9 @@ jobs:
           INFO
 
       - name: Walk them
-        if: ${{ inputs.confirm == 'APPLY' }}
+        # Skipped entirely under verify_only — that mode writes no database row.
+        # (It does still open/restore the Render firewall; see the input's note.)
+        if: ${{ inputs.confirm == 'APPLY' && inputs.verify_only != 'true' }}
         run: |
           set -euo pipefail
           export DATABASE_URL="$(cat /tmp/dburl)"
@@ -272,7 +312,8 @@ jobs:
           SQL
 
       - name: What the owner will now see
-        if: ${{ inputs.confirm == 'APPLY' }}
+        # Runs after a real walk, OR on its own via verify_only.
+        if: ${{ inputs.confirm == 'APPLY' || inputs.verify_only == 'true' }}
         run: |
           set -euo pipefail
           export DATABASE_URL="$(cat /tmp/dburl)"
@@ -288,7 +329,15 @@ jobs:
                  (SELECT count(*) FROM repair.job_card_stage_events e WHERE e.job_card_id = j.id) AS events,
                  f.rating,
                  CASE WHEN f.rating >= 4 THEN 'happy' ELSE 'NOT happy' END AS verdict
-            FROM repair.job_cards j, me
+            -- 🔴 `FROM repair.job_cards j, me LEFT JOIN ...` IS INVALID SQL and
+            -- this step shipped with it. A comma-join and an explicit JOIN do not
+            -- mix: the LEFT JOIN binds to `me`, so `j` is out of scope by the time
+            -- the ON clause reads it — `invalid reference to FROM-clause entry for
+            -- table "j"`. Reproduced against the local database and fixed there
+            -- before touching production. CROSS JOIN puts `me` in the same join
+            -- tree, so `j` is still in scope for the LEFT JOIN that follows.
+            FROM repair.job_cards j
+            CROSS JOIN me
             LEFT JOIN reception.customer_feedback f ON f.job_card_id = j.id
            WHERE j.organization_id = me.organization_id
            ORDER BY j.job_number;
