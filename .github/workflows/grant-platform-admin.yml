@@ -1,0 +1,330 @@
+# Who administers this platform — and give that account the usual admin role.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# 🔴 THE PROBLEM THIS ANSWERS. Seeding on 2026-08-09 logged, twice:
+#
+#     "registration <id> queued but NO platform administrator was alerted
+#      (none active). It is in the queue and will be found by anyone who
+#      opens it."
+#
+# Every workshop, supplier and fleet registration goes into a verification queue
+# that nobody is watching, because no account holds `platform_administrator`.
+#
+# ⚠️ AND THE ROLE IS MODELLED TWICE, WHICH IS THE REAL FAULT.
+#
+#   · Keycloak declares `platform_administrator` as a REALM ROLE — it is one of
+#     the thirty in `realm-autoworkshop.json`.
+#   · `KeycloakJwtService` parses `realm_access.roles` into `realmRoles`.
+#   · NOTHING CONSUMES IT. Its own comment says authorization uses "the ACTIVE
+#     role from the membership record", so a platform administrator must be a
+#     MEMBER OF AN ORGANISATION — and a platform administrator belongs to none.
+#
+# That is why zero exist. Solar solves it the other way round
+# (`platform_super_admin` is a realm role matched from the claim, with no tenant
+# membership at all), and moving this codebase to that shape is a new
+# authorization path in its highest-risk area — a reviewed slice of its own, not
+# a side effect of this workflow.
+#
+# 🔴 SO THIS DOES BOTH, DELIBERATELY. It assigns the REALM ROLE (the shape the
+# platform is heading for, and what the token will carry) AND creates the
+# membership (the only thing today's authorization actually reads). Doing only
+# the first would grant a role the product cannot see; doing only the second
+# leaves the token silent about who this is.
+#
+# ⚠️ THE MEMBERSHIP NEEDS AN ORGANISATION and a platform admin conceptually has
+# none, so it is attached to the organisation the account ALREADY belongs to.
+# That is a compromise the current model forces, and it is written down rather
+# than hidden: when the realm-role path lands, this membership becomes redundant
+# and should be removed.
+#
+# `-f confirm=APPLY` or this only reports. Reporting is the default because the
+# first question — "who is the administrator, and is it the same account as the
+# owner?" — is worth answering on its own.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Grant platform admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to grant. Anything else reports only.'
+        required: false
+        default: ''
+      email:
+        description: 'The account to inspect, and to grant if confirmed'
+        required: false
+        default: 'marc667us@yahoo.com'
+      keycloak_url:
+        description: 'Public Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+
+jobs:
+  admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      KC_URL: ${{ inputs.keycloak_url }}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      TARGET_EMAIL: ${{ inputs.email }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without the things this cannot run without
+        run: |
+          set -euo pipefail
+          miss=""
+          [ -n "${KC_ADMIN_PASSWORD:-}" ] || miss="${miss} KC_BOOTSTRAP_ADMIN_PASSWORD"
+          [ -n "${RENDER_API_KEY:-}" ]    || miss="${miss} RENDER_API_KEY"
+          [ -z "$miss" ] || { echo "::error::missing secret(s):${miss}"; exit 1; }
+          echo "target: ${TARGET_EMAIL}"
+
+      - name: Get a Keycloak admin token
+        run: |
+          set -euo pipefail
+          printf '%s' \
+            "client_id=admin-cli&grant_type=password&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASSWORD}" \
+            | curl -sS --max-time 150 -d @- \
+                "${KC_URL}/realms/master/protocol/openid-connect/token" > /tmp/kc_token.json || true
+          TOKEN="$(python3 -c "
+          import json
+          try:
+              print(json.load(open('/tmp/kc_token.json')).get('access_token',''))
+          except Exception:
+              print('')
+          ")"
+          [ -n "$TOKEN" ] || {
+            echo "::group::token response"; head -c 300 /tmp/kc_token.json; echo "::endgroup::"
+            echo "::error::could not obtain a Keycloak admin token"; exit 1; }
+          echo "::add-mask::$TOKEN"
+          echo "KC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: WHO ADMINISTERS THIS PLATFORM — Keycloak's answer
+        run: |
+          set -euo pipefail
+          # Everyone the REALM believes is a platform administrator. This is the
+          # question "is the admin the same account as the owner?" answered from
+          # the identity provider rather than from memory.
+          curl -fsS --max-time 120 -H "Authorization: Bearer ${KC_TOKEN}" \
+            "${KC_URL}/admin/realms/autoworkshop/roles/platform_administrator/users?max=50" \
+            > /tmp/admins.json || echo '[]' > /tmp/admins.json
+
+          curl -fsS --max-time 120 -H "Authorization: Bearer ${KC_TOKEN}" \
+            --get --data-urlencode "email=${TARGET_EMAIL}" --data-urlencode "exact=true" \
+            "${KC_URL}/admin/realms/autoworkshop/users" > /tmp/target.json
+
+          python3 - <<'PY'
+          import json, os
+          admins = json.load(open('/tmp/admins.json')) or []
+          target = json.load(open('/tmp/target.json')) or []
+          email = os.environ['TARGET_EMAIL']
+
+          print('--- accounts holding the platform_administrator REALM ROLE ---')
+          if not admins:
+              print('  NONE. Every registration alert has been queued with nobody watching.')
+          for u in admins:
+              print('  %-40s %s' % (u.get('email') or u.get('username'), u.get('id')))
+
+          print()
+          print('--- the target account in Keycloak ---')
+          if not target:
+              print('  %s does not exist in this realm' % email)
+          else:
+              t = target[0]
+              print('  id       %s' % t.get('id'))
+              print('  username %s' % t.get('username'))
+              print('  enabled  %s   emailVerified %s' % (t.get('enabled'), t.get('emailVerified')))
+              open('/tmp/target_id', 'w').write(t.get('id', ''))
+              same = any(a.get('id') == t.get('id') for a in admins)
+              print()
+              print('  DOES IT ALREADY ADMINISTER THE PLATFORM? %s' % ('YES' if same else 'NO'))
+          PY
+
+      - name: And the DATABASE's answer, which is the one authorization reads
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d.get('id','')); break
+          ")"
+          [ -n "$DB_ID" ] || { echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          print(json.dumps(d.get('ipAllowList') or []))" > /tmp/ip_allow_original.json
+
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'platform admin grant'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
+          echo "PSQL=$PSQL" >> "$GITHUB_ENV"
+
+          export DATABASE_URL="$CONN"
+          # ⚠️ LEFT JOIN, and `memberships_for_subject` rather than a direct read.
+          # identity.memberships is FORCE RLS and answers zero rows here;
+          # identity.organizations is under RLS too, so an INNER join deletes any
+          # row whose organisation name this connection cannot see — it printed
+          # "(0 rows)" for an account that plainly had a membership, and I
+          # reported that account as owning nothing on the strength of it.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
+          \pset pager off
+          \echo '--- every platform_administrator MEMBERSHIP in the database ---'
+          SELECT u.email, m.status, m.organization_id
+            FROM identity.memberships m
+            JOIN identity.users u ON u.id = m.user_id
+           WHERE m.role_name = 'platform_administrator';
+
+          \echo '--- what the target account holds ---'
+          SELECT u.email, u.display_name, m.role_name, m.status,
+                 coalesce(o.name, '(organisation not visible to this connection)') AS organisation
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+            LEFT JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email');
+          SQL
+
+      - name: Report only
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<INFO
+
+          REPORT ONLY — nothing granted.
+
+          With confirm=APPLY this would give ${TARGET_EMAIL}:
+            1. the Keycloak REALM ROLE `platform_administrator` — the shape the
+               platform is heading for, and what the token will carry
+            2. a `platform_administrator` MEMBERSHIP in the organisation it
+               already belongs to — the only thing today's authorization reads
+
+          Both, deliberately. The realm role alone grants something the product
+          cannot currently see; the membership alone leaves the token silent.
+          INFO
+
+      - name: Grant it
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          TARGET_ID="$(cat /tmp/target_id 2>/dev/null || true)"
+          [ -n "$TARGET_ID" ] || { echo "::error::${TARGET_EMAIL} does not exist in this realm — nothing to grant"; exit 1; }
+
+          # ── 1. the realm role ────────────────────────────────────────────
+          curl -fsS --max-time 120 -H "Authorization: Bearer ${KC_TOKEN}" \
+            "${KC_URL}/admin/realms/autoworkshop/roles/platform_administrator" > /tmp/role.json
+          python3 -c "
+          import json
+          r = json.load(open('/tmp/role.json'))
+          json.dump([{'id': r['id'], 'name': r['name']}], open('/tmp/rolemap.json','w'))"
+
+          # ⚠️ NO -f. --fail discards the body, and this endpoint answers 409 for
+          # an assignment that already exists — which is success, not failure.
+          RC="$(curl -sS -X POST -H "Authorization: Bearer ${KC_TOKEN}" \
+                  -H 'Content-Type: application/json' --data @/tmp/rolemap.json \
+                  -o /tmp/grant.txt -w '%{http_code}' \
+                  "${KC_URL}/admin/realms/autoworkshop/users/${TARGET_ID}/role-mappings/realm" || echo 000)"
+          case "$RC" in
+            2*|409) echo "realm role assigned (HTTP ${RC})" ;;
+            *) echo "::group::keycloak response"; head -c 400 /tmp/grant.txt; echo; echo "::endgroup::"
+               echo "::error::could not assign the realm role (HTTP ${RC})"; exit 1 ;;
+          esac
+
+          # ── 2. the membership authorization actually reads ───────────────
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
+          \pset pager off
+          BEGIN;
+          -- RLS seeding rule: without this every INSERT below fails SILENTLY.
+          SELECT set_config('app.current_role', 'admin', false);
+
+          -- The organisation the account already belongs to. A platform admin
+          -- conceptually has none; the current model requires one, so this is a
+          -- compromise the model forces and it is recorded rather than hidden.
+          -- When the realm-role path lands, this row becomes redundant.
+          CREATE TEMP TABLE me AS
+          SELECT u.id AS user_id, m.tenant_id, m.organization_id, m.branch_id
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+           WHERE lower(u.email) = lower(:'email') AND m.status = 'active'
+           LIMIT 1;
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM me) THEN
+              RAISE EXCEPTION
+                'that account has no active membership, so there is no organisation to attach a platform_administrator membership to. Give it an organisation first.';
+            END IF;
+          END $$;
+
+          SELECT set_config('app.current_tenant', (SELECT tenant_id::text FROM me), false);
+
+          INSERT INTO identity.memberships
+                 (tenant_id, organization_id, branch_id, user_id, role_name, status, created_by)
+          SELECT tenant_id, organization_id, branch_id, user_id,
+                 'platform_administrator', 'active', user_id
+            FROM me
+          ON CONFLICT DO NOTHING;
+
+          COMMIT;
+
+          \echo '--- platform administrators now ---'
+          SELECT u.email, m.status
+            FROM identity.memberships m
+            JOIN identity.users u ON u.id = m.user_id
+           WHERE m.role_name = 'platform_administrator';
+          SQL
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl /tmp/kc_token.json || true
