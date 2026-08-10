@@ -1,5 +1,108 @@
 # Session handover
 
+## ═══ 2026-08-10 — three reds that were not the product, and half a security fix ═══
+
+**Tip `2a179dc`. 8 commits (`4188c2a` → `2a179dc`). Tree clean, all pushed.**
+**PRODUCTION == BUILD**: migrations **IN REPO 76 / APPLIED 76 / PENDING 0**.
+**Live suite 67/0/0 anonymous + 4/0/0 signed-in = 71/0/0**, still 71/0/0 after
+migration 077 went live. Security CI **6/6** on a full-history dispatch.
+
+**▶ NEXT SESSION STARTS AT `.claude/NEXT_SESSION_SCHEDULE.md`.**
+**▶ FIRST TASK: finish the platform-admin API half (below). It is a CRITICAL and
+it is live-unprotected right now.**
+
+### The one thing you must not miss
+
+🔴 **Migration 077 hardened the DATABASE and the API was NOT changed.**
+`identity.is_platform_admin()` now requires an un-revoked row in
+`identity.platform_administrators`. The API still derives `platform.admin` from
+`ROLE_PERMISSIONS['platform_administrator']`, keyed on the membership
+`role_name`. **So revoking a grant on production today removes DB reach and
+leaves every API gate open** — and `security.controller.ts` reads `pg_catalog`,
+so for that endpoint the application check IS the enforcement. Fix: resolve grant
+state during `TenantContext` construction and gate `platform.admin` on it.
+
+⚠️ The schedule's own item 3 asked for the FORBIDDEN shape (platform admin from
+the Keycloak `realm_access.roles` claim). COMBINED_PLAN_v2 §4 and
+PLAN_EXTENSION_v1 §2.1 both prohibit a claim conferring authority; §2.1 exists
+*because Codex found that hole at plan stage*. **Read the plans before
+implementing a note in a control file.**
+
+### What shipped
+
+1. **`/customer-reception/leads`** — the one live failure, and NOT a product
+   defect. The owner tree has no `customer-reception` group; its leads item is
+   `/workshop-operations/leads`. The TEST asserted another role's tree — the
+   second instance in a file that documents the first in its own comments.
+2. **Security CI had been red since 08-03 behind eight green push runs.**
+   `gitleaks-action@v2` scans only pushed commits on `push`, the whole history on
+   `schedule`. Both findings were one synthetic JWT and its echo in a review log.
+   `.gitleaksignore` allowlists them BY FINGERPRINT, never a path rule.
+3. **Journey seeder run on production** (owner-approved): 5 journeys to
+   `completed`, 15 stage events each, ratings 5/5/4/2/1. Its read-back was
+   invalid SQL and its verdict column called NULL "NOT happy"; both fixed, and
+   `verify_only=true` added so the report re-runs without writing.
+4. **Migration 077** — platform authority is a grant record. verify/077 **10/10**.
+5. **customer-web 502** — see below.
+
+### 🔴 Diagnoses I got WRONG, recorded so they are not repeated
+
+- **"customer-web 502 is a cold start" — WRONG, twice.** The suite's OWN wake
+  step recorded `customer-web -> 200` minutes before the suite read 502 from the
+  same URL. It was awake. On demand: 200 fifteen times at ~1s, ten more with the
+  suite's exact UA. It is Render's edge flap; `up()` was the last single-sample
+  checker and now retries reporting attempt counts (`3616e61`).
+- **My `/security-review` on migration 077 reported ZERO findings.** Codex then
+  found two CRITICALs in it, one of which I had explicitly considered and
+  dismissed by reasoning about who may WRITE the grant table — the escape
+  (`app.current_role='admin'`, a GUC any role can set) never touches it.
+- **A verify check passed for the wrong reason**: the half-revocation check ran
+  after the revocation check, so it updated 0 rows whenever the revoked grant was
+  the only active one. It passed only because that DB held a SECOND grant.
+
+### ⚠️ Open, not blocked
+
+- **Release needs a re-run** — failed on a **GHCR secondary rate limit** after
+  the image built and passed its container smoke test. Six pushes in one day.
+  The apex still serves the previous image.
+- **Nine free Render services share one ~750h allowance sized for four.**
+  `keep-warm.yml` pings Keycloak ONLY, deliberately — over-warming is how this
+  account was SUSPENDED on 2026-07-28. **Do not add services to the warmer.**
+  The only zero-cost lever is how many stay deployed; fleet-web (0/29 screens)
+  and insurance-web (0/28) are the candidates. **Owner's scope decision.**
+- **A local API is listening on port 4000** (PID 10932, started 05:10 on 08-10,
+  origin unexplained — I did not start it). `start-session.sh` kills stale
+  listeners, so it is covered; check it first if a local defect looks impossible.
+
+### Commands this session actually used (copy these, do not re-derive)
+
+```bash
+bash scripts/start-session.sh                      # ALWAYS first
+bash scripts/record-live-state.sh                  # what is really deployed
+bash infrastructure/migrations/run.sh              # local migrations (checksummed)
+docker exec -i aw-postgres psql -U autoworkshop -d autoworkshop <   infrastructure/migrations/verify/077_platform_administrator_grants.sql
+
+# RLS is testable locally — this is Render's privilege shape
+docker exec -i aw-postgres psql -U autoworkshop -d autoworkshop -c "SET ROLE autoworkshop_app; ..."
+
+# gates
+printf '%s' "$P" > /tmp/p.txt   # ⚠️ ALWAYS a FILE — backticks in a "..." string EXECUTE
+C:/Users/USER/nodejs/codex.cmd exec --skip-git-repo-check -s read-only - < /tmp/p.txt
+# Supervisor: /code-review , /security-review , /verify
+
+# production
+gh workflow run apply-migrations.yml -f confirm=APPLY
+gh workflow run live-suite.yml            # READ BOTH JOBS: live + signed-in
+gh workflow run security.yml              # dispatch = FULL HISTORY scan
+gh workflow run seed-repair-journeys.yml -f verify_only=true   # re-read, writes nothing
+gh run view <id> --log | grep "PASSED"    # READ THE COUNT, never the exit code
+```
+
+⚠️ `gh run view --log` returns **0 bytes and exit 0** for older/in-flight runs.
+Use the run's artifact (SARIF etc.) or re-dispatch rather than concluding "no output".
+
+---
+
 ## ═══ 2026-08-07 — slices 6-11, deployed, and three security findings ═══
 
 **Tip `db5e525`. PRODUCTION == BUILD.** local = origin = Release headSha,
