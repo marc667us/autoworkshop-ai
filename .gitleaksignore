@@ -1,0 +1,56 @@
+# gitleaks — allowlisted findings, by exact fingerprint.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 WHY THIS FILE EXISTS: Security CI HAD BEEN RED FOR A WEEK AND NOBODY SAW IT.
+#
+# `gitleaks/gitleaks-action@v2` does NOT scan the same thing on every trigger.
+# On `push` it scans only the commits in that push; on `schedule` and
+# `workflow_dispatch` it scans the ENTIRE history. So a finding that lives in an
+# older commit is INVISIBLE to every push run and fires only on the Monday cron.
+#
+# Measured, not assumed — the same commit `4188c2a`:
+#   run 31345481843  push      2026-08-10 00:49  SUCCESS
+#   run 31358003733  schedule  2026-08-10 05:15  FAILURE
+# Scheduled runs: 2026-07-27 pass, 2026-08-03 FAIL, 2026-08-10 FAIL. Both
+# findings below predate 08-03, and eight green push runs in between said
+# nothing. **A gate whose passing and whose not-running look identical is the
+# defect class this repository has paid for most** — here it was worse, because
+# the gate WAS running and its red was landing where nobody looked.
+#
+# ── ⚠️ FINGERPRINTS, NOT PATH RULES ─────────────────────────────────────────
+#
+# The obvious fix is an allowlist regex over `reviews/**.md` or over spec files.
+# It was rejected. A review log is generated from whatever the reviewer read, so
+# a path rule there would silently swallow a REAL credential the day one is
+# quoted into it — and a secrets scanner that cannot fail is worse than none.
+# A fingerprint is `commit:path:rule:line`: it pins ONE line of ONE file in ONE
+# commit. Anything else, anywhere else, still fires.
+#
+# ── EACH ENTRY MUST BE ARGUED, NOT ASSERTED ─────────────────────────────────
+#
+# Both entries below are the SAME synthetic token, checked by decoding it rather
+# than by trusting its filename:
+#   header  {"alg":"HS256"}     payload {"sub":"123456"}
+#   signature  base64("AliceSignature")
+# It is a fixture with no issuer, no key and no realm — it authenticates nothing
+# anywhere. It must stay JWT-SHAPED: the test it lives in proves `safeMessage`
+# redacts a bare JWT, so replacing it with an obviously-fake string would delete
+# the coverage rather than the finding.
+#
+# 1. redaction.spec.ts:58 — where the fixture is defined.
+# 2. codex-security-review.md:3666 — the same line, QUOTED BACK in a Codex
+#    review log that embedded the file listing it read. Not a second secret.
+#
+# Verified with `git blame -L <line>,<line>` against both commits; each blames to
+# exactly the commit gitleaks named.
+#
+# ▶ IF A THIRD ENTRY EVER WANTS ADDING: decode it first. If it decodes to
+#   anything with a real issuer, audience or key id, it is a leak — rotate it,
+#   do not list it here.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# The synthetic JWT fixture proving `safeMessage()` redacts bare JWTs.
+f882bb4127ab0143438caff2f979802aae1a2832:apps/api/src/operations/redaction.spec.ts:jwt:58
+
+# The same fixture, quoted verbatim inside a Codex review log's file listing.
+60ce8bf0650d06345cd3b114d619773803c596a1:reviews/codex-security-review.md:jwt:3666
