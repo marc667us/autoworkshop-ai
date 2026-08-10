@@ -153,17 +153,62 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
       return [...body.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string).sort();
     }
 
-    it('is_platform_admin() lists exactly DB_PLATFORM_ADMIN_ROLE_NAMES', () => {
-      expect(adminNamesIn(migrationText('001_tenancy_foundation.sql'))).toEqual(
-        [...DB_PLATFORM_ADMIN_ROLE_NAMES].sort(),
-      );
+    /**
+     * 🔴 THE DEFINITION MOVED, AND ANCHORING TO THE OLD FILE WOULD HAVE PASSED
+     * FOREVER AGAINST BEHAVIOUR THAT NO LONGER EXISTS.
+     *
+     * This block used to read 001, on the correct reasoning that 001 was where
+     * the function was really defined. Migration **077** replaced it again, and
+     * 001 still contains its original two-name body — so the old assertion
+     * would keep passing, green, describing a predicate the database stopped
+     * using. That is the same class as the stale-artifact trap recorded
+     * elsewhere in this repo: a test whose passing and whose irrelevance look
+     * identical.
+     *
+     * Anchored to 077 and, more importantly, asserted on SHAPE rather than on a
+     * name list — because 077's body is no longer an `IN (...)` at all.
+     */
+    it('077 is the newest is_platform_admin() and it no longer names a membership role', () => {
+      const sql = migrationText('077_platform_administrator_grants.sql').replace(/--[^\n]*/g, '');
+      const body = /CREATE OR REPLACE FUNCTION identity\.is_platform_admin[\s\S]*?\$\$([\s\S]*?)\$\$/.exec(
+        sql,
+      )?.[1];
+
+      expect(body, 'could not find the 077 function body').toBeTruthy();
+      // The seed/psql alias survives, and it is the ONLY name tested.
+      expect(body).toContain("identity.current_role_name() = 'admin'");
+      // 🔴 The whole point of 077: the membership role name buys nothing.
+      //
+      // ⚠️ THE QUOTED LITERAL, NOT THE BARE WORD. A plain
+      // `.not.toContain('platform_administrator')` FAILS against a correct
+      // migration, because the TABLE is called
+      // `identity.platform_administrators` and contains that substring. The
+      // claim is about a SQL string literal being COMPARED, not about the word
+      // appearing. Written the loose way first and caught by this suite.
+      expect(
+        body,
+        'a membership role_name is conferring platform authority again',
+      ).not.toContain("'platform_administrator'");
+      // Authority is a grant row, checked against the current USER.
+      expect(body).toContain('identity.platform_administrators');
+      expect(body).toContain('revoked_at IS NULL');
     });
 
-    it("025's re-declaration still agrees with 001", () => {
-      // Two `CREATE OR REPLACE` bodies for one function is a standing hazard:
-      // whichever migration runs last silently wins. They must not diverge.
+    it('DB_PLATFORM_ADMIN_ROLE_NAMES is now the database alias alone', () => {
+      // Not a list of administrators — see the comment on the constant. A real
+      // administrator's `activeRole` is deliberately NOT in here.
+      expect([...DB_PLATFORM_ADMIN_ROLE_NAMES]).toEqual(['admin']);
+    });
+
+    it('001 and 025 are superseded, and are allowed to differ from 077', () => {
+      // Kept as a record rather than deleted: three `CREATE OR REPLACE` bodies
+      // now exist for one function and the LAST APPLIED wins. 001 and 025 still
+      // agree with each other; 077 is what runs.
       expect(adminNamesIn(migrationText('025_platform_admin_role_name.sql'))).toEqual(
         adminNamesIn(migrationText('001_tenancy_foundation.sql')),
+      );
+      expect(adminNamesIn(migrationText('001_tenancy_foundation.sql'))).toContain(
+        'platform_administrator',
       );
     });
 
@@ -195,12 +240,20 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
       }
     });
 
-    it('includes the role name a platform administrator actually holds', () => {
-      // The specific miss. `platform_administrator` is a key of the permission
-      // matrix — the role a real membership row carries — and it must be a name
-      // the database recognises, or an administrator can write nothing.
-      expect(DB_PLATFORM_ADMIN_ROLE_NAMES).toContain('platform_administrator');
+    it('platform_administrator is still a matrix role, and no longer a SQL one', () => {
+      // ⚠️ THIS ASSERTION WAS INVERTED BY 077, DELIBERATELY.
+      //
+      // It used to require `platform_administrator` in the SQL list, because
+      // without it an administrator "can write nothing". That was true while the
+      // membership role name WAS the authority. 077 moved the authority to
+      // `identity.platform_administrators`, so the name must now be absent from
+      // the SQL vocabulary — its presence would be the escalation 077 closed.
+      //
+      // It remains a permission-matrix role: that is what grants
+      // `platform.admin`, which is what every controller now gates on.
+      expect(DB_PLATFORM_ADMIN_ROLE_NAMES).not.toContain('platform_administrator');
       expect(Object.keys(ROLE_PERMISSIONS)).toContain('platform_administrator');
+      expect(permissionsForRole('platform_administrator')).toContain(PERMISSIONS.platformAdmin);
     });
 
     it('does not admit any OTHER role from the matrix', () => {

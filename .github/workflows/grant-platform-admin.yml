@@ -267,7 +267,7 @@ jobs:
 
           # ── 2. the membership authorization actually reads ───────────────
           export DATABASE_URL="$(cat /tmp/dburl)"
-          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" -v actor="github:${GITHUB_ACTOR:-unknown} run:${GITHUB_RUN_ID:-unknown}" <<'SQL'
           \pset pager off
           BEGIN;
           -- RLS seeding rule: without this every INSERT below fails SILENTLY.
@@ -301,13 +301,46 @@ jobs:
             FROM me
           ON CONFLICT DO NOTHING;
 
+          -- 🔴 THIS INSERT IS WHAT ACTUALLY CONFERS THE AUTHORITY NOW.
+          --
+          -- Migration 077 removed `platform_administrator` from
+          -- `identity.is_platform_admin()`. The membership row above is kept
+          -- because the navigation, the permission matrix and the role switcher
+          -- all still resolve a viewer's tree from `role_name` — but on its own
+          -- it now grants NOTHING at the database, which is the entire point of
+          -- 077. Without the row below this workflow would report success and
+          -- leave the account with an administrator's MENU and an ordinary
+          -- user's REACH. That is the "config reads correct, mechanism inert"
+          -- failure this repository has recorded five times.
+          INSERT INTO identity.platform_administrators (user_id, granted_actor, granted_reason)
+          SELECT user_id,
+                 -- WHO, not just what. `granted_actor` is NOT NULL precisely so
+                 -- a grant cannot be recorded anonymously; the GitHub actor and
+                 -- run id are the accountable identity for an out-of-band
+                 -- operation, and neither exists in identity.users to point a
+                 -- foreign key at. Codex, 2026-08-10.
+                 :'actor',
+                 'granted by the grant-platform-admin workflow'
+            FROM me
+          ON CONFLICT DO NOTHING;
+
           COMMIT;
 
-          \echo '--- platform administrators now ---'
-          SELECT u.email, m.status
+          \echo '--- platform administrators now (BOTH halves must be present) ---'
+          SELECT u.email,
+                 m.status                                      AS membership,
+                 (pa.user_id IS NOT NULL)                      AS holds_active_grant
             FROM identity.memberships m
             JOIN identity.users u ON u.id = m.user_id
+            LEFT JOIN identity.platform_administrators pa
+                   ON pa.user_id = m.user_id AND pa.revoked_at IS NULL
            WHERE m.role_name = 'platform_administrator';
+
+          \echo '--- and every grant, including any with no membership ---'
+          SELECT u.email, pa.granted_at, pa.granted_reason, pa.revoked_at
+            FROM identity.platform_administrators pa
+            JOIN identity.users u ON u.id = pa.user_id
+           ORDER BY pa.granted_at;
           SQL
 
       - name: Always restore the database firewall

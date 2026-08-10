@@ -136,10 +136,27 @@ export function permissionsForRole(roleName: string): readonly string[] {
  * `permission-matrix.spec` asserts this list against the SQL text of migration
  * 025, so the two cannot drift apart again without a test failing.
  */
-export const DB_PLATFORM_ADMIN_ROLE_NAMES: readonly string[] = Object.freeze([
-  'admin',
-  'platform_administrator',
-]);
+/*
+ * ⚠️ MIGRATION 077 REMOVED `platform_administrator` FROM THE SQL PREDICATE, so
+ * this list is now the single database-compatibility alias and nothing more.
+ *
+ * Everything above describes why 025 ADDED that name. 077 removed it again, and
+ * the two are not a contradiction: 025 fixed policies that were unreachable
+ * from the application, and it fixed them with the tool available at the time —
+ * the membership `role_name`. 077 replaces the tool. Platform authority is now
+ * an un-revoked row in `identity.platform_administrators`, checked by
+ * `is_platform_admin()` against `app.user_id`, because a `role_name` is a plain
+ * TEXT column on a row inside ONE organisation and had no business opening every
+ * tenant table in the database.
+ *
+ * 🔴 THIS IS NOT A LIST OF ADMINISTRATORS AND MUST NEVER BE USED AS AN
+ * AUTHORIZATION GATE. It contains `admin` — the literal that seed scripts,
+ * migrations and hand-run psql set — and a real platform administrator's
+ * `activeRole` is NOT in it. Gate on `PERMISSIONS.platformAdmin` via
+ * `permissionsForRole`, as `security.controller.ts`, `operations.controller.ts`
+ * and (since 077) `catalogue.controller.ts` all do.
+ */
+export const DB_PLATFORM_ADMIN_ROLE_NAMES: readonly string[] = Object.freeze(['admin']);
 
 /**
  * Role authority, STRONGEST FIRST — the tie-break for the default selection in

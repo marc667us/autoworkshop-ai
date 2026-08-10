@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { UserGuard, type UserRequest } from '../auth/user.guard';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
-import { DB_PLATFORM_ADMIN_ROLE_NAMES } from '../authz/permission-matrix';
+import { PERMISSIONS, permissionsForRole } from '../authz/permission-matrix';
 import { SupplierCatalogueService } from './supplier-catalogue.service';
 import { DirectoryService } from './directory.service';
 import { validatedBody } from '../common/validation/validated-body';
@@ -137,10 +137,23 @@ export class AdminCatalogueController {
   constructor(private readonly catalogue: SupplierCatalogueService) {}
 
   private assertAdmin(req: AuthenticatedRequest): void {
-    // Compared against the SAME list the SQL predicate uses, which a drift test
-    // pins to migration 025. Restating the strings here would let the two
-    // separate again — the original defect.
-    if (!DB_PLATFORM_ADMIN_ROLE_NAMES.includes(req.tenantContext.activeRole)) {
+    // 🔴 GATED ON THE PERMISSION, NOT ON `DB_PLATFORM_ADMIN_ROLE_NAMES` — the
+    // last instance of a pattern Codex already rejected once on
+    // `security.controller.ts`, which carries the full reasoning.
+    //
+    // The short version, now sharper than when that was written. Migration 077
+    // removed `platform_administrator` from the SQL predicate entirely:
+    // platform authority is an un-revoked row in
+    // `identity.platform_administrators`, not a membership `role_name`. So this
+    // constant no longer describes administrators at all — it is down to the
+    // single literal `admin`, the DATABASE COMPATIBILITY ALIAS that seed
+    // scripts and migrations set. Left as it was, this gate would have refused
+    // every real platform administrator while still admitting anyone who could
+    // get the string `admin` into a `role_name` column that has no CHECK
+    // constraint. Exactly backwards.
+    //
+    // `permissionsForRole` returns `[]` for an unknown name, so it fails closed.
+    if (!permissionsForRole(req.tenantContext.activeRole).includes(PERMISSIONS.platformAdmin)) {
       throw new ForbiddenException(
         'publishing to the public marketplace is a platform administrator decision',
       );
