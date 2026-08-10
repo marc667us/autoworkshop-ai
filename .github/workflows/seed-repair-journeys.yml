@@ -1,0 +1,314 @@
+# Walk five seeded service requests all the way to collection.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# Owner, 2026-08-09: "for the sample request complete through workshop and part
+# and procurement and to where customer pick car and test and say its ok for 3
+# and no for 2".
+#
+# So five of the seeded requests become job cards and are walked through the
+# product's OWN twenty-stage machine — complaint_received → … → awaiting_parts
+# (the parts and procurement wait) → repair_in_progress → testing →
+# quality_control → ready_for_collection → completed — with a
+# `job_card_stage_events` row for EVERY transition. Three end with the customer
+# happy, two unhappy.
+#
+# 🔴 WHY EVERY STEP IS RECORDED, NOT JUST THE FINAL STAGE. This project's own
+# rule: "stage/state machines: resume from HISTORY, not a static list". A job
+# card sitting at `completed` with no events behind it is a card the board cannot
+# explain, the timeline cannot draw, and any resume logic will mis-handle. The
+# journey IS the events; the `stage` column is only where it currently rests.
+#
+# ⚠️ WHAT THIS DOES **NOT** CREATE, SAID PLAINLY. It does not write diagnoses,
+# repair plans, quotations, proposals, executions, parts-used lines or test
+# sessions. Those tables carry ~27 guard functions — `assert_execution_is_
+# authorised`, `reject_qc_before_testing`, `assert_testing_follows_completed_
+# repair`, `reject_settled_*` — which enforce the real sequence through the API,
+# and are RIGHT to refuse a seeder that jumps straight to an outcome. Faking
+# rows past those guards would be manufacturing evidence the product would never
+# produce, which is the fixture defect this repository already recorded once.
+#
+# So what the owner sees is a truthful STAGE journey with full history, and the
+# deep domain records remain empty until the screens that create them are built
+# and driven. That distinction is the honest one.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Seed repair journeys
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write. Anything else reports only.'
+        required: false
+        default: ''
+      owner_email:
+        description: 'Whose organisation to walk requests in'
+        required: false
+        default: 'marc667us@yahoo.com'
+      demo_tag:
+        description: 'Tag used by the demo seed, so this finds its rows'
+        required: false
+        default: 'DEMO-2026-08-09'
+
+permissions:
+  contents: read
+
+jobs:
+  journeys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      OWNER_EMAIL: ${{ inputs.owner_email }}
+      DEMO_TAG: ${{ inputs.demo_tag }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          echo "walking requests in the organisation owned by ${OWNER_EMAIL}"
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d.get('id','')); break
+          ")"
+          [ -n "$DB_ID" ] || { echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "
+          import sys, json
+          print(json.dumps(json.load(sys.stdin).get('ipAllowList') or []))" > /tmp/ip_allow_original.json
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'repair journey seeding'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          echo "PSQL=$(ls /usr/lib/postgresql/*/bin/psql | head -1)" >> "$GITHUB_ENV"
+
+      - name: Report only
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<INFO
+          REPORT ONLY — nothing written.
+
+          With confirm=APPLY this would take five '${DEMO_TAG}' service requests
+          and, for each, create a job card and walk it through:
+
+            complaint_received -> appointment_confirmed -> vehicle_received
+            -> initial_inspection -> diagnosis_in_progress -> solution_preparation
+            -> quotation_preparation -> awaiting_customer_approval
+            -> awaiting_parts        (the parts and procurement wait)
+            -> authorized_to_start -> repair_in_progress -> testing
+            -> quality_control -> ready_for_collection -> completed
+
+          recording a stage EVENT for every transition, then leaving feedback:
+          three satisfied, two not.
+          INFO
+
+      - name: Walk them
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" \
+            -v email="${OWNER_EMAIL}" -v tag="${DEMO_TAG}" <<'SQL'
+          \pset pager off
+          BEGIN;
+          -- Without this every INSERT below fails SILENTLY under RLS.
+          SELECT set_config('app.current_role', 'admin', false);
+          SELECT set_config('seed.email', :'email', false);
+          SELECT set_config('seed.tag', :'tag', false);
+
+          CREATE TEMP TABLE me AS
+          SELECT u.id AS user_id, m.tenant_id, m.organization_id
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+           WHERE lower(u.email) = lower(:'email') AND m.status = 'active'
+           LIMIT 1;
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM me) THEN
+              RAISE EXCEPTION 'no active membership for %', current_setting('seed.email', true);
+            END IF;
+          END $$;
+
+          SELECT set_config('app.current_tenant', (SELECT tenant_id::text FROM me), false);
+
+          DO $walk$
+          DECLARE
+            v_user   uuid := (SELECT user_id FROM me);
+            v_tenant uuid := (SELECT tenant_id FROM me);
+            v_org    uuid := (SELECT organization_id FROM me);
+            -- The journey the owner asked for, in the product's own vocabulary.
+            -- `awaiting_parts` is the parts-and-procurement wait; `testing` and
+            -- `quality_control` are the test; `ready_for_collection` is where the
+            -- customer picks the car up.
+            v_stages text[] := ARRAY[
+              'complaint_received','appointment_confirmed','vehicle_received',
+              'initial_inspection','diagnosis_in_progress','solution_preparation',
+              'quotation_preparation','awaiting_customer_approval','awaiting_parts',
+              'authorized_to_start','repair_in_progress','testing','quality_control',
+              'ready_for_collection','completed'];
+            r          record;
+            v_job      uuid;
+            v_prev     text;
+            v_when     timestamptz;
+            i          int;
+            n          int := 0;
+            -- 3 happy, 2 not — in the owner's words, "ok for 3 and no for 2".
+            v_ratings  int[]  := ARRAY[5,5,4,2,1];
+            v_words    text[] := ARRAY[
+              'Picked the car up today, fault is gone and the invoice matched the quote.',
+              'Very happy — kept me informed while the parts were on order.',
+              'Good repair. Took a little longer than promised but the work is right.',
+              'Collected it and the same knocking is still there. Booking it back in.',
+              'Waited three weeks for parts and nobody called. Fault only half fixed.'];
+          BEGIN
+            FOR r IN
+              SELECT sr.id, sr.vehicle_id, sr.complaint, v.customer_id
+                FROM reception.service_requests sr
+                JOIN core.vehicles v ON v.id = sr.vehicle_id
+               WHERE sr.organization_id = v_org
+                 AND sr.converted_job_card_id IS NULL
+                 AND v.registration_number LIKE 'GR-%'
+               ORDER BY sr.created_at
+               LIMIT 5
+            LOOP
+              n := n + 1;
+              -- Backdate the journey so the board and any timeline have
+              -- something with SHAPE. All fifteen events landing in the same
+              -- millisecond would order arbitrarily and read as one instant.
+              v_when := now() - ((16 - n) || ' days')::interval;
+
+              INSERT INTO repair.job_cards
+                     (tenant_id, organization_id, job_number, customer_id, vehicle_id,
+                      complaint, stage, created_by)
+              VALUES (v_tenant, v_org, repair.next_job_number(v_org), r.customer_id,
+                      r.vehicle_id, r.complaint, 'complaint_received', v_user)
+              RETURNING id INTO v_job;
+
+              v_prev := NULL;
+              FOR i IN 1 .. array_length(v_stages, 1) LOOP
+                -- 🔴 AN EVENT FOR EVERY TRANSITION, INCLUDING THE FIRST. The
+                -- opening row has from_stage NULL, which is what "this is where
+                -- the card entered the world" looks like — omitting it makes the
+                -- history start midway and any resume-from-history logic wrong.
+                INSERT INTO repair.job_card_stage_events
+                       (tenant_id, organization_id, job_card_id, from_stage, to_stage,
+                        note, changed_by, changed_at)
+                VALUES (v_tenant, v_org, v_job, v_prev, v_stages[i],
+                        CASE v_stages[i]
+                          WHEN 'awaiting_parts' THEN 'Parts ordered through procurement; awaiting supplier delivery.'
+                          WHEN 'testing' THEN 'Road tested after repair.'
+                          WHEN 'quality_control' THEN 'Quality check by a second technician.'
+                          WHEN 'ready_for_collection' THEN 'Customer called — car ready to pick up.'
+                          ELSE NULL
+                        END,
+                        v_user, v_when + (i || ' hours')::interval);
+                v_prev := v_stages[i];
+              END LOOP;
+
+              UPDATE repair.job_cards
+                 SET stage = v_stages[array_length(v_stages,1)], updated_by = v_user
+               WHERE id = v_job;
+
+              -- The request is now answered by a job card, and says so.
+              UPDATE reception.service_requests
+                 SET status = 'converted', converted_job_card_id = v_job,
+                     decided_by = v_user, decided_at = v_when
+               WHERE id = r.id;
+
+              -- What the customer said when they collected it.
+              INSERT INTO reception.customer_feedback
+                     (tenant_id, organization_id, job_card_id, customer_id, rating,
+                      comment, source, recorded_by)
+              VALUES (v_tenant, v_org, v_job, r.customer_id, v_ratings[n], v_words[n],
+                      'staff_recorded', v_user);
+
+              RAISE NOTICE 'job % walked to completed, customer rated %', n, v_ratings[n];
+            END LOOP;
+
+            IF n = 0 THEN
+              RAISE EXCEPTION
+                'found no unconverted demo service requests to walk. Run "Seed demo data" first, or they have all been walked already.';
+            END IF;
+            RAISE NOTICE '% journeys written', n;
+          END
+          $walk$;
+
+          COMMIT;
+          SQL
+
+      - name: What the owner will now see
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${OWNER_EMAIL}" <<'SQL'
+          \pset pager off
+          SELECT set_config('app.current_role', 'admin', false);
+          WITH me AS (
+            SELECT m.organization_id
+              FROM identity.users u
+              CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+             WHERE lower(u.email) = lower(:'email') AND m.status = 'active' LIMIT 1)
+          SELECT j.job_number, j.stage,
+                 (SELECT count(*) FROM repair.job_card_stage_events e WHERE e.job_card_id = j.id) AS events,
+                 f.rating,
+                 CASE WHEN f.rating >= 4 THEN 'happy' ELSE 'NOT happy' END AS verdict
+            FROM repair.job_cards j, me
+            LEFT JOIN reception.customer_feedback f ON f.job_card_id = j.id
+           WHERE j.organization_id = me.organization_id
+           ORDER BY j.job_number;
+          SQL
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl || true
