@@ -19,9 +19,43 @@ Owner policy: five slices + issue resolution every session. Never the scheduler.
 — the first fully clean run.** Migrations IN REPO 75 / APPLIED 75 / PENDING 0.
 Security CI 6/6 on a full-history dispatch.
 
+## 🔴 SLICE 5 — PLATFORM ADMIN. HALF DONE ON PURPOSE. FINISH IT FIRST.
+
+**Migration 077 (`163dcc4`) — WRITTEN AND PUSHED, NOT APPLIED.**
+`identity.is_platform_admin()` no longer accepts a membership `role_name`;
+authority is an un-revoked row in `identity.platform_administrators`
+(append-only, no `tenant_id`, revocation immediate). verify/077 **10/10** as
+`autoworkshop_app`.
+
+⚠️ **THE SCHEDULE'S OWN ITEM 3 ASKED FOR THE FORBIDDEN SHAPE.** It proposed
+matching `platform_administrator` from `realm_access.roles`. COMBINED_PLAN_v2 §4
+and PLAN_EXTENSION_v1 §2.1 both prohibit a claim conferring authority — §2.1 is
+an invariant added *because Codex found that hole at plan stage*. Owner chose the
+grant table. **Read the plans before implementing a note in this file.**
+
+🔴 **THE REMAINING HALF, AND IT IS A CRITICAL:** the API still derives
+`platform.admin` from `ROLE_PERMISSIONS['platform_administrator']`, keyed on the
+membership role. **Revoking a grant does not revoke API authority**, and an
+endpoint whose application check IS the enforcement (`security.controller.ts`
+reads `pg_catalog` and says so) still admits a membership with no grant. Needs
+grant state resolved in `TenantContext` + regating every platform-admin endpoint.
+
+▶ **TO DEPLOY 077:** `gh workflow run apply-migrations.yml -f confirm=APPLY`.
+Until then the auto-chained inspect run is **RED with `PENDING 1`, correctly** —
+`IN REPO 76 · APPLIED 75`. That red is the signal, not a break.
+
+⚠️ **Release failed on this push with a GHCR SECONDARY RATE LIMIT**, after the
+image built and passed its container smoke test. Six pushes in one day. Re-run
+`Release` when convenient; the apex still serves the previous image.
+
+⚠️ **A live-suite 502 on customer-web is a COLD START.** Measured immediately
+after: 200 / 200 / 200 in 2.8s, 0.8s, 1.4s. Recorded on 08-09 too. Do not chase it.
+
 ## ▶ NEXT, IN ORDER
 
-1. **The platform-admin realm-role path.** `platform_administrator` is a Keycloak
+0. 🔴 **Finish slice 5 above — the API half.**
+1. ~~**The platform-admin realm-role path**~~ — **SUPERSEDED, and the realm-role
+   shape is forbidden. Kept only for context:** `platform_administrator` is a Keycloak
    realm role, `KeycloakJwtService` parses `realm_access.roles` into `realmRoles`,
    and **nothing consumes it** — authorization reads the DB membership only.
    Solar's `platform_super_admin` (matched from the claim, no tenant) is the
