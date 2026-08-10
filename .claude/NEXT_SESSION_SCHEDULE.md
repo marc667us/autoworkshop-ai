@@ -1,7 +1,6 @@
 # Next session — start here
 
-**Updated 2026-08-09 (pt3). Tip `d6b643d` on `master` — PUSHED AND DEPLOYED.**
-Working tree clean.
+**Updated 2026-08-10. Tip `103d9a6` on `master` — PUSHED. Working tree clean.**
 
 ▶ **FIRST TWO COMMANDS:**
 ```bash
@@ -11,6 +10,72 @@ bash scripts/record-live-state.sh      # photographs what is actually deployed
 
 Owner policy: five slices + issue resolution every session. Never the scheduler.
 **Codex and the Supervisor only — no Stitch, no Google ADK.**
+
+---
+
+# ═══ 2026-08-10 — 71/0/0, AND THREE REDS THAT WERE NOT THE PRODUCT ═══
+
+**Live suite 67/0/0 anonymous + 4/0/0 signed-in = 71 passed, 0 failed, 0 skipped
+— the first fully clean run.** Migrations IN REPO 75 / APPLIED 75 / PENDING 0.
+Security CI 6/6 on a full-history dispatch.
+
+## ▶ NEXT, IN ORDER
+
+1. **The platform-admin realm-role path.** `platform_administrator` is a Keycloak
+   realm role, `KeycloakJwtService` parses `realm_access.roles` into `realmRoles`,
+   and **nothing consumes it** — authorization reads the DB membership only.
+   Solar's `platform_super_admin` (matched from the claim, no tenant) is the
+   target shape. **Needs Codex + Supervisor**: it lets a token claim confer
+   privilege without a tenant.
+2. **75 screens still say "not built yet"** — supplier 29, fleet 24, insurance 22.
+   `bash scripts/live-screen-audit.sh` re-measures from the LIVE site. Start with
+   supplier: 4 screens already work there.
+3. **`insurance_assessor` has NO registration path** — the 4th instance of "which
+   production path WRITES this role?". Ask it before building the 28 screens.
+4. **14 two-column `(x, tenant_id)` FKs** still carry the cross-organisation hole
+   073 closed for eighteen others. `RELATIONSHIPS.md` §8 names them.
+5. **Port the 5 supplier-web deploy defects** listed further down — the fixed
+   forms are already in `deploy-towing-web.yml`.
+
+## ✅ CLOSED 2026-08-10
+
+- **`/customer-reception/leads` was NOT a product defect.** The owner tree has no
+  `customer-reception` group; its leads item is `/workshop-operations/leads`, and
+  `requireNavRoute` correctly `notFound()`s a route the viewer's tree does not
+  advertise. **The TEST asserted another role's tree** — the second instance in
+  that same file, the first having been fixed on 08-09. Route is now derived
+  from the tree.
+- **Security CI had been red since 08-03 and every push run said green.**
+  `gitleaks-action@v2` scans only the pushed commits on `push` but the WHOLE
+  history on `schedule`. Both findings were one synthetic JWT and its echo in a
+  review log. `.gitleaksignore` allowlists them **by fingerprint**, never a path
+  rule. Proven green by dispatch.
+- **The journey seeder ran** (owner approved): 5 journeys walked to `completed`,
+  15 stage events each, ratings 5/5/4/2/1. Its read-back was invalid SQL and its
+  verdict column called NULL "NOT happy"; both fixed, `verify_only=true` added so
+  the report can be re-run without writing.
+
+## ⚠️ CORRECTIONS TO EARLIER ENTRIES IN THIS FILE
+
+- **Gap A1 is CLOSED.** `LIVE_OWNER_EMAIL`/`LIVE_OWNER_PASSWORD` exist (08-09
+  23:11). The "still owner-only / skips 4" notes below are STALE.
+- **`POST /registration/fleet` is no longer 404** — the door was opened 08-09.
+- `signing out ends the session` was the mystery "1 skipped": serial mode skipped
+  it because the leads test failed ahead of it. It passes now.
+
+## 🔴 THE LESSON WORTH CARRYING
+
+**Three of four defects were in the CHECKING MACHINERY, not the product** — a
+test on the wrong role's tree, a scanner firing on a fake JWT, and a seeder whose
+verification was invalid SQL while the write it verified had committed.
+**Reproduce every red before changing anything.** And no single reviewer caught
+everything: Codex found one, the Supervisor found two more it had missed, and
+Codex's next pass caught a false claim inside the fix for the Supervisor's own
+finding.
+
+⚠️ **Put Codex prompts in a quoted heredoc FILE.** Backticks inside a
+double-quoted shell string execute — one prompt became `f.rating: command not
+found`, 52 bytes, **exit 0**.
 
 ---
 
