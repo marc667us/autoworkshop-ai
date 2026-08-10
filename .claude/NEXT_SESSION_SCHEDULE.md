@@ -1,6 +1,6 @@
 # Next session — start here
 
-**Updated 2026-08-10. Tip `103d9a6` on `master` — PUSHED. Working tree clean.**
+**Updated 2026-08-10. Tip `3616e61` on `master` — PUSHED. Working tree clean.**
 
 ▶ **FIRST TWO COMMANDS:**
 ```bash
@@ -16,12 +16,14 @@ Owner policy: five slices + issue resolution every session. Never the scheduler.
 # ═══ 2026-08-10 — 71/0/0, AND THREE REDS THAT WERE NOT THE PRODUCT ═══
 
 **Live suite 67/0/0 anonymous + 4/0/0 signed-in = 71 passed, 0 failed, 0 skipped
-— the first fully clean run.** Migrations IN REPO 75 / APPLIED 75 / PENDING 0.
-Security CI 6/6 on a full-history dispatch.
+— the first fully clean run, and still 71/0/0 after migration 077 went live.**
+Migrations **IN REPO 76 / APPLIED 76 / PENDING 0**. Security CI 6/6 on a
+full-history dispatch. 8 commits: `4188c2a` → `3616e61`.
 
 ## 🔴 SLICE 5 — PLATFORM ADMIN. HALF DONE ON PURPOSE. FINISH IT FIRST.
 
-**Migration 077 (`163dcc4`) — WRITTEN AND PUSHED, NOT APPLIED.**
+**Migration 077 (`163dcc4`) — ✅ APPLIED TO PRODUCTION 2026-08-10 18:07.**
+`077: 1 active platform administrator grant(s) now recorded` · **IN REPO 76 · APPLIED 76 · PENDING 0** · live suite **67/0/0 + 4/0/0**.
 `identity.is_platform_admin()` no longer accepts a membership `role_name`;
 authority is an un-revoked row in `identity.platform_administrators`
 (append-only, no `tenant_id`, revocation immediate). verify/077 **10/10** as
@@ -40,16 +42,27 @@ endpoint whose application check IS the enforcement (`security.controller.ts`
 reads `pg_catalog` and says so) still admits a membership with no grant. Needs
 grant state resolved in `TenantContext` + regating every platform-admin endpoint.
 
-▶ **TO DEPLOY 077:** `gh workflow run apply-migrations.yml -f confirm=APPLY`.
-Until then the auto-chained inspect run is **RED with `PENDING 1`, correctly** —
-`IN REPO 76 · APPLIED 75`. That red is the signal, not a break.
+✅ 077 is deployed; the signed-in live job passed **after** the predicate change,
+which is the proof the production backfill landed and the owner kept authority.
 
 ⚠️ **Release failed on this push with a GHCR SECONDARY RATE LIMIT**, after the
 image built and passed its container smoke test. Six pushes in one day. Re-run
 `Release` when convenient; the apex still serves the previous image.
 
-⚠️ **A live-suite 502 on customer-web is a COLD START.** Measured immediately
-after: 200 / 200 / 200 in 2.8s, 0.8s, 1.4s. Recorded on 08-09 too. Do not chase it.
+🔴 **THE customer-web 502 WAS NOT A COLD START — I MISDIAGNOSED IT TWICE.**
+Fixed in `3616e61`. The suite's OWN wake step recorded `customer-web -> 200`
+minutes before the suite read 502 from the same URL, so it was demonstrably
+awake. On demand: 200 fifteen times at ~1s, then ten more with the suite's exact
+`aw-live-suite` User-Agent (UA path ruled out). It is Render's edge flap that
+`reachable()` already documents, now reaching a PRE-EXISTING service. `up()` was
+the last single-sample checker and now retries 4× reporting the attempt count.
+
+⚠️ **DO NOT "FIX" IT BY WARMING.** `keep-warm.yml` pings Keycloak ONLY, on
+purpose — its header does the sum: free services share ONE ~750h monthly
+allowance, Keycloak warm 24/7 consumes all of it, and over-warming is how this
+account was SUSPENDED on 2026-07-28. That header assumes FOUR services; there
+are now NINE. The only zero-cost lever is how many stay deployed — fleet-web
+(0/29 screens) and insurance-web (0/28) are the candidates. **Owner's call.**
 
 ## ▶ NEXT, IN ORDER
 
