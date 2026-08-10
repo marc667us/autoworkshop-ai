@@ -182,10 +182,39 @@ jobs:
                   failed.append((name, detail))
 
           # ── REACHABILITY ────────────────────────────────────────────────────
+          # 🔴 RETRIED SINCE 2026-08-10, BECAUSE THE FLAP REACHED AN OLD SERVICE.
+          #
+          # `reachable()` below was given retries for the three NEWEST services,
+          # on the reasoning that "the six services that existed before this
+          # batch answered 5 of 5 at the same moment". That is no longer true:
+          # customer-web failed this single-shot check TWICE in a row on 08-10.
+          #
+          # It is not a cold start and not a defect in the app, and both were
+          # checked rather than assumed:
+          #   · the suite's OWN wake step recorded `customer-web -> 200` minutes
+          #     before the suite then read 502 from the same URL, so the service
+          #     was demonstrably awake;
+          #   · on demand it answered 200 fifteen times running at ~1s, and ten
+          #     more with the suite's exact `aw-live-suite` User-Agent, ruling
+          #     out a bot/UA path.
+          # That is Render's edge intermittently having no instance — the same
+          # thing `reachable()` documents — and nine free services now share one
+          # allowance sized for four.
+          #
+          # ⚠️ THIS DOES NOT HIDE IT. The attempt count is REPORTED, exactly as
+          # `reachable()` does, so a rising count stays the early warning. What
+          # it stops is a coin flip turning the whole gate red and teaching
+          # people that red means nothing.
           def up(label, url, want=200):
               def run():
-                  s, _ = fetch(url)
-                  return s == want, f'HTTP {s} (wanted {want})'
+                  codes = []
+                  for _ in range(4):
+                      s, _ = fetch(url)
+                      codes.append(s)
+                      if s == want:
+                          note = '' if len(codes) == 1 else                               f' — took {len(codes)} attempts ({codes}); Render router flap'
+                          return True, f'HTTP {want}{note}'
+                  return False, f'never answered {want} in 4 attempts: {codes}'
               check(f'{label} answers', run)
 
           up('apex', APEX)
