@@ -328,7 +328,24 @@ jobs:
           SELECT j.job_number, j.stage,
                  (SELECT count(*) FROM repair.job_card_stage_events e WHERE e.job_card_id = j.id) AS events,
                  f.rating,
-                 CASE WHEN f.rating >= 4 THEN 'happy' ELSE 'NOT happy' END AS verdict
+                 -- 🔴 NULL IS NOT A COMPLAINT. This read
+                 --   CASE WHEN f.rating >= 4 THEN 'happy' ELSE 'NOT happy' END
+                 -- and printed NOT happy for every job card with no feedback row
+                 -- at all, because NULL >= 4 is NULL, which is not true, so ELSE
+                 -- fired. The first real run printed five job cards carrying no
+                 -- feedback (JC-000001..005) as unhappy customers. An absent
+                 -- measurement rendered as a negative verdict is a lie about the
+                 -- owner's own data, in the one report this workflow exists to
+                 -- show them.
+                 --
+                 -- `rating` is NOT NULL CHECK (rating BETWEEN 1 AND 5) — checked,
+                 -- not assumed — so the branches are exhaustive: 4-5 happy, 1-3
+                 -- not, and NULL can only mean the LEFT JOIN found nothing.
+                 -- Measured: 5,4 -> happy; 2,1 -> NOT happy; NULL -> was
+                 -- 'NOT happy', now 'no feedback yet'.
+                 CASE WHEN f.rating IS NULL THEN 'no feedback yet'
+                      WHEN f.rating >= 4    THEN 'happy'
+                      ELSE 'NOT happy' END AS verdict
             -- 🔴 `FROM repair.job_cards j, me LEFT JOIN ...` IS INVALID SQL and
             -- this step shipped with it. A comma-join and an explicit JOIN do not
             -- mix: the LEFT JOIN binds to `me`, so `j` is out of scope by the time
@@ -338,7 +355,28 @@ jobs:
             -- tree, so `j` is still in scope for the LEFT JOIN that follows.
             FROM repair.job_cards j
             CROSS JOIN me
-            LEFT JOIN reception.customer_feedback f ON f.job_card_id = j.id
+            -- ⚠️ LATERAL … LIMIT 1, NOT A PLAIN LEFT JOIN. `reception.
+            -- customer_feedback` has only a NON-UNIQUE index on `job_card_id`
+            -- (`idx_feedback_job_card`) — checked in the live schema — so a job
+            -- card may legitimately carry SEVERAL feedback rows. A plain join
+            -- then emits that job card once per row, with a different rating and
+            -- a contradicting verdict on each, and the reader has no way to tell
+            -- a duplicated card from two real jobs. One row per job card, the
+            -- most recent feedback, which is the one a verdict should reflect.
+            -- Does not manifest today (the walk writes exactly one each) — this
+            -- is the report being honest for data it does not control. Codex.
+            LEFT JOIN LATERAL (
+              SELECT fb.rating
+                FROM reception.customer_feedback fb
+               WHERE fb.job_card_id = j.id
+               -- `fb.id` is the TIEBREAKER, and the tie is real rather than
+               -- theoretical: `created_at` defaults to now(), which is
+               -- TRANSACTION time, and the walk writes all of its feedback in
+               -- ONE transaction — so two rows for the same card would carry an
+               -- IDENTICAL timestamp and `LIMIT 1` would pick arbitrarily,
+               -- differing between runs of a report meant to be re-runnable.
+               ORDER BY fb.created_at DESC, fb.id DESC
+               LIMIT 1) f ON TRUE
            WHERE j.organization_id = me.organization_id
            ORDER BY j.job_number;
           SQL
