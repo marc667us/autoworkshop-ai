@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { flattenItems, workspaceForRole, workspaces } from '@autoworkshop/navigation';
 
 /**
  * WHAT THE OWNER SEES AFTER SIGNING IN TO THE LIVE SITE.
@@ -34,6 +35,115 @@ import { test, expect, type Page } from '@playwright/test';
  * that eventually corrupts the owner's data at 3am. The one exception is the
  * session itself, which is why it signs out at the end.
  */
+
+/**
+ * The path the OWNER's own navigation reaches the lead pipeline by — resolved
+ * from the tree, never typed as a literal.
+ *
+ * 🔴 THIS FILE ASSERTED SOMEBODY ELSE'S TREE TWICE, AND ONLY ONE WAS FIXED.
+ *
+ * The dashboard test below carries the first instance in its comment: it
+ * demanded 'Customer Reception' and 'Workshop Floor', which are groups of the
+ * DEFAULT STAFF tree and exist in `workshopOwnerGroups` nowhere. The leads test
+ * held the identical mistake in a URL — `/customer-reception/leads` — and it was
+ * missed because a route reads like an address rather than like a claim about a
+ * role. The owner tree has no `customer-reception` group AT ALL; its leads item
+ * is `/workshop-operations/leads` (workspaces.ts, the `workshop-operations`
+ * group). `requireNavRoute` calls `notFound()` for a route the viewer's tree
+ * does not advertise, so the page returned 404 and the run reported "the leads
+ * route did not render" against a product that was behaving exactly as designed.
+ *
+ * ⚠️ THE SAME SCREEN IS MOUNTED AT BOTH PATHS — `app/customer-reception/leads`
+ * and `app/workshop-operations/leads` both render `LeadsScreen`. So this is not
+ * a missing page; it is the wrong door for this viewer, and asserting the other
+ * door would have been a real defect had the owner ever been meant to use it.
+ *
+ * DERIVED, so the path can no longer be a stale literal: move the item within
+ * the owner tree and this follows it; remove it and the throw below is loud
+ * where a hardcoded path would have gone on quietly probing a 404.
+ *
+ * 🔴 AND IT ASSERTS IT REALLY GOT THE ROLE TREE, BECAUSE `workspaceForRole`
+ * FAILS OPEN. `groupsForRole` is `roleGroups?.[role] ?? workspace.groups`
+ * (`resolve.ts`), so an absent `owner:` key does not error — it silently hands
+ * back the DEFAULT STAFF tree. That tree has a `leads` item too, at
+ * `/customer-reception/leads`: the exact path this fix removed. Without the
+ * identity check below, dropping or renaming the key in `workshopRoleGroups`
+ * would resolve the broken path straight back, the item lookup would succeed so
+ * nothing would throw, and the failure message would then MISDIAGNOSE it by
+ * calling that path "the OWNER's own navigation tree". A check that walks
+ * through its own gap is a recorded defect class here; found by the Supervisor
+ * on this diff, missed by Codex.
+ *
+ * ⚠️ RESOLVED INSIDE THE TEST, NOT AT MODULE SCOPE, and that is the second
+ * Supervisor finding. A module-scope throw runs during Playwright's COLLECTION,
+ * before `beforeAll` — so it takes down all four tests in this file as a
+ * file-load error, and they report as neither passed nor failed nor skipped.
+ * Three states, never two, is a standing rule here. Resolving lazily makes a
+ * broken tree fail THE LEADS TEST, by name, with a message naming the cause.
+ *
+ * ⚠️ IT DOES NOT MAKE THE WHOLE FILE SURVIVE, AND SAYING SO WOULD BE THE THIRD
+ * WRONG CLAIM IN THIS FILE (Codex, final approval). This describe block is
+ * `mode: 'serial'`, so a failure SKIPS every test after it — the sign-out
+ * assertion below included. That is pre-existing and not introduced here, and
+ * the last live run is the proof: **2 passed / 1 failed / 1 skipped**, four
+ * tests, where the skip WAS sign-out, skipped because leads failed.
+ *
+ * So the honest claim is narrower: lazy resolution moves the blast radius from
+ * "all four tests vanish, unreported" to "the leads test FAILS by name, the two
+ * before it still report, the one after it SKIPS". Three states throughout,
+ * which is the rule the module-scope version broke. Reordering so leads runs
+ * last was considered and rejected: sign-out is deliberately last because it
+ * leaves no live session behind on the runner, and buying a skip-free run by
+ * abandoning a signed-in production session is a bad trade.
+ *
+ * ⚠️ IT SHARES THE TREE HELPER, NOT THE WHOLE RESOLUTION — and the difference is
+ * worth stating plainly rather than implying a guarantee that does not exist
+ * (Codex, this diff). `requireNavRoute` derives the role from the LIVE viewer,
+ * rejects a role foreign to the workspace, and then filters the tree through
+ * `visibleGroups` against the viewer's grants. This constant pins the role to
+ * `'owner'` and applies no grant filter. Two consequences, both currently
+ * harmless and neither silent:
+ *
+ *   · If the live account's active role stops being `workshop_owner`, this
+ *     probes the owner's route as somebody else and fails — but the dashboard
+ *     test above fails first and more clearly, on markers unique to the owner
+ *     tree, so the diagnosis lands there rather than here.
+ *   · If the Leads item ever gains a `permission`, `visibleGroups` could hide it
+ *     from a viewer this constant still resolves it for. Today it is ungated in
+ *     BOTH trees, deliberately (see the note beside it in `workspaces.ts`), so
+ *     the two resolutions agree.
+ *
+ * Closing that last gap properly means reading the link out of the rendered
+ * navigation of the signed-in page — strictly better, and a change to how this
+ * test discovers routes rather than to the defect it was fixed for. Not folded
+ * into a one-line fix for a red live suite.
+ */
+function ownerLeadsRoute(): string {
+  const base = workspaces.workshop;
+  const ownerTree = workspaceForRole(base, 'owner');
+
+  // The fail-open check. `workspaceForRole` returns the workspace UNCHANGED when
+  // it falls back, so this identity comparison is exact rather than heuristic.
+  if (ownerTree.groups === base.groups) {
+    throw new Error(
+      "the workshop workspace has no 'owner' role tree — `workspaceForRole` fell " +
+        'back to the DEFAULT STAFF tree, whose leads item is /customer-reception/' +
+        'leads, the very path an owner 404s on. Restore the `owner:` key in ' +
+        '`workshopRoleGroups` (packages/navigation/src/workspaces.ts) rather than ' +
+        'letting this test probe the staff path again.',
+    );
+  }
+
+  const leads = flattenItems(ownerTree.groups).find((i) => i.id === 'leads');
+  if (!leads) {
+    throw new Error(
+      "the workshop OWNER navigation tree has no 'leads' item — either the lead " +
+        'pipeline was removed from the owner tree (in which case delete this test ' +
+        'rather than pointing it at another role\'s route) or the item id changed.',
+    );
+  }
+  return leads.href;
+}
 
 const OWNER_EMAIL = process.env['LIVE_OWNER_EMAIL'] ?? '';
 const OWNER_PASSWORD = process.env['LIVE_OWNER_PASSWORD'] ?? '';
@@ -167,22 +277,34 @@ test.describe('the live site, signed in as the workshop owner', () => {
    * 🔴 A SIGNED-IN READ OF A ROUTE WHOSE TABLE IS NEW — the schema assertion
    * `live-suite.yml` cannot make.
    *
-   * `/customer-reception/leads` reads `GET /leads`, which reads `crm.leads`
-   * (migration 064). Anonymously it 401s whether or not 064 was ever applied.
-   * Signed in, a missing table or a policy that refuses the owner produces a
-   * visible failure state instead of the screen.
+   * The leads screen reads `GET /leads`, which reads `crm.leads` (migration
+   * 064). Anonymously it 401s whether or not 064 was ever applied. Signed in, a
+   * missing table or a policy that refuses the owner produces a visible failure
+   * state instead of the screen.
    *
    * ⚠️ AN EMPTY PIPELINE IS A PASS. A workshop with no leads is the normal
    * state, and asserting rows exist would make this fail for a correct product.
    * What must NOT appear is the shell's API-failure state — that is the shape a
    * missing migration takes on screen.
+   *
+   * ⚠️ THE ROUTE COMES FROM `ownerLeadsRoute()`, THE OWNER'S OWN TREE — see
+   * the note on that constant. A literal path here is a claim about which role's
+   * navigation the viewer is on, and this file has already got that wrong twice.
    */
   test('the lead pipeline renders for the owner, empty or not', async ({ page }) => {
+    // Resolved HERE, so a broken navigation tree fails this test by name rather
+    // than collapsing the whole file at collection time. See `ownerLeadsRoute`.
+    const route = ownerLeadsRoute();
+
     await signIn(page);
-    const response = await page.goto(`${APEX}/customer-reception/leads`, {
+    const response = await page.goto(`${APEX}${route}`, {
       waitUntil: 'domcontentloaded',
     });
-    expect(response?.status(), 'the leads route did not render').toBeLessThan(400);
+    expect(
+      response?.status(),
+      `the leads route did not render at ${route} — the path the OWNER's own ` +
+        `navigation tree advertises`,
+    ).toBeLessThan(400);
 
     const body = await page.locator('body').innerText();
     // `ApiFailure` renders one of these; any of them means the page loaded and
