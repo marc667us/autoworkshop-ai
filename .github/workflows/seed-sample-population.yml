@@ -1,0 +1,173 @@
+# Seed the sample population the owner asked to keep: 10 workshops, 10
+# suppliers, 20 customers.
+#
+# ══════════════════════════════════════════════════════════════════════════
+# Owner, 2026-08-11: "use 20 customers and 10 workshops and 10 suppliers as
+# sample data to test all features and functionalities of the live web app" and
+# "leave sample data in the app for me check".
+#
+# The SQL lives in `infrastructure/seed/marketplace_population.sql` rather than
+# inline here, so it can be run and proven against a local database first. It
+# was: dry run 10/10/20, real run 10/10/20/20, and a second real run created 0
+# and skipped 40 — idempotent, measured, not asserted.
+#
+# 🔴 IT WRITES REAL PRODUCTION DATA AND IS MEANT TO STAY. Every organisation and
+# customer carries the tag IN ITS NAME so the owner can tell sample from real at
+# a glance, and so it can be found again.
+#
+# ⚠️ `verify_only` RE-READS WITHOUT WRITING. On 2026-08-10 a seeder's write and
+# its read-back were gated on the same APPLY, so the only run that could print
+# the result was the run that wrote it — and that run's query was broken. The
+# read-back below is NOT gated, and this input exists so the counts can be asked
+# for again at any time.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Seed sample population
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write. Anything else counts and writes nothing.'
+        required: false
+        default: ''
+      owner_email:
+        description: 'Whose organisation the 20 customers join'
+        required: false
+        default: 'marc667us@yahoo.com'
+      tag:
+        description: 'Written into every seeded organisation and customer NAME'
+        required: false
+        default: 'SAMPLE-2026-08-11'
+      verify_only:
+        description: 'true = read the counts back and write nothing at all'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: seed-sample-population
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      OWNER_EMAIL: ${{ inputs.owner_email }}
+      TAG: ${{ inputs.tag }}
+      CONFIRM: ${{ inputs.confirm }}
+      VERIFY_ONLY: ${{ inputs.verify_only }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key, and say what this run will do
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          if [ "${VERIFY_ONLY}" = "true" ]; then
+            echo "VERIFY ONLY — reads the counts back, writes nothing."
+          elif [ "${CONFIRM}" = "APPLY" ]; then
+            echo "APPLY — will create what is missing, into ${OWNER_EMAIL}'s organisation, tagged ${TAG}."
+          else
+            echo "DRY RUN — counts what it would create. Nothing is written."
+            echo "Re-run with confirm=APPLY to write."
+          fi
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d.get('id','')); break
+          ")"
+          [ -n "$DB_ID" ] || {
+            echo "::group::what /v1/postgres returned"; head -c 500 /tmp/pg_list.json; echo "::endgroup::"
+            echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          # `or []`: Render returns the key PRESENT and null when the list is
+          # empty, so a dict default would never fire.
+          print(json.dumps(d.get('ipAllowList') or []))" > /tmp/ip_allow_original.json
+
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'demo seeding'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          echo "firewall open"
+
+      - name: Seed, or count, or just read back
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
+
+          # 🔴 APPLY ONLY WHEN BOTH ARE TRUE. verify_only wins over confirm, so a
+          # run asking to look cannot be turned into a run that writes by an
+          # input left over in the dispatch form.
+          MODE="DRY"
+          if [ "${VERIFY_ONLY}" != "true" ] && [ "${CONFIRM}" = "APPLY" ]; then MODE="APPLY"; fi
+          echo "mode: ${MODE}"
+
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL"             -v owner_email="${OWNER_EMAIL}" -v tag="${TAG}" -v apply="${MODE}"             -f infrastructure/seed/marketplace_population.sql
+
+      - name: What the owner will now see, and where
+        if: always()
+        run: |
+          echo "  20 customers  -> your own workshop: customer book, garage, job cards"
+          echo "  10 workshops  -> platform admin directory (separate organisations; RLS"
+          echo "                   correctly hides them from inside your workshop)"
+          echo "  10 suppliers  -> platform admin directory, and the public marketplace"
+          echo "                   once they publish parts"
+          echo ""
+          echo "  Every one carries [${TAG}] in its name. That is deliberate."
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl || true
