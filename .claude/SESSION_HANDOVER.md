@@ -1,5 +1,158 @@
 # Session handover
 
+## ═══ 2026-08-11 — the API half closed, and the account went down ═══
+
+**Tip `9cbe677`. 7 commits (`ee27c44` → `9cbe677`). Tree clean, all pushed.**
+**Migrations IN REPO 78 / APPLIED 78 / PENDING 0** — 078 and 079 both live.
+**Live suite 71/0/0** (67 anonymous + 4 signed-in) — measured *before* the suspension.
+
+**▶ NEXT SESSION STARTS AT `.claude/TASK_GAP_AND_JOB_LIST.md`** — the measured
+gap against COMBINED_PLAN_v2 and PLAN_EXTENSION_v1, jobs J1–J24, schedule S1–S13.
+
+### 🔴 THE FIRST THING TO CHECK: RENDER IS SUSPENDED
+
+**Every service returned 503 "Service Suspended" at ~17:00 UTC** — apex, api,
+customer, supplier, towing, insurance. Account-wide, not a flap and not a cold
+start. This is the free-tier instance-hour allowance exhausted, the same failure
+as **2026-07-28**. Nine services share one ~750h allowance; a month is ~730h.
+
+🔴 **I CONTRIBUTED TO IT AND SHOULD HAVE KNOWN BETTER.** I dispatched the live
+suite three times in one session, and each run WAKES ALL NINE SERVICES before it
+measures anything. `keep-warm.yml`'s header does exactly this sum, and I had read
+it earlier in the same session. **Budget live-suite runs — they are not free.**
+
+- **A suspension from consumed hours cannot be lifted via the API** — proven
+  07-28: `POST /resume` → *"only services suspended by a user can be resumed"*.
+- **Do NOT propose spending.** Zero-cost is a standing hard rule.
+- **The only lever is how many services stay deployed.** The candidates are the
+  two with nothing behind them: **fleet-web (1 of 29 screens)** and
+  **insurance-web (0 of 28)**. Owner's scope decision, still open.
+- **The database is a separate paid service and was unaffected.** Every seeded
+  row is intact and waiting.
+
+### ✅ WHAT SHIPPED, AND IS ON PRODUCTION
+
+1. **J1 — the platform-admin API half (migration 078).** The critical the last
+   two sessions flagged. Revoking a grant used to remove database reach and leave
+   **every API gate open**, including two endpoints that read server-wide
+   catalogues with no RLS beneath them, where the application check IS the
+   enforcement.
+   **Fixed at the FACT, not at 33 call sites:** `resolveTenantContext` refuses to
+   select a `platform_administrator` membership without an un-revoked grant, so
+   the string cannot reach `activeRole` and all 29 allow-list files are correct
+   by construction. `platformAdmin` is gone from `ROLE_PERMISSIONS` entirely;
+   `permissionsForContext` is its only source.
+   Proven: verify/078 **10/10** as `autoworkshop_app`; revocation measured
+   immediate in one transaction (`before=t → after=f`); signed-in live job
+   **4/0/0** after deploy, which is the no-lockout proof.
+2. **J2 — the 14 two-column `(x, tenant_id)` FKs (migration 079).** Plus a second
+   defect found while measuring: three were `ON DELETE SET NULL` on a composite
+   key, which nulls EVERY key column including the NOT NULL `tenant_id` — so
+   those deletes RAISED instead of nulling. Both fixed. verify/079 **6/6**, and
+   check 3 is a real cross-organisation WRITE that must be refused, not a
+   catalogue inspection.
+3. **J5** — `CURRENT_PHASE.md` rewritten. It was four facts stale and wrongly
+   marked Phase 1 complete and Phase 8 not-started.
+4. **Live-suite reachability retries got a backoff.** They had none, so four
+   attempts landed inside one transient window, and a 180s timeout meant four
+   transport hangs could burn twelve minutes. Same defect already fixed in
+   `deploy-supplier-web.yml`; this copy was missed. Run time 24m → ~4m.
+5. **Sample population seeded on production, and it stays** (owner asked for it
+   and asked to keep it): **10 workshops · 10 suppliers · 20 customers · 20
+   vehicles**, all through the REAL `register_workshop` / `register_supplier` /
+   `enrol_as_customer` functions, tagged `[SAMPLE-2026-08-11]` in every name.
+   Idempotent by measurement: the second run created 0 and skipped 40.
+6. **Two list screens got the create button they lacked** — see below.
+
+### 🔴 "ALL VIEWS MUST HAVE ADD NEW" — THE COUNT IS NOT THE FINDING
+
+Measured: **100 list-shaped screens, 29 with a create control, 71 without.**
+
+But of **405 navigation entries only NINE are create-shaped**, and four of those
+("New Claims", "New Orders", "New Requests", "New Complaints") are FILTERED
+LISTS, not create actions. **There are exactly FIVE real create routes in this
+product**: `register-customer`, `register-vehicle`, `add-vehicle`, `add-product`,
+`create-job-card`.
+
+**So most of the 71 cannot be given a working button — there is nothing for it to
+point at.** `quickCreateHref` resolves out of the viewer's own navigation and
+returns null when the route is not advertised, so adding buttons would render
+nothing at all. **This is a build-the-write-half job, not a button job.** Sizing
+it as buttons would under-scope it enormously, which is why it is written down
+here rather than left to be rediscovered.
+
+Wired this session: **customer-web garage** — its own empty state had always said
+*"you can also add one yourself from Add Vehicle"* while the screen offered no
+way to do it — and **workshop-web job-cards**, where `job-queue-screen` has
+offered Create Job Card since it was built. Supplier catalogue needed nothing; it
+already creates inline via `AddPartForm`.
+
+`QuickCreateButton` moved into `packages/ui` and became a plain `<a>`:
+`packages/ui` is deliberately framework-free (react is its only peer dependency),
+and adding `next` to the design-system package for one component is the bigger
+change. Prefetch is lost; every reason the component gives for being a link is
+kept.
+
+### ⚠️ OPEN, AND HONESTLY UNRESOLVED
+
+- 🔴 **THE API SUITE'S SKIP COUNT VARIES BETWEEN RUNS ON THE SAME CODE.**
+  Observed **943 passed / 6 skipped**, then **948 / 1** minutes later with no
+  change in between. The stable skip is `mail-delivery.integration.spec.ts`
+  (Mailpit's self-signed CA is untrusted). The other five are unexplained.
+  **Do not quote either number as the baseline until this is understood** —
+  "passed / failed / SKIPPED are three states" is a recorded rule here, and a
+  wandering skip count is the same family of defect.
+- **J3 is 1 of 5 done.** Remaining supplier-web deploy defects: the poll that
+  falls through to a green read-back of the OLD image, the discarded deploy id,
+  `|| echo 000` yielding `000000`, and the inert `len()` guard.
+- **The live suite dispatched after the seed FAILED** — it ran into the
+  suspension, not a product defect. Re-run when the account is back; that is the
+  outstanding proof for both the seed and migration 079.
+
+### 🔴 GATE LESSONS THIS SESSION ADDED
+
+- **Codex found my confident reasoning WRONG.** I argued an API-first deploy
+  could not break anything new because the request already depends on
+  `memberships_for_subject` — false: 039 created that, so any database at 077 has
+  it, whereas 078's function is new. An API image ahead of the migration would
+  have been a **near-total outage for every role**. Now caught, and CONFIRMED
+  with `to_regprocedure` before being believed, because 42883 can also be raised
+  from inside an installed function.
+- **Codex's third pass found two of my new tests proved nothing.** They now say
+  so in their own titles instead of reading like proof.
+- **The Supervisor found 29 files Codex's question shape excluded** — J1 was 4×
+  its apparent size. Neither reviewer alone was enough, for the fourth session
+  running.
+- **My own gap analysis called three things ABSENT that exist** —
+  `insurance_assessor` IS grantable (only the self-service door is missing, so
+  insurance is NOT blocked); Phase 1 is NOT done; Phase 8 is NOT nothing. Two of
+  the three were inherited from earlier handovers rather than measured.
+  **Measure the repo, do not quote the last handover.**
+- **A missing `time` import in my own live-suite fix** would have killed the
+  whole suite at the first flap — strictly worse than the false red it fixed.
+  Caught by syntax-checking the extracted Python before dispatching, not by a
+  24-minute live run.
+
+### 🛠 COMMANDS
+
+```bash
+bash scripts/start-session.sh                # ALWAYS first
+bash scripts/record-live-state.sh            # what is really deployed
+
+# 🔴 BUDGET THESE. Each live-suite run wakes all nine services.
+gh workflow run live-suite.yml               # READ BOTH JOBS
+gh workflow run apply-migrations.yml         # no confirm = inspect only
+gh workflow run seed-sample-population.yml -f verify_only=true   # re-read, writes nothing
+
+docker exec -i aw-postgres psql -U autoworkshop -d autoworkshop \
+  < infrastructure/migrations/verify/079_organisation_scoped_keys.sql
+
+printf '%s' "$P" > /tmp/p.txt   # ALWAYS a FILE — backticks in "..." EXECUTE
+C:/Users/USER/nodejs/codex.cmd exec --skip-git-repo-check -s read-only - < /tmp/p.txt
+```
+
+---
+
 ## ═══ 2026-08-10 — three reds that were not the product, and half a security fix ═══
 
 **Tip `2a179dc`. 8 commits (`4188c2a` → `2a179dc`). Tree clean, all pushed.**

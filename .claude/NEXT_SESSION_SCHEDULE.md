@@ -1,5 +1,42 @@
 # Next session — start here
 
+# 🚦 2026-08-11 CLOSE — READ THIS FIRST
+
+**Tip `9cbe677` on `master`, tree clean, pushed. Migrations 78/78, PENDING 0.**
+
+▶ **STEP 1: IS RENDER STILL SUSPENDED?** Every service was 503 "Service
+Suspended" at ~17:00 UTC — account-wide, free-tier instance hours exhausted, the
+same failure as 2026-07-28. Nothing on the live site can be tested until it
+returns, and **it cannot be resumed via the API**. Owner was checking the
+dashboard at close. **Do not propose spending.** The only lever is how many
+services stay deployed; fleet-web (1/29 screens) and insurance-web (0/28) are the
+candidates and that is the owner's call.
+
+⚠️ **I CAUSED PART OF IT: three live-suite runs in one session, each waking all
+nine services. Budget them.**
+
+▶ **STEP 2: re-run the live suite** once services are back. It is the outstanding
+proof for migration 079 and for the seeded sample data — the run dispatched after
+the seed died in the suspension, not on a defect.
+
+▶ **STEP 3: pick up S1's remainder** from `.claude/TASK_GAP_AND_JOB_LIST.md`:
+**J3 is 1 of 5 done** (four supplier-web deploy defects left). Then S2 onward.
+
+**DONE 2026-08-11:** J1 (platform-admin API half, migration 078 — the critical) ·
+J2 (14 cross-org FKs, migration 079, plus a composite SET NULL that could never
+fire) · J4 (Release was already green) · J5 (phase file) · live-suite retry
+backoff · **sample population seeded and kept: 10 workshops, 10 suppliers, 20
+customers, 20 vehicles, tagged `[SAMPLE-2026-08-11]`.**
+
+🔴 **"All views must have Add new" is NOT a button job.** Only 5 real create
+routes exist in 405 nav entries; 71 list screens have no create control and most
+have nothing to point at. Full reasoning in `SESSION_HANDOVER.md`.
+
+🔴 **The API suite's skip count varied on identical code** — 943/6 then 948/1.
+Do not adopt either as the baseline until it is explained.
+
+---
+
 ▶ **2026-08-11: the full gap analysis, job list J1–J19 and the S1–S13 schedule
 now live in `.claude/TASK_GAP_AND_JOB_LIST.md`. READ THAT FIRST.** It measures
 this checkout against COMBINED_PLAN_v2 **and** PLAN_EXTENSION_v1, labels every
