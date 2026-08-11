@@ -1,5 +1,13 @@
 # Next session — start here
 
+▶ **2026-08-11: the full gap analysis, job list J1–J19 and the S1–S13 schedule
+now live in `.claude/TASK_GAP_AND_JOB_LIST.md`. READ THAT FIRST.** It measures
+this checkout against COMBINED_PLAN_v2 **and** PLAN_EXTENSION_v1, labels every
+statement MEASURED or READ, and carries two gate findings from 08-11: Codex
+confirmed the platform-admin API gap TRUE at **7 endpoints**, and the Supervisor
+found **29 further files** whose role allowlists carry the same authority — so
+that job is 33 files, not 7. The sections below remain the 08-10 record.
+
 **Updated 2026-08-10. Tip `3616e61` on `master` — PUSHED. Working tree clean.**
 
 ▶ **FIRST TWO COMMANDS:**
