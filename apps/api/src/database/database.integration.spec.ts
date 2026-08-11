@@ -27,6 +27,7 @@ const ctx = (tenantId: string): TenantContext => ({
   branchId: null,
   userId: '00000000-0000-0000-0000-0000000000ff',
   activeRole: 'workshop_owner',
+  hasPlatformGrant: false,
   correlationId: 'integration-test',
 });
 

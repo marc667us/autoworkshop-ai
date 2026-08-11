@@ -100,6 +100,7 @@ const ctxFor = (userId: string, role: string): TenantContext => ({
   branchId: null,
   userId,
   activeRole: role,
+  hasPlatformGrant: false,
   correlationId: 'slice-12-integration',
 });
 

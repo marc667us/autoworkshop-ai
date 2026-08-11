@@ -20,6 +20,7 @@ const ctxFor = (activeRole: string): TenantContext => ({
   branchId: null,
   userId: '33333333-3333-3333-3333-333333333333',
   activeRole,
+  hasPlatformGrant: false,
   correlationId: 'test',
 });
 

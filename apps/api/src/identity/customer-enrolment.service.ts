@@ -130,6 +130,13 @@ export class CustomerEnrolmentService {
       branchId: enrolled.branchId,
       userId: await this.userIdFor(subject),
       activeRole: 'customer',
+      // Hard `false`, not a lookup. This context exists solely to write the
+      // customer record the enrolment just created, as that customer; asking
+      // whether the person is also a platform administrator would be a question
+      // with no bearing on the one statement it is used for, and answering it
+      // `true` here would confer platform authority on a path that never
+      // resolved a membership.
+      hasPlatformGrant: false,
       correlationId: randomUUID(),
     };
 

@@ -131,6 +131,7 @@ describe('resolveTenantContext', () => {
       branchId: null,
       userId: 'user-1',
       activeRole: 'mechanic',
+      hasPlatformGrant: false,
       correlationId: 'c',
     });
     expect(evil.every((s) => !s.text.includes('DROP TABLE'))).toBe(true);
@@ -173,6 +174,7 @@ describe('resolveTenantContext — requestedRoleName', () => {
         userId: 'owner',
         memberships: owner,
         requestedRoleName: role,
+        hasPlatformGrant: true,
         correlationId: 'c',
       });
       expect(ctx.activeRole).toBe(role);
@@ -204,7 +206,12 @@ describe('resolveTenantContext — requestedRoleName', () => {
       resolveTenantContext({
         userId: 'solo',
         memberships: [membership({ roleName: 'customer' })],
-        requestedRoleName: 'platform_administrator',
+        // ⚠️ `workshop_owner`, NOT `platform_administrator`. It was the
+        // latter, and once the grant rule landed this test would have passed
+        // for the WRONG REASON — refused by the platform-grant branch before
+        // the fast path was reached, while still reading like a test of the
+        // fast path. The grant refusal has its own tests below.
+        requestedRoleName: 'workshop_owner',
         correlationId: 'c',
       }),
     ).toThrow(/requested role is not among/i);
@@ -261,6 +268,7 @@ describe('resolveTenantContext — requestedRoleName', () => {
     const ctx = resolveTenantContext({
       userId: 'owner',
       memberships: owner,
+      hasPlatformGrant: true,
       correlationId: 'c',
     });
     // ⚠️ THIS ASSERTION USED TO BE `toContain(...)`, and the weakness was the
@@ -279,6 +287,7 @@ describe('resolveTenantContext — requestedRoleName', () => {
     const ctx = resolveTenantContext({
       userId: 'owner',
       memberships: [...owner].reverse(),
+      hasPlatformGrant: true,
       correlationId: 'c',
     });
     expect(ctx.activeRole).toBe('platform_administrator');
@@ -309,6 +318,7 @@ describe('resolveTenantContext — requestedRoleName', () => {
         membership({ organizationId: 'org-0', roleName: 'customer' }),
         ...owner,
       ],
+      hasPlatformGrant: true,
       correlationId: 'c',
     });
 
@@ -412,6 +422,7 @@ describe('resolveTenantContext — requestedRoleName', () => {
         membership({ tenantId: 'tenant-b', organizationId: 'org-2', roleName: 'platform_administrator' }),
         membership({ tenantId: 'tenant-a', organizationId: 'org-1', roleName: 'technician' }),
       ],
+      hasPlatformGrant: true,
       correlationId: 'c',
     });
     expect(ctx.organizationId).toBe('org-2');
@@ -432,5 +443,123 @@ describe('resolveTenantContext — requestedRoleName', () => {
       correlationId: 'c',
     });
     expect(ctx.activeRole).toBe('technician');
+  });
+});
+
+/**
+ * 🔴 PLATFORM AUTHORITY IS A GRANT, AND THE MEMBERSHIP ROLE NAME BUYS NOTHING.
+ *
+ * This block is the API half of migration 077, which hardened the DATABASE on
+ * 2026-08-10 and deliberately left the API deriving `platform.admin` from
+ * `identity.memberships.role_name`. For a day, revoking a grant on production
+ * removed database reach and left every API gate open — and two of those gates
+ * (`GET /security/posture`, `GET /operations/report`) sit on endpoints that read
+ * server-wide catalogues with no row-level security underneath, so the
+ * application check IS the enforcement there.
+ *
+ * The fix is here rather than at the thirty-three call sites that consume the
+ * role name. Seven endpoints test the permission directly; the string also
+ * appears in a role ALLOW-LIST in twenty-nine further files, several of which
+ * confer authority nothing else does — `UNLIMITED_ROLES` (any approval amount),
+ * `ROLE_TARGET_STAGES` (every job-card stage including release), `MAY_GOVERN`,
+ * `CAN_CREATE_ORG`. Regating those individually would be twenty-nine chances to
+ * miss one, silently. Making the role unselectable without a grant makes all of
+ * them correct by construction, including files written later by someone who
+ * never reads this comment.
+ *
+ * ⚠️ THE THREE CASES BELOW ARE THE ONES THE RESUME POINTER NAMED:
+ * membership-without-grant DENIED · active grant ALLOWED · revoked grant DENIED
+ * immediately. The third is expressed as "no grant on this request", because
+ * `TenantGuard` re-reads `identity.platform_grant_for_subject` on EVERY request
+ * rather than caching it — a cached grant is a revocation that does not take
+ * effect, which is the defect being closed.
+ */
+describe('resolveTenantContext — platform authority comes from the grant', () => {
+  const adminOnly = [membership({ organizationId: 'org-1', roleName: 'platform_administrator' })];
+
+  it('🔴 DENIES: a platform_administrator membership with NO grant confers nothing', () => {
+    // The user's only membership is the platform role and no grant backs it, so
+    // there is nothing left to resolve. 401 is what revocation is supposed to
+    // mean, and the message says which of the two is missing — an operator
+    // debugging a revocation must not be told "no membership" when the row is
+    // plainly there.
+    expect(() =>
+      resolveTenantContext({ userId: 'ex-admin', memberships: adminOnly, correlationId: 'c' }),
+    ).toThrow(/no un-revoked grant backs it/i);
+  });
+
+  it('🟢 ALLOWS: the same membership WITH a grant resolves as the administrator', () => {
+    const ctx = resolveTenantContext({
+      userId: 'admin',
+      memberships: adminOnly,
+      hasPlatformGrant: true,
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('platform_administrator');
+    expect(ctx.hasPlatformGrant).toBe(true);
+  });
+
+  it('🔴 DENIES: revoking the grant DOWNGRADES rather than locks out, when another role is held', () => {
+    // The case that matters most in production: the owner holds
+    // `platform_administrator` AND `workshop_owner` at their own workshop.
+    // Revoking the grant must remove platform authority and leave the workshop
+    // untouched — not take the whole account offline.
+    const ctx = resolveTenantContext({
+      userId: 'owner',
+      memberships: [
+        membership({ organizationId: 'org-1', roleName: 'platform_administrator' }),
+        membership({ organizationId: 'org-1', roleName: 'workshop_owner' }),
+      ],
+      correlationId: 'c',
+    });
+    expect(ctx.activeRole).toBe('workshop_owner');
+    expect(ctx.hasPlatformGrant).toBe(false);
+  });
+
+  it('🔴 REFUSES the role switcher too, and says why', () => {
+    // Asking to act as the platform administrator without a grant is refused
+    // with the GRANT named. Folding this into "requested role is not among your
+    // memberships" would be true-ish and useless: the membership row exists.
+    expect(() =>
+      resolveTenantContext({
+        userId: 'ex-admin',
+        memberships: [
+          membership({ organizationId: 'org-1', roleName: 'platform_administrator' }),
+          membership({ organizationId: 'org-1', roleName: 'workshop_owner' }),
+        ],
+        requestedRoleName: 'platform_administrator',
+        correlationId: 'c',
+      }),
+    ).toThrow(/requires an un-revoked grant/i);
+  });
+
+  it('🔴 the grant alone does NOT invent a membership', () => {
+    // The mirror of the rule above, and the one that would be a real
+    // escalation if it broke: a grant says "this person may act as the
+    // platform", not "this person is a member of that workshop". Someone with a
+    // grant and no membership at all still resolves to nothing.
+    expect(() =>
+      resolveTenantContext({
+        userId: 'ghost',
+        memberships: [],
+        hasPlatformGrant: true,
+        correlationId: 'c',
+      }),
+    ).toThrow(TenantResolutionError);
+  });
+
+  it('🔴 a REVOKED membership is not resurrected by holding a grant', () => {
+    // Status is checked before the grant filter, so the two rules compose in
+    // the safe direction: the grant relaxes nothing about membership status.
+    expect(() =>
+      resolveTenantContext({
+        userId: 'ex',
+        memberships: [
+          membership({ organizationId: 'org-1', roleName: 'platform_administrator', status: 'revoked' }),
+        ],
+        hasPlatformGrant: true,
+        correlationId: 'c',
+      }),
+    ).toThrow(/no active membership/i);
   });
 });

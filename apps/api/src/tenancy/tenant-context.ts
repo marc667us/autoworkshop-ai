@@ -13,7 +13,7 @@
  */
 // Ranks roles for the DEFAULT selection only. Not an authorization decision:
 // everything it ranks is already a membership the server has proved.
-import { rolePrecedence } from '../authz/permission-matrix';
+import { rolePrecedence, PLATFORM_ADMIN_ROLE_NAME } from '../authz/permission-matrix';
 
 export interface TenantContext {
   readonly tenantId: string;
@@ -22,6 +22,29 @@ export interface TenantContext {
   readonly userId: string;
   /** The ONE active role for this request, not the user's full role set. */
   readonly activeRole: string;
+  /**
+   * Does this user hold an un-revoked row in `identity.platform_administrators`?
+   *
+   * 🔴 THIS IS THE ONLY SOURCE OF PLATFORM AUTHORITY IN THE API. It is read
+   * from the database per request via `identity.platform_grant_for_subject`
+   * (migration 078), keyed on the validated Keycloak subject — never on a role
+   * name, never on a token claim.
+   *
+   * WHY IT EXISTS. Migration 077 made the DATABASE require a grant row and
+   * deliberately left the API deriving `platform.admin` from the membership
+   * `role_name`. Between 2026-08-10 and this change, revoking a grant removed
+   * database reach and left every API gate open — including two endpoints
+   * (`/security/posture`, `/operations/report`) that read server-wide catalogues
+   * with no row-level security underneath, where the application check IS the
+   * enforcement.
+   *
+   * ⚠️ IT IS NOT THE ONLY CHECK, ON PURPOSE. `resolveTenantContext` also refuses
+   * to SELECT a `platform_administrator` membership without it, so a role name
+   * cannot become `activeRole` at all. Two independent checks, the same shape
+   * this repository already uses for `ROLE_TARGET_STAGES` + `STAGE_TRANSITIONS`:
+   * either one alone would close the hole, and neither is relied on to.
+   */
+  readonly hasPlatformGrant: boolean;
   readonly correlationId: string;
 }
 
@@ -77,6 +100,17 @@ export function resolveTenantContext(params: {
    * confusing account, not a powerful one.
    */
   requestedRoleName?: string;
+  /**
+   * Whether the user holds an un-revoked platform administrator grant, read
+   * from the database by `TenantGuard` before this runs.
+   *
+   * ⚠️ DEFAULTS TO FALSE, and that default is load-bearing. Every existing
+   * caller and every test that does not pass it resolves WITHOUT platform
+   * authority, which is the safe direction. A default of `true` would make an
+   * omitted argument silently confer the thing this parameter exists to
+   * withhold.
+   */
+  hasPlatformGrant?: boolean;
   correlationId: string;
 }): TenantContext {
   const {
@@ -84,6 +118,7 @@ export function resolveTenantContext(params: {
     memberships,
     requestedOrganizationId,
     requestedRoleName,
+    hasPlatformGrant = false,
     correlationId,
   } = params;
 
@@ -91,14 +126,73 @@ export function resolveTenantContext(params: {
   // SHORTCUT. Filtering afterwards would let the single-membership fast path
   // return a membership whose role contradicts the request — a switcher that
   // silently ignores what it was asked for is worse than one that refuses.
-  const activeAll = memberships.filter((m) => m.status === 'active');
+  const activeRaw = memberships.filter((m) => m.status === 'active');
+
+  // 🔴 A `platform_administrator` MEMBERSHIP IS NOT ELIGIBLE WITHOUT A GRANT.
+  //
+  // This one filter is what closes the hole migration 077 left open, and it
+  // closes it for THIRTY-THREE call sites at once rather than for the seven a
+  // reviewer first counted.
+  //
+  // Seven endpoints gate on `permissionsForContext(...).includes(platform.admin)`
+  // or on `activeRole === 'platform_administrator'` directly. But the role name
+  // also appears in a role ALLOW-LIST in twenty-nine further files, and several
+  // of those confer authority nothing else does: `UNLIMITED_ROLES` in
+  // `authz/approval-limits.ts` (a platform administrator approves ANY amount),
+  // `ROLE_TARGET_STAGES` in `repair/job-card-stages.ts` (EVERY stage, quality
+  // control and vehicle release included), `MAY_GOVERN` in
+  // `settings/settings.service.ts`, and `CAN_CREATE_ORG` in
+  // `identity/organization.service.ts`. Regating those one by one would be
+  // twenty-nine chances to miss one, and a missed one is silent.
+  //
+  // Fixing the FACT instead means the string can never reach `activeRole`
+  // without a grant behind it, so every consumer — including one written
+  // tomorrow by someone who has not read this comment — is correct by
+  // construction.
+  //
+  // ⚠️ THIS CAN LEAVE A USER WITH NO MEMBERSHIP AT ALL, and that is the intended
+  // answer, not an accident. Someone whose ONLY membership is
+  // `platform_administrator` and whose grant has been revoked holds no authority
+  // anywhere; 401 is what revocation is supposed to mean. `revoked_at` is
+  // checked per request, so it takes effect on the next call rather than at the
+  // next login.
+  //
+  // ⚠️ IT DOES NOT SWALLOW A FAILED READ. `TenantGuard` does not catch the
+  // database error from `platform_grant_for_subject`, deliberately: the same
+  // request already hard-depends on `memberships_for_subject`, so a database
+  // behind on migrations is already a loud failure rather than a quiet change
+  // of privilege. A caught error defaulting to `false` would be the silent
+  // fail-closed-for-everyone this repository has recorded three times.
+  const ineligiblePlatformAdmin = !hasPlatformGrant
+    ? activeRaw.filter((m) => m.roleName === PLATFORM_ADMIN_ROLE_NAME)
+    : [];
+  const activeAll = hasPlatformGrant
+    ? activeRaw
+    : activeRaw.filter((m) => m.roleName !== PLATFORM_ADMIN_ROLE_NAME);
+
+  // Refused EXPLICITLY rather than folded into "role not among your
+  // memberships", which would be true-ish and useless: the row does exist, and
+  // an administrator debugging a revocation needs to be told that it is the
+  // GRANT that is missing, not the membership.
+  if (requestedRoleName === PLATFORM_ADMIN_ROLE_NAME && !hasPlatformGrant) {
+    throw new TenantResolutionError(
+      'platform administrator authority requires an un-revoked grant in ' +
+        'identity.platform_administrators; the membership role alone confers none',
+    );
+  }
+
   const active =
     requestedRoleName === undefined
       ? activeAll
       : activeAll.filter((m) => m.roleName === requestedRoleName);
 
   if (activeAll.length === 0) {
-    throw new TenantResolutionError('user holds no active membership');
+    throw new TenantResolutionError(
+      ineligiblePlatformAdmin.length > 0
+        ? 'the only active membership is platform_administrator and no un-revoked ' +
+          'grant backs it, so it confers nothing'
+        : 'user holds no active membership',
+    );
   }
   if (active.length === 0) {
     // Held no such role. REFUSED, not downgraded — same reasoning as the
@@ -210,6 +304,17 @@ export function resolveTenantContext(params: {
     branchId: selected.branchId,
     userId,
     activeRole: selected.roleName,
+    // Carried through even when the selected role is NOT the platform one,
+    // because it states a fact about the user rather than about this request.
+    //
+    // ⚠️ HOLDING THE GRANT IS NOT ENOUGH ON ITS OWN. `permissionsForContext`
+    // requires the grant AND `activeRole === 'platform_administrator'`, so a
+    // granted administrator who switches to `workshop_owner` genuinely acts as
+    // one — which is the entire point of the role switcher, and what the
+    // twenty-nine allow-list files already do by testing the role name. A
+    // permission that followed the person across a deliberate downgrade would
+    // make the switcher decorative.
+    hasPlatformGrant,
     correlationId,
   };
 }

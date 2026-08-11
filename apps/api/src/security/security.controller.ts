@@ -1,6 +1,6 @@
 import { Controller, ForbiddenException, Get, Req, UseGuards } from '@nestjs/common';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
-import { PERMISSIONS, permissionsForRole } from '../authz/permission-matrix';
+import { PERMISSIONS, permissionsForContext } from '../authz/permission-matrix';
 import { SecurityPostureService } from './security-posture.service';
 
 /**
@@ -58,7 +58,7 @@ export class SecurityController {
     //
     // `permissionsForRole` returns `[]` for any name absent from
     // `ROLE_PERMISSIONS`, so it fails closed on an unknown role.
-    if (!permissionsForRole(req.tenantContext.activeRole).includes(PERMISSIONS.platformAdmin)) {
+    if (!permissionsForContext(req.tenantContext).includes(PERMISSIONS.platformAdmin)) {
       throw new ForbiddenException(
         'the security posture report is restricted to platform administrators',
       );

@@ -23,6 +23,7 @@ const ctx = (over: Partial<TenantContext> = {}): TenantContext => ({
   branchId: null,
   userId: 'user-1',
   activeRole: 'workshop_owner',
+  hasPlatformGrant: false,
   correlationId: 'corr-1',
   ...over,
 });

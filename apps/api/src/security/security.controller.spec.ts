@@ -3,7 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { SecurityController } from './security.controller';
 import type { SecurityPostureService } from './security-posture.service';
 import type { AuthenticatedRequest } from '../auth/tenant.guard';
-import { PERMISSIONS, ROLE_PERMISSIONS, permissionsForRole } from '../authz/permission-matrix';
+import { ROLE_PERMISSIONS } from '../authz/permission-matrix';
 
 /**
  * 🔴 THIS FILE EXISTS BECAUSE THE BROWSER RUN COULD NOT PROVE WHAT IT LOOKED
@@ -30,7 +30,16 @@ import { PERMISSIONS, ROLE_PERMISSIONS, permissionsForRole } from '../authz/perm
 
 const posture = { generatedAt: '2026-08-01T00:00:00Z', schemas: [], controls: [], counts: { pass: 0, warn: 0, fail: 0 } };
 
-function req(activeRole: string): AuthenticatedRequest {
+/**
+ * ⚠️ `hasPlatformGrant` DEFAULTS TO FALSE, and that default is the test.
+ *
+ * Every refusal case below calls `req(role)` with one argument, so each one
+ * asserts the post-078 world: a role name alone, including
+ * `platform_administrator` itself, buys nothing on this endpoint. Only a call
+ * that passes `true` — i.e. a user with an un-revoked row in
+ * `identity.platform_administrators` — gets in.
+ */
+function req(activeRole: string, hasPlatformGrant = false): AuthenticatedRequest {
   return {
     tenantContext: {
       tenantId: '11111111-1111-1111-1111-111111111111',
@@ -38,6 +47,7 @@ function req(activeRole: string): AuthenticatedRequest {
       branchId: null,
       userId: '00000000-0000-0000-0000-0000000000ff',
       activeRole,
+      hasPlatformGrant,
       correlationId: 'spec',
     },
   } as AuthenticatedRequest;
@@ -52,7 +62,7 @@ function controller() {
 describe('SecurityController', () => {
   it('serves the posture report to a platform administrator', async () => {
     const { ctrl, audit } = controller();
-    await expect(ctrl.getPosture(req('platform_administrator'))).resolves.toBe(posture);
+    await expect(ctrl.getPosture(req('platform_administrator', true))).resolves.toBe(posture);
     expect(audit).toHaveBeenCalledOnce();
   });
 
@@ -89,20 +99,41 @@ describe('SecurityController', () => {
     });
   }
 
-  it('admits exactly the roles holding platform.admin, and no others', async () => {
-    // Derived from the permission model rather than restated, so a role granted
-    // `platform.admin` later is covered without editing this test — and a role
-    // that LOSES it starts failing here, which is the direction that matters.
-    const admins = Object.keys(ROLE_PERMISSIONS).filter((r) =>
-      permissionsForRole(r).includes(PERMISSIONS.platformAdmin),
-    );
-    expect(admins.length).toBeGreaterThan(0);
-    for (const role of admins) {
-      const { ctrl } = controller();
-      await expect(ctrl.getPosture(req(role))).resolves.toBe(posture);
+  it('🔴 NO ROLE NAME ADMITS ANYONE — not even platform_administrator', async () => {
+    // THIS TEST WAS INVERTED BY MIGRATION 078, AND THE OLD VERSION WAS
+    // ASSERTING THE DEFECT.
+    //
+    // It derived its admitted set from `permissionsForRole`, so it passed for
+    // as long as a membership `role_name` conferred `platform.admin` — which is
+    // exactly the hole 077 left open in the API. Revoking a grant on production
+    // removed database reach and left this endpoint open, and this endpoint
+    // reads `pg_catalog` with no row-level security underneath, so its check IS
+    // the enforcement.
+    //
+    // Every role, iterated rather than sampled, with NO grant. All refused.
+    for (const role of Object.keys(ROLE_PERMISSIONS)) {
+      const { ctrl, audit } = controller();
+      await expect(ctrl.getPosture(req(role))).rejects.toBeInstanceOf(ForbiddenException);
+      expect(audit, `${role} must not reach the catalog read`).not.toHaveBeenCalled();
     }
-    // And the gate is genuinely narrow: not every role is an administrator.
-    expect(admins.length).toBeLessThan(Object.keys(ROLE_PERMISSIONS).length);
+  });
+
+  it('🟢 an un-revoked GRANT admits, and only while the role is the platform one', async () => {
+    // The positive case, and the boundary beside it. `hasPlatformGrant` is a
+    // fact about the person; `activeRole` is what they are acting as on this
+    // request. Both are required, so a granted administrator who uses the role
+    // switcher to act as a workshop owner genuinely acts as one — otherwise the
+    // switcher would be decorative.
+    const admitted = controller();
+    await expect(
+      admitted.ctrl.getPosture(req('platform_administrator', true)),
+    ).resolves.toBe(posture);
+
+    const downgraded = controller();
+    await expect(
+      downgraded.ctrl.getPosture(req('workshop_owner', true)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(downgraded.audit).not.toHaveBeenCalled();
   });
 
   it('names the reason in the refusal, so it is not mistaken for a broken page', async () => {

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { permissionsForRole } from '../authz/permission-matrix';
+import { permissionsForContext, PLATFORM_ADMIN_ROLE_NAME } from '../authz/permission-matrix';
 import type { TenantContext } from '../tenancy/tenant-context';
 
 export interface ViewerMembership {
@@ -97,20 +97,42 @@ export class MeService {
         organizationId: ctx.organizationId,
         branchId: ctx.branchId,
         activeRole: ctx.activeRole,
-        permissions: permissionsForRole(ctx.activeRole),
-        memberships: memberships.rows.map((m: {
-          organization_id: string;
-          organization_name: string;
-          branch_id: string | null;
-          branch_name: string | null;
-          role_name: string;
-        }) => ({
-          organizationId: m.organization_id,
-          organizationName: m.organization_name,
-          branchId: m.branch_id,
-          branchName: m.branch_name,
-          roleName: m.role_name,
-        })),
+        permissions: permissionsForContext(ctx),
+        memberships: memberships.rows
+          /*
+           * 🔴 A MEMBERSHIP THE SWITCHER COULD NEVER SELECT IS NOT OFFERED.
+           *
+           * `resolveTenantContext` refuses `platform_administrator` without an
+           * un-revoked grant. Listing it here anyway would put a role in the
+           * switcher that throws the moment it is chosen — the "rule whose
+           * escape hatch is unreachable" defect this repository has recorded,
+           * wearing its other face: an option that exists only to be refused.
+           *
+           * A revoked administrator who still holds a workshop role now sees
+           * exactly the roles they can actually use. Found by Codex.
+           *
+           * ⚠️ THE FILTER IS DISPLAY ONLY, and must never be the enforcement.
+           * The resolver refuses the selection independently, so a client that
+           * sends `x-role-name: platform_administrator` regardless is still
+           * refused server-side.
+           */
+          .filter(
+            (m: { role_name: string }) =>
+              ctx.hasPlatformGrant || m.role_name !== PLATFORM_ADMIN_ROLE_NAME,
+          )
+          .map((m: {
+            organization_id: string;
+            organization_name: string;
+            branch_id: string | null;
+            branch_name: string | null;
+            role_name: string;
+          }) => ({
+            organizationId: m.organization_id,
+            organizationName: m.organization_name,
+            branchId: m.branch_id,
+            branchName: m.branch_name,
+            roleName: m.role_name,
+          })),
       };
     });
   }

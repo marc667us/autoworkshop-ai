@@ -38,7 +38,11 @@ export const PERMISSIONS = {
   platformAdmin: 'platform.admin',
 } as const;
 
-const { financeRead, organizationAdmin, platformAdmin } = PERMISSIONS;
+// ⚠️ `platformAdmin` IS NOT DESTRUCTURED HERE, ON PURPOSE. No entry in
+// ROLE_PERMISSIONS may reference it — it is added by permissionsForContext
+// from the grant, and by nothing else. Leaving it in scope would make
+// re-adding it to a role a one-word edit.
+const { financeRead, organizationAdmin } = PERMISSIONS;
 
 /**
  * Role name → the permissions it confers.
@@ -74,7 +78,27 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Obj
 
   // ── other workspaces ────────────────────────────────────────────────────
   /** §32 — the whole administration surface, plus the two it supersedes. */
-  platform_administrator: [platformAdmin, organizationAdmin, financeRead],
+  /*
+   * 🔴 `platformAdmin` IS DELIBERATELY ABSENT FROM THIS LIST.
+   *
+   * It used to be here, and that was the whole of the defect migration 077 left
+   * open. `permissionsForRole` is a pure function of a role NAME, and a role
+   * name is a plain TEXT column on a membership row inside one organisation.
+   * Deriving `platform.admin` from it meant revoking a grant in
+   * `identity.platform_administrators` removed database reach and left every
+   * API gate open.
+   *
+   * `platform.admin` is now added by `permissionsForContext` and by nothing
+   * else, from `TenantContext.hasPlatformGrant`. Removing it here rather than
+   * subtracting it later is the fail-closed direction: there is no longer any
+   * code path from a role name to this permission, so a caller that reaches for
+   * `permissionsForRole` by habit cannot accidentally confer it.
+   *
+   * The other two keys stay: they describe what this role does INSIDE the
+   * organisation its membership names, which is exactly what a role name is
+   * competent to say.
+   */
+  platform_administrator: [organizationAdmin, financeRead],
   /** §35's supplier tree gates Invoices and Settlements on finance.read. */
   supplier_owner: [financeRead, organizationAdmin],
   /** §36's fleet tree gates Invoices on finance.read. */
@@ -110,6 +134,62 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Obj
  */
 export function permissionsForRole(roleName: string): readonly string[] {
   return Object.hasOwn(ROLE_PERMISSIONS, roleName) ? ROLE_PERMISSIONS[roleName]! : [];
+}
+
+/**
+ * The membership `role_name` that USED to confer platform authority by itself.
+ *
+ * Exported so `resolveTenantContext` can refuse to select such a membership
+ * without a grant, and so tests can name it without re-typing a magic string in
+ * two files that must agree.
+ *
+ * 🔴 IT IS NOT A LIST OF ADMINISTRATORS. Holding this role name proves nothing;
+ * an un-revoked row in `identity.platform_administrators` does.
+ */
+export const PLATFORM_ADMIN_ROLE_NAME = 'platform_administrator';
+
+/**
+ * The EFFECTIVE permissions for a request — the only correct source of
+ * `platform.admin`.
+ *
+ * 🔴 EVERY GATE THAT TESTS FOR `platform.admin` MUST CALL THIS, NOT
+ * `permissionsForRole`. The role function cannot answer the question: migration
+ * 077 made platform authority an un-revoked row in
+ * `identity.platform_administrators`, and a role name knows nothing about that
+ * row. Between 2026-08-10 and 2026-08-11 seven endpoints were gated on the role
+ * function on production, and two of them — `GET /security/posture` and
+ * `GET /operations/report` — read server-wide catalogues with no row-level
+ * security underneath, so that check WAS the enforcement.
+ *
+ * ⚠️ BOTH CONDITIONS ARE REQUIRED, and neither is redundant:
+ *
+ *   · `hasPlatformGrant` — the authority itself, read per request from the
+ *     database by `TenantGuard` via `identity.platform_grant_for_subject`
+ *     (migration 078), keyed on the validated Keycloak subject. Revocation
+ *     takes effect on the next request.
+ *   · `activeRole === PLATFORM_ADMIN_ROLE_NAME` — the role the user is ACTING
+ *     AS on this request. A granted administrator who uses the role switcher to
+ *     act as `workshop_owner` is acting as one; a permission that followed them
+ *     across a deliberate downgrade would make the switcher decorative, and
+ *     would also disagree with the twenty-nine allow-list files that test the
+ *     role name directly.
+ *
+ * The two are independent on purpose, which is the same shape as
+ * `ROLE_TARGET_STAGES` + `STAGE_TRANSITIONS` in `repair/job-card-stages.ts`.
+ * `resolveTenantContext` already refuses to make this role active without a
+ * grant, so in practice the first condition implies the second is safe — but
+ * "another function makes this unreachable" is not a property a security gate
+ * should depend on.
+ */
+export function permissionsForContext(ctx: {
+  activeRole: string;
+  hasPlatformGrant: boolean;
+}): readonly string[] {
+  const base = permissionsForRole(ctx.activeRole);
+  if (ctx.hasPlatformGrant && ctx.activeRole === PLATFORM_ADMIN_ROLE_NAME) {
+    return [...base, PERMISSIONS.platformAdmin];
+  }
+  return base;
 }
 
 /**

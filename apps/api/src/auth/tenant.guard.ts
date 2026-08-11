@@ -98,12 +98,28 @@ export class TenantGuard implements CanActivate {
     const requestedRoleName =
       (req.headers['x-role-name'] as string | undefined)?.trim() || undefined;
 
+    // 🔴 PLATFORM AUTHORITY, READ FROM THE DATABASE, KEYED ON THE VALIDATED
+    // SUBJECT — never on `realm_access.roles` and never on a membership
+    // `role_name`.
+    //
+    // COMBINED_PLAN_v2 §4 and PLAN_EXTENSION_v1 §2.1 both forbid a token claim
+    // conferring authority, and §2.1 exists because Codex found that hole at
+    // plan stage. `verified.subject` is used rather than `record.userId` for the
+    // same reason `memberships_for_subject` takes a subject: the function
+    // resolves the user itself, so no caller can ask about somebody else.
+    //
+    // ⚠️ ONE EXTRA ROUND TRIP PER AUTHENTICATED REQUEST, accepted knowingly. The
+    // alternative is caching authority, and a cached grant is a revocation that
+    // does not take effect — which is precisely the defect being closed here.
+    const hasPlatformGrant = await this.memberships.hasPlatformGrant(verified.subject);
+
     try {
       req.tenantContext = resolveTenantContext({
         userId: record.userId,
         memberships: record.memberships,
         requestedOrganizationId,
         requestedRoleName,
+        hasPlatformGrant,
         correlationId,
       });
     } catch (err) {

@@ -13,7 +13,7 @@ import type { TenantContext } from '../tenancy/tenant-context';
 
 const ctx = (role: string): TenantContext => ({
   tenantId: 't', organizationId: 'o', branchId: null,
-  userId: 'u', activeRole: role, correlationId: 'c',
+  userId: 'u', activeRole: role, hasPlatformGrant: false, correlationId: 'c',
 });
 
 /** A client stub returning the given rows per query, in order. */

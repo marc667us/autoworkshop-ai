@@ -21,6 +21,7 @@ const ctx = (over: Partial<TenantContext> = {}): TenantContext => ({
   branchId: null,
   userId: 'user-1',
   activeRole: 'reception_staff',
+  hasPlatformGrant: false,
   correlationId: 'corr-1',
   ...over,
 });

@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { UserGuard, type UserRequest } from '../auth/user.guard';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
-import { PERMISSIONS, permissionsForRole } from '../authz/permission-matrix';
+import { PERMISSIONS, permissionsForContext } from '../authz/permission-matrix';
 import { SupplierCatalogueService } from './supplier-catalogue.service';
 import { DirectoryService } from './directory.service';
 import { validatedBody } from '../common/validation/validated-body';
@@ -153,7 +153,7 @@ export class AdminCatalogueController {
     // constraint. Exactly backwards.
     //
     // `permissionsForRole` returns `[]` for an unknown name, so it fails closed.
-    if (!permissionsForRole(req.tenantContext.activeRole).includes(PERMISSIONS.platformAdmin)) {
+    if (!permissionsForContext(req.tenantContext).includes(PERMISSIONS.platformAdmin)) {
       throw new ForbiddenException(
         'publishing to the public marketplace is a platform administrator decision',
       );

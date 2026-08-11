@@ -3,7 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { OperationsController } from './operations.controller';
 import type { OperationsService, OperationsReport } from './operations.service';
 import type { AuthenticatedRequest } from '../auth/tenant.guard';
-import { PERMISSIONS, ROLE_PERMISSIONS, permissionsForRole } from '../authz/permission-matrix';
+import { ROLE_PERMISSIONS } from '../authz/permission-matrix';
 
 /**
  * The same reasoning as `security.controller.spec.ts`, and it applies for the
@@ -29,7 +29,16 @@ const report: OperationsReport = {
   counts: { up: 0, down: 0, degraded: 0, notConfigured: 0 },
 };
 
-function req(activeRole: string): AuthenticatedRequest {
+/**
+ * ⚠️ `hasPlatformGrant` DEFAULTS TO FALSE, and that default is the test.
+ *
+ * Every refusal case below calls `req(role)` with one argument, so each one
+ * asserts the post-078 world: a role name alone, including
+ * `platform_administrator` itself, buys nothing on this endpoint. Only a call
+ * that passes `true` — i.e. a user with an un-revoked row in
+ * `identity.platform_administrators` — gets in.
+ */
+function req(activeRole: string, hasPlatformGrant = false): AuthenticatedRequest {
   return {
     tenantContext: {
       tenantId: '11111111-1111-1111-1111-111111111111',
@@ -37,6 +46,7 @@ function req(activeRole: string): AuthenticatedRequest {
       branchId: null,
       userId: '00000000-0000-0000-0000-0000000000ff',
       activeRole,
+      hasPlatformGrant,
       correlationId: 'spec',
     },
   } as AuthenticatedRequest;
@@ -50,7 +60,7 @@ function controller() {
 describe('OperationsController', () => {
   it('serves the operations report to a platform administrator', async () => {
     const { ctrl, run } = controller();
-    await expect(ctrl.report(req('platform_administrator'))).resolves.toBe(report);
+    await expect(ctrl.report(req('platform_administrator', true))).resolves.toBe(report);
     expect(run).toHaveBeenCalledOnce();
   });
 
@@ -78,15 +88,27 @@ describe('OperationsController', () => {
     });
   }
 
-  it('admits exactly the roles holding platform.admin', async () => {
-    const admins = Object.keys(ROLE_PERMISSIONS).filter((r) =>
-      permissionsForRole(r).includes(PERMISSIONS.platformAdmin),
-    );
-    expect(admins.length).toBeGreaterThan(0);
-    for (const role of admins) {
+  it('🔴 NO ROLE NAME ADMITS ANYONE — not even platform_administrator', async () => {
+    // Inverted by migration 078. The old version derived its admitted set from
+    // `permissionsForRole` and therefore asserted the very defect 077 left open
+    // in the API: a membership `role_name` conferring authority over every
+    // tenant. This endpoint runs unscoped probes and reads the migration ledger
+    // through `queryWithoutTenant`, so there is no row-level security beneath it
+    // and this check IS the enforcement.
+    for (const role of Object.keys(ROLE_PERMISSIONS)) {
       const { ctrl } = controller();
-      await expect(ctrl.report(req(role))).resolves.toBe(report);
+      await expect(ctrl.report(req(role))).rejects.toBeInstanceOf(ForbiddenException);
     }
-    expect(admins.length).toBeLessThan(Object.keys(ROLE_PERMISSIONS).length);
+  });
+
+  it('🟢 an un-revoked GRANT admits, and only while the role is the platform one', async () => {
+    const admitted = controller();
+    await expect(admitted.ctrl.report(req('platform_administrator', true))).resolves.toBe(report);
+
+    // A granted administrator acting as someone else is acting as someone else.
+    const downgraded = controller();
+    await expect(
+      downgraded.ctrl.report(req('workshop_owner', true)),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

@@ -113,7 +113,17 @@ function toRow(r: Record<string, unknown>): RegistrationRow {
  * expensive recurring defect.
  */
 function assertPlatformAdmin(ctx: TenantContext, what: string): void {
-  if (ctx.activeRole !== 'platform_administrator') {
+  // 🔴 THE GRANT IS CHECKED HERE TOO, not only in `resolveTenantContext`.
+  //
+  // Since migration 078 the resolver refuses to make `platform_administrator`
+  // the active role without an un-revoked row in
+  // `identity.platform_administrators`, so the role test below is already
+  // backed by a grant. This second condition is not redundant: "another
+  // function makes this unreachable" is not a property an authorization gate
+  // should rest on, and these two routes decide who gets to approve
+  // organisation registrations — including, before migration 072, a workshop
+  // approving itself.
+  if (!ctx.hasPlatformGrant || ctx.activeRole !== 'platform_administrator') {
     throw new ForbiddenException(
       `${what} is available to a platform administrator only. Your registration is in the queue — a platform administrator will review it, and you can carry on setting up your organisation in the meantime.`,
     );

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { ValidatedMembership } from '../tenancy/tenant-context';
 
@@ -27,6 +27,10 @@ import type { ValidatedMembership } from '../tenancy/tenant-context';
  */
 @Injectable()
 export class MembershipRepository {
+  private readonly logger = new Logger(MembershipRepository.name);
+  /** Throttles the migration-078-missing error to one line per process. */
+  private warnedGrantFunctionMissing = false;
+
   constructor(private readonly db: DatabaseService) {}
 
   async findByKeycloakSubject(subject: string): Promise<{
@@ -91,6 +95,113 @@ export class MembershipRepository {
       }));
 
     return { userId, displayName: rows[0]!.display_name, memberships };
+  }
+
+  /**
+   * Does this validated Keycloak subject hold an un-revoked platform grant?
+   *
+   * 🔴 IT MUST GO THROUGH `identity.platform_grant_for_subject()` (migration
+   * 078), NOT a plain SELECT — for exactly the reason the header of this file
+   * gives about `memberships_for_subject`, and it is worth restating because the
+   * naive version was written first and rejected by measurement.
+   *
+   * `identity.platform_administrators` is ENABLE + FORCE ROW LEVEL SECURITY.
+   * 077's self-read policy keys on `identity.current_user_id()`, which reads
+   * `app.user_id` — and `app.user_id` is written by `tenantSessionStatements`,
+   * which runs AFTER the tenant context this answer helps build. So at the point
+   * this is called there is no user id set, the policy evaluates
+   * `user_id = NULL`, and a direct SELECT returns ZERO ROWS FOR EVERY USER
+   * INCLUDING REAL ADMINISTRATORS — silently, with no error.
+   *
+   * That is not a hypothetical: `verify/078` check 2 asserts it, running as
+   * `autoworkshop_app`, which is Render's privilege shape. Locally the owner is
+   * a superuser and bypasses RLS, so the naive version passes every local test.
+   *
+   * ⚠️ EXACTLY ONE ERROR IS CAUGHT: `undefined_function` (SQLSTATE 42883).
+   *
+   * 🔴 THE FIRST VERSION CAUGHT NOTHING, AND THE ARGUMENT FOR THAT WAS WRONG.
+   * It reasoned that the same request already hard-depends on
+   * `memberships_for_subject`, so a behind-on-migrations database was already a
+   * loud failure and this added no new mode. That is false: 039 created
+   * `memberships_for_subject`, so any database at 077 already has it — whereas
+   * `platform_grant_for_subject` is NEW IN 078. A production database at 077
+   * running an API image built from this commit would raise
+   * `undefined_function` inside `TenantGuard` on EVERY authenticated request,
+   * for every user of every role. That is a near-total API outage caused by
+   * deploy ordering, and this repository has shipped ordering defects before.
+   * Codex found it; the original comment argued confidently for the unsafe
+   * choice.
+   *
+   * So the ONE condition that a mis-ordered deploy produces is caught — and it
+   * is CONFIRMED with `to_regprocedure` before being believed, because 42883
+   * can also come from inside an installed function whose own dependency is
+   * missing. It degrades platform administrators only; other roles still get
+   * correct answers, though every authenticated request pays one failed
+   * lookup until the migration lands, so this is a state to leave quickly
+   * rather than a stable mode. Logged at `error`, ONCE per process: a silent
+   * version is the fail-closed-for-everyone defect recorded three times here,
+   * and an unthrottled one would emit a line per request.
+   *
+   * ⚠️ EVERY OTHER ERROR STILL THROWS. A connection failure, a permission
+   * error, a timeout — none of those mean "no grant", and treating them as a
+   * quiet `false` is precisely the confusion being avoided. A transport failure
+   * is not an authorization fact.
+   */
+  async hasPlatformGrant(subject: string): Promise<boolean> {
+    try {
+      const rows = await this.db.queryWithoutTenant<{ granted: boolean }>(
+        'SELECT identity.platform_grant_for_subject($1) AS granted',
+        [subject],
+      );
+      // `?? false` covers only the impossible empty-result case; a real `false`
+      // from the function is already false. It is not swallowing an error.
+      return rows[0]?.granted ?? false;
+    } catch (err) {
+      // 42883 = undefined_function. Narrow on the SQLSTATE, never on the
+      // message text, which is localised and version-dependent.
+      if ((err as { code?: string })?.code !== '42883') throw err;
+
+      // 🔴 THE SQLSTATE ALONE IS NOT ENOUGH, AND THE PREVIOUS VERSION BELIEVED
+      // IT WAS. `42883` is also raised from INSIDE an installed
+      // `platform_grant_for_subject` if one of ITS dependencies is missing.
+      // Swallowing that would strip authority from every administrator for a
+      // reason that is not deploy ordering, while logging a confident
+      // explanation that is FALSE — a comment claiming a rule the code does not
+      // implement, which is a defect class recorded repeatedly in this
+      // repository. Codex found it on the second pass.
+      //
+      // So ASK, rather than assume. `to_regprocedure` returns NULL instead of
+      // raising when the name does not resolve, so this is a safe question.
+      const [probe] = await this.db.queryWithoutTenant<{ present: boolean }>(
+        `SELECT to_regprocedure('identity.platform_grant_for_subject(text)') IS NOT NULL
+                AS present`,
+      );
+
+      if (probe?.present) {
+        // The function IS there, so the missing thing is something it calls.
+        // That is a real fault, not a deploy race — rethrow it loudly.
+        throw err;
+      }
+
+      // Genuinely absent: a database behind on migration 078. Degrade
+      // administrators only, and say exactly that.
+      if (!this.warnedGrantFunctionMissing) {
+        // ⚠️ ONCE PER PROCESS. `TenantGuard` runs this on EVERY authenticated
+        // request, so an unthrottled error line here would emit one log per
+        // request for as long as the database is behind — enough volume to
+        // bury the very message it is trying to deliver.
+        this.warnedGrantFunctionMissing = true;
+        this.logger.error(
+          'identity.platform_grant_for_subject is ABSENT — migration 078 has not been ' +
+            'applied to this database, so the API image is running ahead of the schema. ' +
+            'Platform administrators are refused the administration surface until it ' +
+            'lands; requests for every other role succeed normally, though each one ' +
+            'still pays this failed lookup. This message is logged ONCE per process. ' +
+            'Fix: gh workflow run apply-migrations.yml -f confirm=APPLY',
+        );
+      }
+      return false;
+    }
   }
 
   /**

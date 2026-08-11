@@ -1,6 +1,6 @@
 import { Controller, ForbiddenException, Get, Req, UseGuards } from '@nestjs/common';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
-import { PERMISSIONS, permissionsForRole } from '../authz/permission-matrix';
+import { PERMISSIONS, permissionsForContext } from '../authz/permission-matrix';
 import { OperationsService } from './operations.service';
 
 /**
@@ -36,7 +36,7 @@ export class OperationsController {
     // would make this endpoint wider than the navigation that fronts it, on a
     // route with no row-level security underneath. Fails closed on any unknown
     // role, because `permissionsForRole` returns `[]` for one.
-    if (!permissionsForRole(req.tenantContext.activeRole).includes(PERMISSIONS.platformAdmin)) {
+    if (!permissionsForContext(req.tenantContext).includes(PERMISSIONS.platformAdmin)) {
       throw new ForbiddenException(
         'the operations report is restricted to platform administrators',
       );

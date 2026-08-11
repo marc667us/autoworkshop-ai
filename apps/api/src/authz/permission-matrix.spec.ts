@@ -27,13 +27,24 @@ describe('permissionsForRole', () => {
     expect(permissionsForRole('constructor')).toEqual([]);
   });
 
-  it('grants platform.admin to exactly one role', () => {
-    // §32 — the administration surface is for authorised administrative users.
-    // Any second holder of this key is a finding, not a convenience.
+  it('🔴 grants platform.admin to NO role at all — it is a grant, not a role name', () => {
+    // THIS TEST USED TO ASSERT `['platform_administrator']`, AND IT WAS
+    // ASSERTING THE DEFECT.
+    //
+    // Migration 077 made platform authority an un-revoked row in
+    // `identity.platform_administrators`. The API went on deriving
+    // `platform.admin` from the membership `role_name`, so between 2026-08-10
+    // and 2026-08-11 revoking a grant on production removed database reach and
+    // left every API gate open — including two endpoints with no row-level
+    // security underneath them, where the application check IS the enforcement.
+    //
+    // The fail-closed direction is to have NO path at all from a role name to
+    // this key. `permissionsForContext` is the only source, and it reads the
+    // grant.
     const holders = Object.entries(ROLE_PERMISSIONS)
       .filter(([, perms]) => perms.includes(PERMISSIONS.platformAdmin))
       .map(([role]) => role);
-    expect(holders).toEqual(['platform_administrator']);
+    expect(holders).toEqual([]);
   });
 
   it('withholds finance.read from every role §50 does not give financial access', () => {
@@ -249,11 +260,24 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
       // `identity.platform_administrators`, so the name must now be absent from
       // the SQL vocabulary — its presence would be the escalation 077 closed.
       //
-      // It remains a permission-matrix role: that is what grants
-      // `platform.admin`, which is what every controller now gates on.
+      // It remains a permission-matrix role — it still confers
+      // `organization.admin` and `finance.read` inside the organisation its
+      // membership names, which is what a role name is competent to say.
+      //
+      // 🔴 BUT IT NO LONGER CONFERS `platform.admin`, AND THE LINE ASSERTING
+      // THAT IT DID WAS THE LAST PLACE THE DEFECT WAS WRITTEN DOWN AS
+      // INTENDED. 077 moved the authority; migration 078 and
+      // `permissionsForContext` moved the API to match. A role name is a plain
+      // TEXT column on a row inside one organisation and cannot speak for
+      // authority over every tenant in the database.
       expect(DB_PLATFORM_ADMIN_ROLE_NAMES).not.toContain('platform_administrator');
       expect(Object.keys(ROLE_PERMISSIONS)).toContain('platform_administrator');
-      expect(permissionsForRole('platform_administrator')).toContain(PERMISSIONS.platformAdmin);
+      expect(permissionsForRole('platform_administrator')).toContain(
+        PERMISSIONS.organizationAdmin,
+      );
+      expect(permissionsForRole('platform_administrator')).not.toContain(
+        PERMISSIONS.platformAdmin,
+      );
     });
 
     it('does not admit any OTHER role from the matrix', () => {

@@ -230,6 +230,7 @@ const ctxFor = (userId: string, role: string): TenantContext => ({
   branchId,
   userId,
   activeRole: role,
+  hasPlatformGrant: false,
   correlationId: 'customer-value-chain',
 });
 
