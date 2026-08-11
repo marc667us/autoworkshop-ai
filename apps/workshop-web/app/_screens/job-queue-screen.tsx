@@ -1,10 +1,9 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { ApiFailure, apiGet, quickCreateHref, viewerRole } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, EmptyState, StatusBadge, DataTable } from '@autoworkshop/ui';
+import { PageHeader, LoadingState, EmptyState, StatusBadge, DataTable, QuickCreateButton } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
-import { QuickCreateButton } from './quick-create-button';
 import { jobCardDetailHrefFor } from './job-card-detail-href';
 
 /**

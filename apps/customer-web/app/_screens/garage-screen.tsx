@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
+import { ApiFailure, apiGet, quickCreateHref } from '@autoworkshop/next-shell';
+import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge, QuickCreateButton } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 // Reused, never re-derived: two stage vocabularies would drift and tell the
 // customer two different things about one car.
@@ -53,12 +53,21 @@ function mileage(km: number | null): string {
   return km === null ? '—' : `${km.toLocaleString('en-GB')} km`;
 }
 
-export function GarageScreen() {
+export async function GarageScreen() {
+  // The empty state below has ALWAYS told the customer they can "add one
+  // yourself from Add Vehicle" — and this screen offered no way to do it. The
+  // route existed, the words pointed at it, and the button was missing.
+  //
+  // `quickCreateHref` resolves out of the viewer's OWN visible navigation, so
+  // the button and the target page's `requireNavRoute` gate cannot disagree: no
+  // advertised route, no href, no button. It is a convenience, never a control.
+  const addVehicle = await quickCreateHref('customer', 'add-vehicle');
   return (
     <>
       <PageHeader
         title="Vehicle Garage"
         description="The vehicles registered to you. Only your own vehicles appear here."
+        actions={<QuickCreateButton href={addVehicle} label="Add vehicle" />}
       />
       <Suspense fallback={<LoadingState label="Loading your vehicles…" />}>
         <GarageList />

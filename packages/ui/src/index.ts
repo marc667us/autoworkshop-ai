@@ -26,6 +26,12 @@ export { Tabs, nextTabId } from './Tabs';
 export type { TabsProps, TabItem } from './Tabs';
 
 export { Field, TextInput, Select, SubmitButton, FormShell } from './Form';
+
+// MOVED here from workshop-web 2026-08-11. It was app-local while three
+// workshop screens used it; customer-web and supplier-web need the same
+// control, and Directive §3 says extend rather than duplicate — the shared
+// form controls were moved for exactly this reason.
+export { QuickCreateButton } from './QuickCreateButton';
 export type { ActionResult } from './Form';
 
 export { Dialog } from './Dialog';

@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { ApiFailure, apiGet, viewerRole } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
+import { ApiFailure, apiGet, viewerRole, quickCreateHref } from '@autoworkshop/next-shell';
+import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge, QuickCreateButton } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
 import { jobCardDetailHrefFor } from './job-card-detail-href';
@@ -87,12 +87,18 @@ const PRIORITY_KIND: Record<string, 'active' | 'attention' | 'blocked' | 'draft'
 
 export async function JobCardsScreen({ route }: { route: string }) {
   const title = await navLabelFor('workshop', route, 'Job Cards');
+  // `job-queue-screen` has offered this since it was built; this screen lists
+  // the same records and never did. Resolved from the viewer's own navigation,
+  // so a technician — who has no create-job-card route — gets no button rather
+  // than one that 404s.
+  const createHref = await quickCreateHref('workshop', 'create-job-card');
 
   return (
     <>
       <PageHeader
         title={title}
         description="Every repair this workshop is handling, newest first. A technician sees only the jobs assigned to them."
+        actions={<QuickCreateButton href={createHref} label="Create job card" />}
       />
       <Suspense fallback={<LoadingState label="Loading job cards…" />}>
         <JobCardsTable />

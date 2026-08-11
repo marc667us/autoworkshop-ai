@@ -1,8 +1,7 @@
 import { Suspense } from 'react';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
-import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge } from '@autoworkshop/ui';
+import { PageHeader, LoadingState, EmptyState, ErrorState, StatusBadge, QuickCreateButton } from '@autoworkshop/ui';
 import { quickCreateHref } from '@autoworkshop/next-shell';
-import { QuickCreateButton } from './quick-create-button';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { navLabelFor } from './nav-label';
 
