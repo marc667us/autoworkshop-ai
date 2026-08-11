@@ -117,7 +117,10 @@ jobs:
         run: |
           set -uo pipefail
           python3 - <<'PY'
-          import json, os, re, sys, urllib.request, urllib.error
+          # `time` is for the backoff in `reachable()` — without it the retry
+          # path raises NameError and the whole suite dies at the first flap,
+          # which is strictly worse than the false red it was added to fix.
+          import json, os, re, sys, time, urllib.request, urllib.error
 
           APEX     = os.environ['APEX'].rstrip('/')
           CUSTOMER = os.environ['CUSTOMER'].rstrip('/')
@@ -274,17 +277,54 @@ jobs:
           # must not cry wolf. So each check retries and REPORTS HOW MANY
           # ATTEMPTS IT TOOK. One attempt is healthy; several is the flap, still
           # visible, still recorded, without turning the gate into noise.
+          # 🔴 THE RETRIES HAD NO DELAY, AND ON 2026-08-11 THAT PRODUCED A FALSE
+          # RED THAT ALSO COST TWENTY MINUTES OF WALL CLOCK.
+          #
+          # `insurance-web is reachable` failed with `[0, 0, 0, 0]` — four
+          # TRANSPORT failures, not four 404s — while, IN THE SAME RUN, the check
+          # `insurance /home/dashboard — renders with the shell` passed against
+          # the SAME URL with `[0, 200]`. Re-measured immediately afterwards with
+          # this file's own `fetch` and its `aw-live-suite` User-Agent: 200 six
+          # times out of six, in ~0.5s. The deployment was fine.
+          #
+          # Back-to-back retries all land inside the SAME transient window, so
+          # four attempts asked one question four times rather than asking it
+          # four times over. Worse, `fetch` has a 180s timeout and a transport
+          # hang consumes all of it, so four failures can burn TWELVE MINUTES
+          # before reporting — which is why that run took 24 minutes.
+          #
+          # ⚠️ THIS IS THE SAME DEFECT ALREADY RECORDED IN `deploy-supplier-web.yml`
+          # ("the cold-start retries have no sleep — six instant 502s in under a
+          # second, calling a spun-down service dead 30s before it wakes"). It
+          # was fixed there and this copy was missed. Fixing the instrument, not
+          # the product: on 2026-08-10 three of four reds were in the checking
+          # machinery.
+          #
+          # The timeout is also cut for THIS check specifically. Reachability is
+          # a question about the router, which answers in well under a second
+          # when it has an instance; 180s buys nothing here and only lengthens
+          # the failure path. The full 180s stays everywhere else, where a real
+          # free-tier cold start (measured at 136s) must not be called an outage.
           def reachable(label, base, path):
               def run():
                   codes = []
-                  for _ in range(4):
-                      s, body = fetch(f'{base}{path}')
+                  for attempt in range(4):
+                      s, body = fetch(f'{base}{path}', timeout=45)
                       codes.append(s)
                       if s == 200:
                           note = '' if len(codes) == 1 else \
                               f' — took {len(codes)} attempts ({codes}); Render router flap'
                           return True, f'HTTP 200{note}'
-                  return False, f'never answered 200 in 4 attempts: {codes}'
+                      # Widening pause between attempts: 2s, 4s, 8s. Deliberately
+                      # not before the FIRST retry-free success, and deliberately
+                      # not after the LAST attempt — sleeping before reporting a
+                      # failure delays the answer without improving it.
+                      if attempt < 3:
+                          time.sleep(2 * (2 ** attempt))
+                  return False, (
+                      f'never answered 200 in 4 attempts over ~14s: {codes} '
+                      f'(0 = transport failure, not an HTTP answer)'
+                  )
               check(f'{label} is reachable', run)
 
           reachable('admin-web', ADMIN, '/home/operations-dashboard')
