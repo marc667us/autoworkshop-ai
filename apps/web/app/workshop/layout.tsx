@@ -167,7 +167,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
        * `/home/dashboard` is the dashboard's one canonical URL (§18) and is
        * role-aware, so every workspace tree lands its own audience.
        */
-      signInHref="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard"
+      // 🔴 ADR-021: `%2Fworkshop%2Fhome%2Fdashboard`. This was
+      // `%2Fhome%2Fdashboard` — the workshop dashboard's path back when
+      // workshop-web WAS the artifact — and it is the reason the signed-in live
+      // job could not pass. Signing in from this shell completed at Keycloak,
+      // came back to `/home/dashboard`, got a 404, and a 404 renders no shell,
+      // so the "Sign out" the test looks for did not exist. Read from the wrong
+      // end that says sign-in is broken; sign-in was fine and the DESTINATION
+      // was gone.
+      //
+      // ⚠️ NOT `/`, though `/` is the dispatcher and would usually work. It only
+      // usually works: when `/api/v1/me` has not answered yet, `app/page.tsx`
+      // correctly declines to guess and renders the public marketplace, which
+      // has no shell — so a cold API would turn this into an intermittent
+      // version of the exact failure being fixed. Returning somebody to the
+      // shell they signed in from is deterministic.
+      signInHref="/api/auth/signin?callbackUrl=%2Fworkshop%2Fhome%2Fdashboard"
       signedIn={signedIn}
       // T-0016, as ONE shared component so all seven apps mount the identical
       // control. It lists only the viewer's own memberships and the API

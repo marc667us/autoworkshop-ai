@@ -240,7 +240,16 @@ function VinResult({ result }: { result: PublicVin }) {
               dashboard is how a funnel loses the person at the last step. */}
           <Link
             href={`/api/auth/signin?callbackUrl=${encodeURIComponent(
-              `/vehicle-lookup?vin=${result.vin}`,
+              // 🔴 ADR-021: `/customer/vehicle-lookup`. Unmounted, the VIN
+              // funnel's "see the full report" call to action signed a stranger
+              // in and returned them to a 404 — the same defect as the two
+              // sign-in links above it, found by the same sweep rather than by
+              // waiting for somebody to walk this path.
+              //
+              // The CUSTOMER pack, not the workshop one: both mount a
+              // vehicle-lookup screen, and the person here is a vehicle owner
+              // who just searched a VIN on the public storefront.
+              `/customer/vehicle-lookup?vin=${result.vin}`,
             )}`}
             style={{ ...BUTTON_PRIMARY, padding: '12px 28px', fontSize: '15px' }}
           >
