@@ -148,6 +148,14 @@ jobs:
           STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
 
+          # 🔴 THE LOG IS SHOWN ON FAILURE, AND THE FIRST VERSION OF THIS STEP
+          # COULD NOT DO THAT. It sent stderr to a file and printed it only in
+          # the size-check branch below — but under `set -e` a failing pg_dump
+          # exits the script before that line is ever reached, so the run died in
+          # 0.2s having printed NOTHING AT ALL about why. A diagnostic that only
+          # prints on the success path is not a diagnostic.
+          trap 'echo "::group::pg_dump output"; cat /tmp/dump.log 2>/dev/null; echo "::endgroup::"' EXIT
+
           # Custom format: compressed, and `pg_restore` can read it selectively.
           # --no-owner/--no-acl so it restores anywhere, which is the whole point
           # of holding it — the destination will not have Render's role names.
