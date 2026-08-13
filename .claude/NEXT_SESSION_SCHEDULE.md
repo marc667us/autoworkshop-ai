@@ -130,10 +130,6 @@ registration controllers were read, the Keycloak realm's role list was not.**
 
 #### Constraints that bind this work
 
-
-
-Raised at session close and **not yet scoped**. Read before designing:
-
 - `COMBINED_PLAN_v2` §4 and `PLAN_EXTENSION_v1` §2.1 — **authority comes from
   membership and grant records, never from a token claim.** §2.1 exists BECAUSE
   Codex found that hole at plan stage, and a `NEXT_SESSION_SCHEDULE` note once
