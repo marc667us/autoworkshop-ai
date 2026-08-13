@@ -141,6 +141,66 @@ jobs:
           PY
           chmod 600 /tmp/dburl
 
+      # ⚠️ A SINGLE /32 FOR THIS RUNNER, NOT 0.0.0.0/0. A GitHub runner takes a
+      # different public address every run, so the lazy fix is to open the
+      # database to the whole internet and leave it that way. This adds only the
+      # address in use and RESTORES THE ORIGINAL LIST in an `if: always()` step,
+      # so a failed run cannot leave the database more exposed than it found it.
+      - name: Allow this runner through the database firewall
+        run: |
+          set -euo pipefail
+          ID="$(cat /tmp/db_id)"
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          echo "$IP" | grep -Eq '^[0-9.]+$' || { echo "::error::could not read runner IP"; exit 1; }
+          echo "runner address: $IP"
+
+          curl -sS -o /tmp/pg_one.json \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}"
+
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json'))
+          d = d.get('postgres', d)
+          # 🔴 A LEFTOVER EPHEMERAL ENTRY MUST NEVER BECOME PERMANENT.
+          #
+          # On 2026-08-07 a run's restore PATCH returned 200 and the read-back
+          # still saw the entry, so the job failed with the entry live on the
+          # production database. The next run would then have captured THAT list
+          # as "original" and written it back faithfully — baking a GitHub
+          # runner's IP into the firewall for ever, with every subsequent run
+          # re-blessing it.
+          #
+          # So the snapshot is FILTERED: anything this pipeline previously added
+          # is dropped on capture. That makes a crashed or half-failed run
+          # self-healing — the next run cleans up after it — instead of
+          # compounding.
+          raw = d.get('ipAllowList') or []
+          original = [e for e in raw
+                      if 'ephemeral:' not in (e.get('description') or '')]
+          stale = len(raw) - len(original)
+          if stale:
+              print(f'dropping {stale} leftover ephemeral entr'
+                    f'{"y" if stale == 1 else "ies"} from a previous run')
+          json.dump(original, open('/tmp/ip_allow_original.json', 'w'))
+          print('existing allow list entries:', len(original))
+          merged = list(original) + [{'cidrBlock': f'{ip}/32',
+                                      'description': 'ephemeral: backup-production-db run'}]
+          json.dump({'ipAllowList': merged}, open('/tmp/ip_allow_patch.json', 'w'))
+          PY
+
+          code="$(curl -sS -o /tmp/patch_out.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}")"
+          echo "PATCH ipAllowList -> $code"
+          [ "$code" = "200" ] || { echo "::error::could not update the allow list"; cat /tmp/patch_out.json; exit 1; }
+
+          # Render applies the rule asynchronously; connecting immediately races it.
+          sleep 20
+
       - name: Dump production (read-only)
         run: |
           set -euo pipefail
@@ -275,3 +335,58 @@ jobs:
           # first would be an elaborate way of losing the data on schedule.
           retention-days: 90
           if-no-files-found: error
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] || { echo "no database id — nothing to restore"; exit 0; }
+          [ -f /tmp/ip_allow_original.json ] || { echo "allow list was never changed"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json'))},
+                    open('/tmp/ip_allow_restore.json','w'))"
+          code="$(curl -sS -o /tmp/restore_out.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/ip_allow_restore.json \
+            "https://api.render.com/v1/postgres/${ID}")"
+          echo "restore ipAllowList -> $code"
+          [ "$code" = "200" ] || { echo "::error::FAILED TO RESTORE the allow list — do it by hand"; exit 1; }
+
+          # Read it back. A 200 is the API accepting the request, not proof the
+          # ephemeral entry is gone.
+          #
+          # ⚠️ POLLED, NOT READ ONCE. Render applies an ipAllowList change
+          # ASYNCHRONOUSLY, so an immediate read can still show the old list —
+          # which is exactly how a run whose restore had genuinely worked failed
+          # on 2026-08-07 and left the job red with the entry apparently live.
+          # Six attempts over ~30s, and it only fails if the entry is still
+          # there at the end.
+          for attempt in 1 2 3 4 5 6; do
+            curl -sS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+              "https://api.render.com/v1/postgres/${ID}" -o /tmp/pg_after.json
+            if python3 - <<'PY'
+          import json, sys
+          d = json.load(open('/tmp/pg_after.json'))
+          d = d.get('postgres', d)
+          entries = d.get('ipAllowList') or []
+          left = [e for e in entries if 'ephemeral:' in (e.get('description') or '')]
+          print('allow list now:', len(entries), 'entries')
+          sys.exit(1 if left else 0)
+          PY
+            then
+              echo "ephemeral entry removed — verified by reading it back (attempt $attempt)"
+              break
+            fi
+            if [ "$attempt" = "6" ]; then
+              echo "::error::the ephemeral entry is STILL present after 6 reads over ~30s. REMOVE IT BY HAND in the Render dashboard: the production database is reachable from a GitHub runner IP."
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: Always remove the credential
+        if: always()
+        run: rm -f /tmp/dburl /tmp/pg.json /tmp/ip_allow_*.json
