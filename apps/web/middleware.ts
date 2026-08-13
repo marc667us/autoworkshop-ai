@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { auth } from './auth';
+import { packServingLegacyPath, workspaces } from '@autoworkshop/navigation';
 
 /**
  * MIDDLEWARE IS NOT OPTIONAL HERE.
@@ -65,8 +66,46 @@ import { auth } from './auth';
  */
 const PUBLIC_PATHS: ReadonlySet<string> = new Set(['/']);
 
+/**
+ * The seven mount points. A path that starts with one of these is already where
+ * it belongs; anything else may be a pre-ADR-021 link.
+ */
+const PACKS = new Set([
+  'customer', 'workshop', 'supplier', 'fleet', 'insurance', 'towing', 'admin',
+]);
+
+/** Paths the ARTIFACT owns at its root — never pack routes, never legacy. */
+const ROOT_OWNED = new Set(['api', 'auth', '_next', 'robots.txt', 'favicon.ico']);
+
 export default function middleware(req: NextRequest, event: unknown) {
-  if (PUBLIC_PATHS.has(req.nextUrl.pathname)) {
+  const { pathname } = req.nextUrl;
+
+  // 🔴 EVERY PRE-CONSOLIDATION LINK 404s WITHOUT THIS, AND THE TEST SUITE
+  // CANNOT SEE IT. Until 2026-08-13 the apex served workshop-web, so
+  // `/home/dashboard` and `/customer-reception/customers` were real, published
+  // URLs — bookmarked, emailed, remembered. Mounting the packs moved all of them
+  // and left nothing behind. The live suite stayed green at 70/0/1 throughout,
+  // because it only ever requests paths the NEW topology advertises; the owner
+  // found it by using the product.
+  //
+  // Resolved against the navigation model rather than a hand-written list: it
+  // already knows every route every pack serves. When exactly one pack claims
+  // the path we send them straight there. When several do — `/home/dashboard`
+  // is in six of the seven trees — we send them to `/`, which resolves the
+  // viewer and dispatches, because guessing between packs would drop somebody
+  // into a workspace they may hold no membership for.
+  //
+  // ⚠️ A REDIRECT, NOT A REWRITE. The address bar must end up showing where the
+  // page actually lives, or the next bookmark repeats the problem for ever.
+  const first = pathname.split('/')[1] ?? '';
+  if (first && !PACKS.has(first) && !ROOT_OWNED.has(first)) {
+    const pack = packServingLegacyPath(pathname, Object.values(workspaces));
+    const url = req.nextUrl.clone();
+    url.pathname = pack ? `/${pack}${pathname}` : '/';
+    return NextResponse.redirect(url);
+  }
+
+  if (PUBLIC_PATHS.has(pathname)) {
     return NextResponse.next();
   }
   // Auth.js's `auth` IS a middleware function — this is the same invocation

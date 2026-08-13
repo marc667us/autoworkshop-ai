@@ -19,7 +19,7 @@ export type {
 
 export { getWorkspace, pendingWorkspaces, workspaces } from './workspaces';
 
-export { packBase, withPackBase, withoutPackBase } from './pack-base';
+export { packBase, withPackBase, withoutPackBase, packServingLegacyPath } from './pack-base';
 
 export {
   breadcrumbsFor,

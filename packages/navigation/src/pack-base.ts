@@ -93,3 +93,33 @@ export function withoutPackBase(workspaceId: WorkspaceId | string, path: string)
   if (path === base) return '/';
   return path.startsWith(base + '/') ? path.slice(base.length) : path;
 }
+
+/**
+ * WHICH PACK SERVES AN UNMOUNTED, PRE-ADR-021 ROUTE.
+ *
+ * 🔴 WRITTEN BECAUSE THE CONSOLIDATION BROKE EVERY EXISTING LINK AND I DID NOT
+ * NOTICE. Before 2026-08-13 the apex served `workshop-web`, so `/home/dashboard`
+ * and `/customer-reception/customers` were real URLs — in bookmarks, in emails,
+ * in muscle memory. Mounting the packs moved all of them and left nothing
+ * behind, so every one of those now 404s. Measured on production, and reported
+ * by the owner as "some page does not exist" before any test noticed: the live
+ * suite passed 70/0/1 throughout, because it only ever asks for paths the NEW
+ * topology advertises.
+ *
+ * This resolves an old path against the navigation model, which already knows
+ * every route every pack serves. It is data we have, not a list to maintain.
+ *
+ * Returns the pack id when exactly ONE pack advertises the route, and null when
+ * none or several do — `/home/dashboard` exists in six of the seven trees, so
+ * guessing between them would send people somewhere they may not belong. The
+ * caller sends those to `/`, which resolves the viewer and dispatches properly.
+ */
+export function packServingLegacyPath(
+  path: string,
+  workspaces: ReadonlyArray<{ id: string; groups: ReadonlyArray<{ items: ReadonlyArray<{ href: string }> }> }>,
+): string | null {
+  const matches = workspaces
+    .filter((w) => w.groups.some((g) => g.items.some((i) => i.href === path)))
+    .map((w) => w.id);
+  return matches.length === 1 ? matches[0]! : null;
+}

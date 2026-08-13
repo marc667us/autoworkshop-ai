@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { packServingLegacyPath } from './pack-base';
+
 import {
   breadcrumbsFor,
   defaultExpanded,
@@ -398,5 +400,29 @@ describe('role trees must not lose a permission in transcription', () => {
       .filter((i) => FINANCIAL.test(i.id) || FINANCIAL.test(i.label)).length;
 
     expect(financialCount).toBeGreaterThan(0);
+  });
+});
+
+describe('pre-ADR-021 links still lead somewhere', () => {
+  // 🔴 THE LIVE SUITE PASSED 70/0/1 WHILE EVERY OLD URL 404'd ON PRODUCTION.
+  // It only ever requests paths the NEW topology advertises, so the entire
+  // class was invisible to it and the owner found it by using the product.
+  // These assert the RESOLUTION, which is the part that can silently rot.
+  const all = Object.values(workspaces);
+
+  it('a route only one pack serves resolves to that pack', () => {
+    // Supplier's catalogue is supplier-only, so it can be sent straight there.
+    expect(packServingLegacyPath('/products/product-catalogue', all)).toBe('supplier');
+  });
+
+  it('a route MANY packs serve resolves to nothing, so the caller dispatches', () => {
+    // `/home/dashboard` exists in six trees. Guessing between them would drop
+    // somebody into a workspace they may hold no membership for; null sends
+    // them to `/`, which resolves the viewer first.
+    expect(packServingLegacyPath('/home/dashboard', all)).toBeNull();
+  });
+
+  it('an unknown route resolves to nothing rather than throwing', () => {
+    expect(packServingLegacyPath('/no/such/route', all)).toBeNull();
   });
 });
