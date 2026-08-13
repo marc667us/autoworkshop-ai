@@ -100,8 +100,54 @@ jobs:
 
           print()
           print("=" * 78)
-          print("OTHER SERVICES ON THE SAME FREE ALLOWANCE (names withheld — ADR-011)")
+          print("THE SOLAR SERVICES — READ AS THE REFERENCE PATTERN (ADR-011)")
           print("=" * 78)
-          for s in theirs:
-              print(f"  type={s.get('type')}  plan={(s.get('serviceDetails') or {}).get('plan')}  suspended={s.get('suspended')}")
+          # ⚠️ THIS PRINTS THE NEIGHBOURING APP'S DEPLOYMENT SHAPE ON PURPOSE, and
+          # that is a change from the first version of this file, which redacted
+          # it. ADR-011 forbids ENTANGLEMENT — no shared repo, database, realm,
+          # secrets or deploy — and simultaneously names Solar the REFERENCE
+          # IMPLEMENTATION we are told to copy patterns from. Reading how many
+          # services Solar runs, on what plan, behind which domain is exactly
+          # that: pattern, not entanglement. Nothing here is written to, and no
+          # Solar secret or env var is read.
+          for s in sorted(theirs, key=lambda s: s.get("name") or ""):
+              det = s.get("serviceDetails", {}) or {}
+              esd = det.get("envSpecificDetails", {}) or {}
+              print(f"\n{s.get('name')}   [{s.get('id')}]")
+              print(f"  type        : {s.get('type')}   runtime: {det.get('env') or det.get('runtime')}")
+              print(f"  plan/region : {det.get('plan')} / {det.get('region')}")
+              print(f"  suspended   : {s.get('suspended')}   suspenders: {s.get('suspenders')}")
+              print(f"  url         : {det.get('url')}")
+              print(f"  healthCheck : {det.get('healthCheckPath')!r}")
+              print(f"  startCommand: {esd.get('startCommand')!r}")
+              if s.get("type") == "web_service":
+                  try:
+                      doms = get(f"/services/{s['id']}/custom-domains?limit=20")
+                      print(f"  domains     : {[d.get('customDomain', d).get('name') for d in doms]}")
+                  except Exception as e:
+                      print(f"  domains     : ERROR {e}")
+
+          # 🔴 `/v1/services` DOES NOT LIST DATABASES. Postgres and Redis are
+          # separate collections in Render's API, so a services-only inventory
+          # silently under-counts the account and would let a consolidation
+          # conclude "10 things exist" when the real number is higher. The
+          # AutoWorkshop database is a PAID service that the suspension did not
+          # touch — that fact came from this gap being noticed once already.
+          print()
+          print("=" * 78)
+          print("DATABASES AND KEY-VALUE STORES (not returned by /v1/services)")
+          print("=" * 78)
+          for coll in ("postgres", "key-value"):
+              try:
+                  for row in get(f"/{coll}?limit=50"):
+                      d = row.get(coll.replace("-", ""), row.get("postgres", row))
+                      if not isinstance(d, dict):
+                          d = row
+                      name = d.get("name") or "?"
+                      mine = name.lower().startswith("autoworkshop")
+                      print(f"  [{coll}] {name if mine else '(other app — name withheld)'}"
+                            f"  plan={d.get('plan')}  status={d.get('status')}"
+                            f"  expiresAt={d.get('expiresAt')}")
+              except Exception as e:
+                  print(f"  [{coll}] ERROR {e}")
           PY
