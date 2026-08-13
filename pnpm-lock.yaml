@@ -514,6 +514,55 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  apps/web:
+    dependencies:
+      '@autoworkshop/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@autoworkshop/design-tokens':
+        specifier: workspace:*
+        version: link:../../packages/design-tokens
+      '@autoworkshop/marketplace-ui':
+        specifier: workspace:*
+        version: link:../../packages/marketplace-ui
+      '@autoworkshop/navigation':
+        specifier: workspace:*
+        version: link:../../packages/navigation
+      '@autoworkshop/next-shell':
+        specifier: workspace:*
+        version: link:../../packages/next-shell
+      '@autoworkshop/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      next:
+        specifier: 15.1.3
+        version: 15.1.3(@playwright/test@1.62.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.17
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.5
+        version: 18.3.7(@types/react@18.3.31)
+      eslint:
+        specifier: ^8.57.1
+        version: 8.57.1
+      eslint-config-next:
+        specifier: 15.1.3
+        version: 15.1.3(eslint@8.57.1)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(lightningcss@1.27.0)(terser@5.49.0)
+
   apps/workshop-web:
     dependencies:
       '@autoworkshop/auth':

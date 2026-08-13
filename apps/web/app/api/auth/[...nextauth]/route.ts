@@ -1,4 +1,4 @@
-import { handlers } from '../../../auth';
+import { handlers } from '../../../../auth';
 
 /**
  * Auth.js's own endpoints: sign-in, callback, sign-out, session, CSRF.
