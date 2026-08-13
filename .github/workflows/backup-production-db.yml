@@ -144,7 +144,23 @@ jobs:
       - name: Dump production (read-only)
         run: |
           set -euo pipefail
+          # 🔴 `sslmode=require`, OR THE CONNECTION IS CLOSED MID-HANDSHAKE.
+          # Measured, not guessed: without it pg_dump failed with "SSL connection
+          # has been closed unexpectedly" against
+          # dpg-….oregon-postgres.render.com. Render's EXTERNAL endpoint demands
+          # TLS, and libpq's default `sslmode=prefer` will fall back to plaintext
+          # — the server then drops the socket, which surfaces as an SSL error
+          # rather than as "TLS is required" and reads like a network fault.
+          #
+          # `apply-migrations.yml` hits the same host without this and works,
+          # because psql negotiates before pg_dump's first COPY. Do not conclude
+          # from that workflow that the string is fine as-is.
           SRC="$(cat /tmp/dburl)"
+          case "$SRC" in
+            *sslmode=*) ;;
+            *\?*) SRC="${SRC}&sslmode=require" ;;
+            *)    SRC="${SRC}?sslmode=require" ;;
+          esac
           STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
 
@@ -177,7 +193,7 @@ jobs:
       - name: Record what production actually holds
         run: |
           set -euo pipefail
-          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tA -F'|' -c "
+          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)?sslmode=require" -tA -F'|' -c "
             SELECT n.nspname || '.' || c.relname, c.reltuples::bigint
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE c.relkind = 'r'
@@ -229,7 +245,7 @@ jobs:
           # Compare live counts, not the planner's `reltuples` estimate, on the
           # tables that carry the data anybody would miss.
           for t in identity.organizations identity.memberships core.customers core.vehicles; do
-            S=$("$PGBIN/psql" -tA "$(cat /tmp/dburl)" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
+            S=$("$PGBIN/psql" -tA "$(cat /tmp/dburl)?sslmode=require" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
             D=$("$PGBIN/psql" -tA "$TARGET" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
             printf '  %-28s production=%-8s restored=%-8s\n' "$t" "$S" "$D"
             if [ "$S" != "skip" ] && [ "$S" != "$D" ]; then
