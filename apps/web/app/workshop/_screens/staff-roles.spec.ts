@@ -21,7 +21,7 @@ import { WORKSHOP_ROLES } from './staff-roles';
  */
 describe('the roles this form offers', () => {
   const source = readFileSync(
-    join(__dirname, '../../../api/src/identity/membership.service.ts'),
+    join(__dirname, '../../../../api/src/identity/membership.service.ts'),
     'utf8',
   );
 

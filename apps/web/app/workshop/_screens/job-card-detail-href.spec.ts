@@ -1,3 +1,4 @@
+import { withPackBase } from '@autoworkshop/navigation';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -66,22 +67,22 @@ describe('job card detail href', () => {
 
   it('a role with no tree of its own falls back to a route the DEFAULT tree carries', () => {
     // `platform_administrator` and any unmapped role resolve to undefined.
-    expect(jobCardListHrefFor(undefined)).toBe(DEFAULT_JOB_CARD_LIST_HREF);
-    expect(hrefsFor(undefined)).toContain(DEFAULT_JOB_CARD_LIST_HREF);
+    expect(jobCardListHrefFor(undefined)).toBe(withPackBase('workshop', DEFAULT_JOB_CARD_LIST_HREF));
+    expect(hrefsFor(undefined)).toContain(withPackBase('workshop', DEFAULT_JOB_CARD_LIST_HREF));
   });
 
   it('proves the check would CATCH a route that is not in a tree', () => {
     // Injecting the failure rather than trusting that a pass means anything.
     // If this route ever becomes real the assertion must be re-pointed, not
     // deleted — the point is that `hrefsFor` can say no.
-    expect(hrefsFor('technician')).not.toContain('/workshop-floor/job-cards');
-    expect(hrefsFor('reception')).not.toContain('/workshop-operations/job-cards');
+    expect(hrefsFor('technician')).not.toContain('/workshop/workshop-floor/job-cards');
+    expect(hrefsFor('reception')).not.toContain('/workshop/workshop-operations/job-cards');
   });
 
   it('every distinct list route has a [id] page on disk behind it', () => {
     const distinct = [...new Set(Object.values(JOB_CARD_LIST_HREF))];
     for (const href of distinct) {
-      const page = join(__dirname, '..', ...href.split('/').filter(Boolean), '[id]', 'page.tsx');
+      const page = join(__dirname, '..', '..', ...withPackBase('workshop', href).split('/').filter(Boolean), '[id]', 'page.tsx');
       expect(existsSync(page), `no detail page for ${href} (looked in ${page})`).toBe(true);
     }
   });
@@ -92,18 +93,18 @@ describe('job card detail href', () => {
     // the user to the catch-all on the way back.
     const distinct = [...new Set(Object.values(JOB_CARD_LIST_HREF))];
     for (const href of distinct) {
-      const page = join(__dirname, '..', ...href.split('/').filter(Boolean), 'page.tsx');
+      const page = join(__dirname, '..', '..', ...withPackBase('workshop', href).split('/').filter(Boolean), 'page.tsx');
       expect(existsSync(page), `no list page at ${href}`).toBe(true);
     }
   });
 
   it('encodes the id into the URL', () => {
-    expect(jobCardDetailHrefFor('owner', 'a b/c')).toBe('/workshop-operations/job-cards/a%20b%2Fc');
+    expect(jobCardDetailHrefFor('owner', 'a b/c')).toBe('/workshop/workshop-operations/job-cards/a%20b%2Fc');
   });
 
   it('does not resolve a prototype key as a role', () => {
     // `map[role] ?? default` returns the Object function for 'constructor'.
-    expect(jobCardListHrefFor('constructor' as RoleId)).toBe(DEFAULT_JOB_CARD_LIST_HREF);
-    expect(jobCardListHrefFor('toString' as RoleId)).toBe(DEFAULT_JOB_CARD_LIST_HREF);
+    expect(jobCardListHrefFor('constructor' as RoleId)).toBe(withPackBase('workshop', DEFAULT_JOB_CARD_LIST_HREF));
+    expect(jobCardListHrefFor('toString' as RoleId)).toBe(withPackBase('workshop', DEFAULT_JOB_CARD_LIST_HREF));
   });
 });

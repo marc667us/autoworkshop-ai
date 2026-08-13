@@ -32,8 +32,13 @@ import { WORKSHOP_PLANNED } from './planned-content';
  *    trees may only point somewhere both roles can reach.
  */
 
-const ROOT = join(__dirname, '..', '..', '..', '..');
-const APP = join(ROOT, 'apps', 'workshop-web', 'app');
+// ADR-021: __dirname is apps/web/app/workshop/_screens now, one level
+// deeper than apps/<pack>-web/app/_screens was, so this needs five.
+const ROOT = join(__dirname, '..', '..', '..', '..', '..');
+// ADR-021: the workshop pack's routes live inside the one artifact now, at
+// apps/web/app/workshop -- `apps/workshop-web` was deleted with the other
+// six shells. This walks the pack's real route files, so it must follow.
+const APP = join(ROOT, 'apps', 'web', 'app', 'workshop');
 const ws = readFileSync(join(ROOT, 'packages', 'navigation', 'src', 'workspaces.ts'), 'utf8');
 
 /** The four workshop role trees plus the technician's — every tree this app serves. */

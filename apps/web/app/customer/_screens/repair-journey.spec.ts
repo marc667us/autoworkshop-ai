@@ -25,7 +25,7 @@ import { CUSTOMER_STAGES, customerStage, needsCustomer } from './repair-journey'
  */
 describe('customer stage vocabulary', () => {
   const source = readFileSync(
-    join(__dirname, '../../../api/src/repair/job-card-stages.ts'),
+    join(__dirname, '../../../../api/src/repair/job-card-stages.ts'),
     'utf8',
   );
 

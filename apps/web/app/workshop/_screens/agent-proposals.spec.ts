@@ -53,7 +53,7 @@ const row = (over: Partial<ApiProposal> = {}): ApiProposal => ({
 
 describe('the API contract this screen is mapped from', () => {
   const source = readFileSync(
-    join(__dirname, '../../../api/src/agents/agent-proposal.service.ts'),
+    join(__dirname, '../../../../api/src/agents/agent-proposal.service.ts'),
     'utf8',
   );
   const block = /export interface ProposalRow \{([\s\S]*?)\n\}/.exec(source);

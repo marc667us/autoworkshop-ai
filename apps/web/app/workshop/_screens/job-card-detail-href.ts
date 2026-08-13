@@ -1,3 +1,4 @@
+import { withPackBase } from '@autoworkshop/navigation';
 import type { RoleId } from '@autoworkshop/navigation';
 
 /**
@@ -92,10 +93,22 @@ export const DEFAULT_JOB_CARD_LIST_HREF = '/workshop-floor/job-cards';
  * repeat it.
  */
 export function jobCardListHrefFor(role: RoleId | undefined): string {
-  if (!role) return DEFAULT_JOB_CARD_LIST_HREF;
-  return Object.hasOwn(JOB_CARD_LIST_HREF, role)
-    ? JOB_CARD_LIST_HREF[role]
-    : DEFAULT_JOB_CARD_LIST_HREF;
+  // 🔴 ADR-021 — MOUNTED ON THE WAY OUT, AND THIS WAS A REAL DEFECT, NOT A TEST
+  // EXPECTATION. The map above transcribes the spec's routes, exactly as
+  // `workspaces.ts` does, and `jobCardDetailHref` builds `${list}/${id}` from
+  // it. Unmounted, every job-card detail link in the workshop pack pointed at
+  // `/workshop-floor/job-cards/<id>` — a path the artifact does not serve — so
+  // opening a job card from any list would have 404'd for all nine roles.
+  //
+  // Typecheck, lint and the build were all green over it: a string is a string.
+  // The spec caught it because it compares these against the viewer's ACTUAL
+  // reachable hrefs rather than against another copy of the same literals.
+  const href = !role
+    ? DEFAULT_JOB_CARD_LIST_HREF
+    : Object.hasOwn(JOB_CARD_LIST_HREF, role)
+      ? JOB_CARD_LIST_HREF[role]
+      : DEFAULT_JOB_CARD_LIST_HREF;
+  return withPackBase('workshop', href);
 }
 
 /**

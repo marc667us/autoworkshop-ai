@@ -34,7 +34,7 @@ describe('quick-create targets', () => {
   }
 
   const pageFor = (href: string) =>
-    join(__dirname, '..', ...href.split('/').filter(Boolean), 'page.tsx');
+    join(__dirname, '..', '..', ...href.split('/').filter(Boolean), 'page.tsx');
 
   it('found the workspace to resolve against', () => {
     // Without this, every assertion below would run against an empty tree and
@@ -44,12 +44,12 @@ describe('quick-create targets', () => {
   });
 
   const CASES: Array<[RoleId | undefined, string, string | null]> = [
-    ['owner', 'register-customer', '/customers-and-vehicles/register-customer'],
-    ['owner', 'register-vehicle', '/customers-and-vehicles/register-vehicle'],
-    ['manager', 'register-customer', '/requests-and-reception/register-customer'],
-    ['manager', 'register-vehicle', '/requests-and-reception/register-vehicle'],
-    ['reception', 'register-customer', '/customers/register-customer'],
-    ['reception', 'register-vehicle', '/vehicles/register-vehicle'],
+    ['owner', 'register-customer', '/workshop/customers-and-vehicles/register-customer'],
+    ['owner', 'register-vehicle', '/workshop/customers-and-vehicles/register-vehicle'],
+    ['manager', 'register-customer', '/workshop/requests-and-reception/register-customer'],
+    ['manager', 'register-vehicle', '/workshop/requests-and-reception/register-vehicle'],
+    ['reception', 'register-customer', '/workshop/customers/register-customer'],
+    ['reception', 'register-vehicle', '/workshop/vehicles/register-vehicle'],
     // 🔴 THE TECHNICIAN HAS NEITHER, AND MUST GET NOTHING. §49 scopes them to
     // assigned work; they do not keep the customer book. A button here would be
     // a guaranteed 404 on a screen they can otherwise read.
@@ -78,7 +78,7 @@ describe('quick-create targets', () => {
   it('the default tree hides the target from a viewer without organization.admin', () => {
     expect(resolve(undefined, 'register-customer', [])).toBeNull();
     expect(resolve(undefined, 'register-customer', ['organization.admin'])).toBe(
-      '/customer-reception/register-customer',
+      '/workshop/customer-reception/register-customer',
     );
   });
 
@@ -103,7 +103,7 @@ describe('quick-create targets', () => {
    * added to another tree, this fails and the reason gets written down.
    */
   it('New job card resolves for reception only — every other tree gets no button', () => {
-    expect(resolve('reception', 'create-job-card')).toBe('/vehicle-intake/create-job-card');
+    expect(resolve('reception', 'create-job-card')).toBe('/workshop/vehicle-intake/create-job-card');
     for (const role of ['owner', 'manager', 'technician'] as const) {
       expect(
         resolve(role, 'create-job-card', ['organization.admin', 'platform.admin']),

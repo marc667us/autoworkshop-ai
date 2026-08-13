@@ -18,7 +18,7 @@ import { JOB_QUEUES } from './job-queue-definitions';
  */
 describe('job queue stage keys', () => {
   const source = readFileSync(
-    join(__dirname, '../../../api/src/repair/job-card-stages.ts'),
+    join(__dirname, '../../../../api/src/repair/job-card-stages.ts'),
     'utf8',
   );
 
