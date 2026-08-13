@@ -307,7 +307,19 @@ jobs:
             FROM pg_namespace n
             WHERE nspname NOT LIKE 'pg\_%'
               AND nspname <> 'information_schema'
-              AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user")
+              AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user
+              -- 🔴 `keycloak` IS OWNED BY US AND NOT READABLE BY US. We created
+              -- the schema, so ownership says yes; Keycloak's own role owns the
+              -- TABLES inside it, so SELECT says no — and that mismatch is what
+              -- produced `permission denied for table databasechangeloglock`
+              -- twice, once before schema scoping and once after, because the
+              -- discovery query happily included it.
+              --
+              -- Excluded on merit, not just to make the dump pass: Keycloak's
+              -- data is the identity server's, with its own lifecycle and its
+              -- own realm export in `infrastructure/backup/`. This workflow
+              -- backs up the APPLICATION'S data.
+              AND nspname <> 'keycloak'")
           [ -n "$SCHEMAS" ] || { echo "::error::no schemas owned by this user — refusing to write an empty backup"; exit 1; }
           echo "dumping schemas: $SCHEMAS"
 
@@ -350,6 +362,7 @@ jobs:
               AND n.nspname NOT LIKE 'pg\_%'
               AND n.nspname <> 'information_schema'
               AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user
+              AND n.nspname <> 'keycloak'
             ORDER BY 1;" > /tmp/source-tables.txt
           echo "tables in production: $(wc -l < /tmp/source-tables.txt)"
           head -25 /tmp/source-tables.txt
