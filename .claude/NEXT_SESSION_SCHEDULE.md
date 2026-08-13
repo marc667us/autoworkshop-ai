@@ -81,6 +81,57 @@ deploy cycle.
 
 ### 3. New requirement from the owner — user roles, signup and login
 
+**SCOPED 2026-08-13 at close. Measured, not assumed — but only partly: the
+registration controllers were read, the Keycloak realm's role list was not.**
+
+#### What exists today
+
+**Four registration doors** (`apps/api/src/identity/registration.controller.ts`):
+`POST /registration/workshop` · `/supplier` · `/fleet` · `/customer`.
+
+**Four grantable roles** (`membership.service.ts`): `platform_administrator` ·
+`workshop_owner` · `supplier_owner` · `fleet_administrator`.
+
+🔴 **THE TWO LISTS DO NOT MATCH, AND THE GAP IS THE WORK.**
+
+| Role | Self-service door | Grantable by an admin |
+|---|---|---|
+| `workshop_owner` | ✅ `/registration/workshop` | ✅ |
+| `supplier_owner` | ✅ `/registration/supplier` | ✅ |
+| `fleet_administrator` | ✅ `/registration/fleet` | ✅ |
+| `customer` | ✅ `/registration/customer` | ❌ **not in the grantable list** |
+| `platform_administrator` | ❌ none, correctly | ✅ (gated on a grant record, migration 078) |
+| `insurance_assessor` | ❌ **none** | ✅ |
+| `towing_operator` | ❌ **none** | ❓ not in the list read |
+| workshop staff (manager, technician, reception, cashier, storekeeper, QC, supervisor) | ❌ none | ❓ not in the list read — presumably invited by an owner, **VERIFY** |
+
+#### The work, in dependency order
+
+1. **Answer the role question for every role in the product**, not just the ones
+   with screens. *Which production path WRITES this role?* It has caught four
+   roles that could not exist — `customer` (08-08), `supplier_owner` (08-09),
+   `fleet_administrator` (08-09), and `insurance_assessor`, which is grantable
+   but has no door. **Do this before building any screen.**
+2. **`insurance_assessor` and `towing_operator` have no registration path.**
+   Both packs are deployed and reachable. Insurance is 0 of 28 screens and fleet
+   1 of 29 — deploying them made the SHELL reachable, not the features.
+3. **Staff invitation.** "Add staff" has never had a screen (open since 07-28).
+   A workshop owner cannot create a technician, so seven of the nine workshop
+   roles have no production path at all. This is probably the largest single
+   gap in the identity model.
+4. **Sign-up.** One route at the artifact root, `/api/auth/register`. Before the
+   merge there were two, because two apps registered two Keycloak clients.
+   Decide what a stranger signing up BECOMES — today the marketplace's
+   "Create a free account" leads to a Keycloak registration that creates an
+   application user with **no membership**, and a user with no membership has no
+   workspace.
+5. **Sign-in.** Works, and the constraints are recorded above: one client,
+   `ARTIFACT_WORKSPACE` in `apps/web/auth.ts`, renaming is a realm change.
+
+#### Constraints that bind this work
+
+
+
 Raised at session close and **not yet scoped**. Read before designing:
 
 - `COMBINED_PLAN_v2` §4 and `PLAN_EXTENSION_v1` §2.1 — **authority comes from
