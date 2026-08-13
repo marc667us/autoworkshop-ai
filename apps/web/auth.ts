@@ -36,7 +36,25 @@ import { workspaceAuth, type WorkspaceAuth } from '@autoworkshop/auth';
  * Annotating against `WorkspaceAuth` — a type this app can name — avoids adding
  * the provider library to the app's own dependencies.
  */
-const instance: WorkspaceAuth = workspaceAuth('app');
+// 🔴 `'customer'`, NOT `'app'` — AND THIS IS A CORRECTION, MEASURED ON LIVE.
+//
+// The first version passed `'app'`, on the reasoning that one artifact deserves
+// one neutral identifier. `clientIdForWorkspace` turns that into
+// `autoworkshop-app-web`, and NO SUCH CLIENT EXISTS in the realm. Keycloak
+// answered its auth endpoint with an error page instead of a login form, so the
+// signed-in live job reached Keycloak and then timed out waiting for
+// `#username` — a failure that looks nothing like "wrong client id".
+//
+// `customer` is chosen because it is the client the realm ALREADY authorises for
+// this exact origin: its `redirectUris` carry `https://autoworkshop.aiappinvent
+// .com/*`, which is the artifact. The name is now a misnomer for a client that
+// serves all seven packs, and a misnomer is the right trade against editing the
+// realm's client list to rename it — Keycloak's redirect allow-list is the thing
+// actually constraining the callback, and it already says yes to this origin.
+//
+// ⚠️ RENAMING THIS LATER IS A REALM CHANGE, NOT A CODE CHANGE. Point it at a new
+// client and sign-in breaks everywhere at once, exactly as it did here.
+const instance: WorkspaceAuth = workspaceAuth('customer');
 
 export const handlers: WorkspaceAuth['handlers'] = instance.handlers;
 export const auth: WorkspaceAuth['auth'] = instance.auth;
