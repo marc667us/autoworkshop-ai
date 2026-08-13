@@ -208,24 +208,55 @@ jobs:
           #     rather than "invisible to me".
           # If the control fails, this reports UNVERIFIED rather than success.
           # Loud and wrong-looking beats quiet and wrong.
-          if status not in (200, 202, 204):
-              sys.exit(f"🔴 DELETE returned HTTP {status}, which is not a success. "
-                       f"Treat the service as STILL PRESENT.")
+          # 🔴 202 IS NOT ACCEPTED, AND CODEX'S SECOND PASS IS WHY. Its remaining
+          # scenario was: DELETE returns 202 (accepted, asynchronous), the async
+          # deletion then FAILS, and the read-back 404s for an unrelated reason —
+          # producing a confident "DELETED" over a service that is still running.
+          # Render's DELETE is synchronous and answers 204. If it ever answers
+          # 202, this has no way to prove the outcome, so it says so instead of
+          # guessing. Rejecting an unexpected success code costs a re-run;
+          # accepting it costs a wrong belief about production.
+          if status not in (200, 204):
+              sys.exit(f"🔴 UNVERIFIED: DELETE returned HTTP {status}, not the synchronous "
+                       f"200/204 this expects. Do not assume the service is gone — check "
+                       f"Render and re-run `render-inventory.yml`.")
 
+          # The control is an ENUMERATION, not a single call, and that is the
+          # difference between this and the version Codex rejected. A `GET
+          # /services?limit=1` only proves the key can reach the endpoint; a key
+          # that had silently lost sight of THIS service would still pass it, and
+          # the following 404 would still mean nothing.
+          #
+          # Listing the account and checking that the OTHER AutoWorkshop services
+          # are still visible disambiguates it: broad visibility loss would take
+          # them out too. So a 404 on the target while its siblings remain
+          # readable is absence, not blindness.
           try:
-              call("GET", "/services?limit=1")
+              _, rows = call("GET", "/services?limit=100")
           except Exception as e:
-              sys.exit(f"🔴 UNVERIFIED: the control request failed ({e}), so this key can no "
-                       f"longer read the account. A 404 on the deleted service would prove "
-                       f"nothing. Check Render by hand before believing the DELETE above.")
+              sys.exit(f"🔴 UNVERIFIED: the control enumeration failed ({e}). A 404 on the "
+                       f"target would prove nothing. Check Render by hand.")
+
+          visible = {(r.get("service", r) or {}).get("id") for r in (rows or [])}
+          siblings = {i for i in (m[0] for m in MAP.values()) if i != sid} & visible
+          print(f"control     : {len(visible)} services visible, "
+                f"{len(siblings)} sibling AutoWorkshop service(s) still readable")
+          if not siblings:
+              sys.exit("🔴 UNVERIFIED: no sibling AutoWorkshop service is visible to this key, "
+                       "so a 404 on the target cannot be distinguished from lost visibility. "
+                       "Check Render by hand.")
+
+          if sid in visible:
+              sys.exit("🔴 STILL PRESENT after DELETE — the service is still listed.")
 
           try:
               call("GET", f"/services/{sid}")
-              sys.exit("🔴 STILL PRESENT after DELETE — the service was NOT removed.")
+              sys.exit("🔴 STILL PRESENT after DELETE — it 404s in the list but still resolves.")
           except urllib.error.HTTPError as e:
               if e.code == 404:
-                  print(f"DELETED {live} [{sid}] — confirmed: DELETE returned {status}, the "
-                        f"key still reads the account, and this service now 404s.")
+                  print(f"DELETED {live} [{sid}] — confirmed three ways: DELETE returned "
+                        f"{status}, siblings remain readable, and this service is absent from "
+                        f"both the listing and a direct read.")
               else:
                   raise
           PY
