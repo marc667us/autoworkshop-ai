@@ -187,10 +187,28 @@ jobs:
           # different question from "did my deploy succeed?", and the two agree
           # on every day except the one that matters — the old image keeps
           # serving happily while the new one fails.
-          _, dep = call("POST", f"/services/{SID}/deploys", {"imageUrl": TAG})
-          did = dep.get("id")
+          st_code, dep = call("POST", f"/services/{SID}/deploys", {"imageUrl": TAG})
+          did = (dep or {}).get("id")
+
+          # 🔴 AN EMPTY BODY IS NOT AN ERROR AND MUST NOT CRASH THE STEP.
+          # Measured: Render answered the create with no body at all, `dep` was
+          # None, and `dep.get("id")` raised AttributeError — which failed the
+          # deploy step AFTER the deploy had already been accepted. The image was
+          # rolling out while the workflow reported failure, which is the worst
+          # of both: a red run and an unsupervised change.
+          #
+          # Recovering the id is better than guessing: the newest deploy for this
+          # service IS the one just created. Falling back to it keeps the poll
+          # honest — it still watches a specific deploy rather than degrading to
+          # "is the service healthy?", which the old workflows did and which the
+          # previous image answers 200 to.
           if not did:
-              sys.exit(f"::error::no deploy id in the response: {dep}")
+              print(f"create returned HTTP {st_code} with no id; recovering the newest deploy")
+              _, rows = call("GET", f"/services/{SID}/deploys?limit=1")
+              did = ((rows or [{}])[0].get("deploy") or {}).get("id")
+          if not did:
+              sys.exit(f"::error::could not determine a deploy id (create said {st_code}). "
+                       f"Check Render — a deploy may be running unsupervised.")
           print(f"deploy {did} created")
 
           DEADLINE = time.time() + 25 * 60
