@@ -134,30 +134,53 @@ jobs:
                   body = r.read()
                   return r.status, (json.loads(body) if body else None)
 
-          _, svc = call("GET", f"/services/{sid}")
-          live = svc.get("name")
-          print(f"target      : {TARGET}")
-          print(f"id          : {sid}")
-          print(f"live name   : {live}")
-          print(f"type        : {svc.get('type')}   suspended: {svc.get('suspended')}")
+          def check_identity(label):
+              """Guards 3 and 4, as one function so they can be run TWICE.
 
-          # ── Guard 3. The id could be stale; the NAME is the fact. ───────────
-          if not (live or "").startswith("autoworkshop"):
-              sys.exit(f"REFUSED: live name {live!r} is not an AutoWorkshop service. "
-                       f"The id map is stale or wrong — fix it, do not override.")
-          if live != expected:
-              sys.exit(f"REFUSED: id {sid} is now named {live!r}, not {expected!r}. "
-                       f"Render ids outlive their meaning; re-run `render-inventory.yml`.")
+              🔴 CODEX FINDINGS 1 AND 4 — time-of-check/time-of-use. Checking the
+              name and the domains once, then deleting by id some seconds later,
+              leaves a window in which the thing being deleted is no longer the
+              thing that was approved. Render's DELETE addresses a service by id
+              only, so this cannot be made atomic; what it CAN be is short. Both
+              guards therefore run again immediately before the DELETE, which
+              takes the window from seconds to milliseconds.
 
-          # ── Guard 4. A custom domain is the product's front door. ───────────
-          _, doms = call("GET", f"/services/{sid}/custom-domains?limit=20")
-          names = [d.get("customDomain", d).get("name") for d in (doms or [])]
-          print(f"domains     : {names or '(none)'}")
-          if names and not ALLOWDL:
-              sys.exit(f"REFUSED: {live} holds {names}. Deleting it releases that domain "
-                       f"and the product goes dark until it is re-attached. Re-run with "
-                       f"allow_domain_loss=true ONLY when the replacement service is live "
-                       f"and ready to take the domain.")
+              Honest about severity: the realistic threat here is not a
+              concurrent attacker renaming services, it is a STALE ID MAP — and
+              that is caught by the first call. This second call costs one
+              request and closes the remaining gap, so it is not worth arguing
+              about."""
+              _, svc = call("GET", f"/services/{sid}")
+              live = svc.get("name")
+              if label:
+                  print(f"target      : {TARGET}")
+                  print(f"id          : {sid}")
+                  print(f"live name   : {live}")
+                  print(f"type        : {svc.get('type')}   suspended: {svc.get('suspended')}")
+
+              # The id could be stale; the NAME is the fact.
+              if not (live or "").startswith("autoworkshop"):
+                  sys.exit(f"REFUSED ({label or 're-check'}): live name {live!r} is not an "
+                           f"AutoWorkshop service. The id map is stale or wrong — fix it, "
+                           f"do not override.")
+              if live != expected:
+                  sys.exit(f"REFUSED ({label or 're-check'}): id {sid} is now named {live!r}, "
+                           f"not {expected!r}. Render ids outlive their meaning; re-run "
+                           f"`render-inventory.yml`.")
+
+              # A custom domain is the product's front door.
+              _, doms = call("GET", f"/services/{sid}/custom-domains?limit=20")
+              names = [d.get("customDomain", d).get("name") for d in (doms or [])]
+              if label:
+                  print(f"domains     : {names or '(none)'}")
+              if names and not ALLOWDL:
+                  sys.exit(f"REFUSED ({label or 're-check'}): {live} holds {names}. Deleting "
+                           f"it releases that domain and the product goes dark until it is "
+                           f"re-attached. Re-run with allow_domain_loss=true ONLY when the "
+                           f"replacement service is live and ready to take the domain.")
+              return live
+
+          live = check_identity("initial")
 
           if not APPLY:
               print()
@@ -165,18 +188,44 @@ jobs:
               print("Re-run with confirm=DELETE to actually delete.")
               raise SystemExit(0)
 
+          check_identity(None)   # re-assert, milliseconds before the delete
+
           status, _ = call("DELETE", f"/services/{sid}")
           print()
-          print(f"DELETED {live} [{sid}]  (HTTP {status})")
+          print(f"DELETE returned HTTP {status} for {live} [{sid}]")
 
-          # Read back. A 404 is the proof; anything else means the delete did
-          # not take and the log would otherwise read as success.
+          # 🔴 CODEX FINDING 3, AND IT IS THIS REPOSITORY'S OWN RECURRING BUG
+          # CLASS: a verification that passes for the wrong reason. The original
+          # version accepted a 404 on the read-back as proof of deletion — but a
+          # 404 is also what an API key that has LOST ACCESS returns, and a
+          # revoked or rescoped key would have produced "Confirmed gone" over a
+          # service that is still running and still billing.
+          #
+          # So the proof is now built from two independent facts:
+          #   · the DELETE call itself reported success (2xx), and
+          #   · a CONTROL request that must succeed for any working key still
+          #     succeeds — which is what makes the subsequent 404 mean "absent"
+          #     rather than "invisible to me".
+          # If the control fails, this reports UNVERIFIED rather than success.
+          # Loud and wrong-looking beats quiet and wrong.
+          if status not in (200, 202, 204):
+              sys.exit(f"🔴 DELETE returned HTTP {status}, which is not a success. "
+                       f"Treat the service as STILL PRESENT.")
+
+          try:
+              call("GET", "/services?limit=1")
+          except Exception as e:
+              sys.exit(f"🔴 UNVERIFIED: the control request failed ({e}), so this key can no "
+                       f"longer read the account. A 404 on the deleted service would prove "
+                       f"nothing. Check Render by hand before believing the DELETE above.")
+
           try:
               call("GET", f"/services/{sid}")
               sys.exit("🔴 STILL PRESENT after DELETE — the service was NOT removed.")
           except urllib.error.HTTPError as e:
               if e.code == 404:
-                  print("Confirmed gone: GET now returns 404.")
+                  print(f"DELETED {live} [{sid}] — confirmed: DELETE returned {status}, the "
+                        f"key still reads the account, and this service now 404s.")
               else:
                   raise
           PY
