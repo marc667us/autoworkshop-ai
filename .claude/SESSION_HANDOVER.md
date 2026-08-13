@@ -1,5 +1,45 @@
 # Session handover
 
+## ═══ 2026-08-13 — ten Render services became one artifact ═══
+
+**Tip `062876c`. Tree clean, all pushed. Live suite 70/0/1.**
+
+**▶ NEXT SESSION STARTS AT `.claude/NEXT_SESSION_SCHEDULE.md`** — it carries the
+three ordered tasks, the full error list, and the commands.
+
+ADR-021: seven packs, one deployed application, `main` calls them. Render went
+from ten services to **web + keycloak + api + postgres**, which is Solar's shape.
+341 pages moved by `git mv` of whole directories, so only seven files in the
+tree imported out past `app/`. One Auth.js instance, one session cookie, one
+`/api/auth/*`, one `/auth/error`.
+
+### The three things waiting
+
+1. **The database expires 2026-09-01 and has never been backed up.**
+   `infrastructure/backup/` targets the LOCAL container — 4/4 drills, RPO 0,
+   HEALTHY 7/7, all about `aw-postgres`. `backup-production-db.yml` is written;
+   the last blocker is `--exclude-table='public.databasechangelog*'` because
+   Keycloak's Liquibase tables live in `public` and we cannot read them.
+2. **"Access is denied to users"** — owner-reported, UNVERIFIED. Likely the
+   session-cookie rename; reproduce before fixing.
+3. **New requirement: user roles, signup and login** — not yet scoped. Ask of
+   every role which production path WRITES it; that question has caught four
+   roles that could not exist.
+
+### What I got wrong, because it is the expensive part
+
+Five wrong diagnoses on one connection, each asserted as measured — the probe
+that found it took one run and I ran it fourth. Pushed three times having run
+only some of eleven test targets. Reintroduced a recorded backtick defect inside
+a comment explaining a different defect. **And I broke every pre-consolidation
+URL while the live suite stayed green at 70/0/1, including a run dispatched
+while the owner was looking at the 404s** — it only asks for paths the new
+topology advertises. After a URL migration, test the OLD urls.
+
+---
+
+# Session handover
+
 ## ═══ 2026-08-11 — the API half closed, and the account went down ═══
 
 **Tip `9cbe677`. 7 commits (`ee27c44` → `9cbe677`). Tree clean, all pushed.**
