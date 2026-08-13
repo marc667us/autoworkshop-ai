@@ -82,11 +82,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ⚠️ THE FULL PATH, NOT BARE `pg_dump`. Ubuntu runners ship their own
-      # postgresql-client on PATH, and a client older than the server refuses
-      # with "server version mismatch" — while a NEWER one silently emits a dump
-      # the older client cannot read. `apply-migrations.yml` was bitten by
-      # exactly this and pins the same way.
+      # ⚠️ CLIENT 16, MATCHING THE SERVER — AND THE PROBE IS WHAT SETTLED IT.
+      #
+      # 🔴 PRODUCTION IS PostgreSQL 16.14. I installed client 17 by copying
+      # `apply-migrations.yml`, which pins 17 and works — because it only ever
+      # runs `psql`, and psql tolerates the mismatch. `pg_dump` does not: it
+      # failed in ~0.2s with "SSL connection has been closed unexpectedly",
+      # which names TLS and means nothing of the kind.
+      #
+      # That error cost two wrong diagnoses (TLS, then the database firewall),
+      # each of which I asserted as measured and neither of which was. What
+      # settled it was running psql and pg_dump SIDE BY SIDE on the same
+      # connection string in the same job: psql returned "PostgreSQL 16.14" and
+      # pg_dump failed on the line below it.
+      #
+      # ⚠️ DO NOT "FIX" THIS BY COPYING THE 17 FROM apply-migrations.yml AGAIN.
+      # That workflow is right for what it does. The version has to match what
+      # the SERVER runs, and the server's version is printed by the probe step
+      # every run so the next person can see it drift.
+      #
+      # The full path, not bare `pg_dump`: Ubuntu runners ship their own client
+      # on PATH and it is not this one.
       - name: Install a matching client
         run: |
           set -euo pipefail
@@ -97,9 +113,9 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
-          echo "PGBIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
-          /usr/lib/postgresql/17/bin/pg_dump --version
+          sudo apt-get install -y -qq postgresql-client-16 >/dev/null
+          echo "PGBIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
+          /usr/lib/postgresql/16/bin/pg_dump --version
 
       - name: Find the database and take its connection string
         run: |
