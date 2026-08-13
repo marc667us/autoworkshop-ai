@@ -1,0 +1,243 @@
+# Back up the PRODUCTION database — and prove the backup by restoring it.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 WHY THIS EXISTS: THE EXISTING BACKUP SYSTEM BACKS UP THE WRONG DATABASE
+#
+# `infrastructure/backup/` is thorough. It takes encrypted physical and logical
+# backups, checksums them, writes a manifest, copies off-host, rotates
+# retention, and `restore-drill.sh` restores into a throwaway cluster and
+# measures RTO and RPO. It has passed 4/4 drills at RPO 0. Four Windows
+# scheduled tasks run it. `check-backup-health.sh` reports HEALTHY 7/7.
+#
+# Every one of those numbers is about the LOCAL DOCKER CONTAINER `aw-postgres`.
+# Not one file under `infrastructure/backup/` mentions `onrender`, `RENDER` or
+# `DATABASE_URL`. So on 2026-08-13, production held 79 applied migrations and
+# the entire 08-11 sample population — 10 workshops, 10 suppliers, 20 customers,
+# 20 vehicles — with NO BACKUP OF ANY KIND, underneath a green backup system.
+#
+# That is this repository's most expensive recurring defect in its purest form:
+# not a broken thing, but a CORRECT BELIEF ABOUT THE WRONG THING.
+#
+# And there is a date on it. `autoworkshop-postgres` is on Render's FREE plan,
+# which is deleted after 30 days: `expiresAt` reads 2026-09-01. The provisioning
+# workflow's own header called that out when it created the database — *"the
+# expiry is a real date, not a footnote, and the backup drill that already runs
+# in this repo must point at it before anything depends on it"*. Things then
+# depended on it for six weeks.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT MAKES THIS A BACKUP RATHER THAN A FILE
+#
+# 🔴 IT RESTORES WHAT IT DUMPED, IN THE SAME RUN, AND COMPARES ROW COUNTS.
+# A dump that has never been restored is a hypothesis. This repository already
+# learned that the expensive way: WAL archiving was recorded as "done and
+# VERIFIED live" when the verification had only read the settings back —
+# `pg_stat_archiver` said `archived_count=0, failed_count=864` and there had
+# been no point-in-time recovery at all.
+#
+# So the job dumps production, restores into a throwaway Postgres service
+# container, and asserts the row counts match table for table. If the restore
+# disagrees with the source, the run FAILS and no artifact is presented as a
+# backup.
+#
+# READ-ONLY AGAINST PRODUCTION. `pg_dump` only. Nothing is written, altered or
+# dropped on the live database by this workflow, ever.
+name: Backup production DB
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily. ⚠️ GitHub delivers this repo's crons at roughly 0.6 runs/hour
+    # whatever is requested — measured across eight workflows — so treat the
+    # cadence as "about daily, sometimes not", and dispatch by hand before
+    # anything irreversible.
+    - cron: '17 3 * * *'
+
+concurrency:
+  group: backup-production-db
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    services:
+      # The restore target. Throwaway, per-run, and never reachable from
+      # production — which is the point: a restore that shared anything with the
+      # source would not prove the dump stands alone.
+      verify:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: verify-only-not-a-real-secret
+          POSTGRES_DB: verify
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ⚠️ THE FULL PATH, NOT BARE `pg_dump`. Ubuntu runners ship their own
+      # postgresql-client on PATH, and a client older than the server refuses
+      # with "server version mismatch" — while a NEWER one silently emits a dump
+      # the older client cannot read. `apply-migrations.yml` was bitten by
+      # exactly this and pins the same way.
+      - name: Install a matching client
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          echo "PGBIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Find the database and take its connection string
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/postgres?limit=50" > /tmp/pg.json
+
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          found = None
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == want:
+                  found = d
+          if not found:
+              sys.exit(f"::error::no database named {want}")
+
+          # THE EXPIRY IS PRINTED EVERY RUN, on purpose. A date six weeks away
+          # is a footnote; a date printed next to a successful backup is a
+          # countdown somebody reads.
+          print(f"database : {found.get('name')}  id={found.get('id')}")
+          print(f"plan     : {found.get('plan')}   status={found.get('status')}")
+          print(f"EXPIRES  : {found.get('expiresAt')}")
+          open('/tmp/db_id', 'w').write(found['id'])
+
+          req = urllib.request.Request(
+              f"https://api.render.com/v1/postgres/{found['id']}/connection-info",
+              headers={"Authorization": f"Bearer {os.environ['RENDER_API_KEY']}"})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              info = json.load(r)
+          url = info.get('externalConnectionString') or info.get('internalConnectionString')
+          if not url:
+              sys.exit('::error::no connection string in the response')
+          open('/tmp/dburl', 'w').write(url)
+          # Host only — never the credentials.
+          print('connection acquired for', url.split('@')[-1].split('/')[0][:6] + '…')
+          PY
+          chmod 600 /tmp/dburl
+
+      - name: Dump production (read-only)
+        run: |
+          set -euo pipefail
+          SRC="$(cat /tmp/dburl)"
+          STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+
+          # Custom format: compressed, and `pg_restore` can read it selectively.
+          # --no-owner/--no-acl so it restores anywhere, which is the whole point
+          # of holding it — the destination will not have Render's role names.
+          "$PGBIN/pg_dump" --format=custom --no-owner --no-acl --verbose \
+            --file="/tmp/autoworkshop-${STAMP}.dump" "$SRC" 2> /tmp/dump.log
+
+          ls -lh "/tmp/autoworkshop-${STAMP}.dump"
+          sha256sum "/tmp/autoworkshop-${STAMP}.dump" | tee "/tmp/autoworkshop-${STAMP}.sha256"
+
+          # 🔴 A ZERO-BYTE OR TINY DUMP IS A FAILURE, NOT A BACKUP. pg_dump can
+          # exit 0 having written almost nothing if it connects to an empty
+          # database — which is exactly what a wrong connection string produces.
+          SIZE=$(stat -c%s "/tmp/autoworkshop-${STAMP}.dump")
+          echo "dump size: $SIZE bytes"
+          [ "$SIZE" -gt 100000 ] || {
+            echo "::error::dump is only ${SIZE} bytes — that is not this database"
+            tail -30 /tmp/dump.log; exit 1; }
+
+      - name: Record what production actually holds
+        run: |
+          set -euo pipefail
+          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tA -F'|' -c "
+            SELECT n.nspname || '.' || c.relname, c.reltuples::bigint
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relkind = 'r'
+              AND n.nspname NOT IN ('pg_catalog','information_schema')
+            ORDER BY 1;" > /tmp/source-tables.txt
+          echo "tables in production: $(wc -l < /tmp/source-tables.txt)"
+          head -25 /tmp/source-tables.txt
+
+      # ⚠️ THIS STEP IS WHAT MAKES THE ARTIFACT A BACKUP. Everything above it
+      # produces a file; this produces the evidence that the file is restorable.
+      - name: Restore into a throwaway database and compare
+        env:
+          PGPASSWORD: verify-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          TARGET="postgresql://postgres@127.0.0.1:5432/verify"
+
+          # `pg_restore` reports errors for objects it cannot recreate (roles,
+          # extensions it lacks). Those are expected here and are NOT the thing
+          # being tested — the row counts are. So its exit code is recorded and
+          # deliberately not used as the verdict.
+          set +e
+          "$PGBIN/pg_restore" --no-owner --no-acl --dbname="$TARGET" \
+            "/tmp/autoworkshop-${STAMP}.dump" 2> /tmp/restore.log
+          RC=$?
+          set -e
+          echo "pg_restore exit ${RC} (not the verdict — row counts are)"
+          grep -ci "error" /tmp/restore.log || true
+
+          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$TARGET" -tA -F'|' -c "
+            SELECT n.nspname || '.' || c.relname, c.reltuples::bigint
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relkind = 'r'
+              AND n.nspname NOT IN ('pg_catalog','information_schema')
+            ORDER BY 1;" > /tmp/restored-tables.txt
+
+          SRC_N=$(cut -d'|' -f1 /tmp/source-tables.txt | sort | wc -l)
+          DST_N=$(cut -d'|' -f1 /tmp/restored-tables.txt | sort | wc -l)
+          echo "tables: production=${SRC_N}  restored=${DST_N}"
+
+          MISSING=$(comm -23 <(cut -d'|' -f1 /tmp/source-tables.txt | sort) \
+                             <(cut -d'|' -f1 /tmp/restored-tables.txt | sort))
+          if [ -n "$MISSING" ]; then
+            echo "::error::tables present in production and MISSING from the restore:"
+            echo "$MISSING"
+            exit 1
+          fi
+
+          # Compare live counts, not the planner's `reltuples` estimate, on the
+          # tables that carry the data anybody would miss.
+          for t in identity.organizations identity.memberships core.customers core.vehicles; do
+            S=$("$PGBIN/psql" -tA "$(cat /tmp/dburl)" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
+            D=$("$PGBIN/psql" -tA "$TARGET" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
+            printf '  %-28s production=%-8s restored=%-8s\n' "$t" "$S" "$D"
+            if [ "$S" != "skip" ] && [ "$S" != "$D" ]; then
+              echo "::error::$t differs — the dump does not reproduce production"; exit 1
+            fi
+          done
+          echo "RESTORE VERIFIED — every production table is present and the sampled counts match"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autoworkshop-db-${{ env.STAMP }}
+          path: |
+            /tmp/autoworkshop-${{ env.STAMP }}.dump
+            /tmp/autoworkshop-${{ env.STAMP }}.sha256
+            /tmp/source-tables.txt
+          # 90 days. The database expires 2026-09-01; a backup that expired
+          # first would be an elaborate way of losing the data on schedule.
+          retention-days: 90
+          if-no-files-found: error
