@@ -1,3 +1,4 @@
+import { ARTIFACT_WORKSPACE } from '../../auth';
 'use server';
 
 import { performSignOut } from '@autoworkshop/auth';
@@ -31,5 +32,5 @@ export async function signOutAction(): Promise<never> {
   //
   // `/admin` redirects into this pack's dashboard, which for a signed-out viewer
   // renders the shell with Sign in — the pre-merge behaviour, at the new path.
-  return performSignOut('admin', { returnTo: '/admin' });
+  return performSignOut(ARTIFACT_WORKSPACE, { returnTo: '/admin' });
 }

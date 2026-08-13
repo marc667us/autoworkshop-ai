@@ -54,7 +54,25 @@ import { workspaceAuth, type WorkspaceAuth } from '@autoworkshop/auth';
 //
 // ⚠️ RENAMING THIS LATER IS A REALM CHANGE, NOT A CODE CHANGE. Point it at a new
 // client and sign-in breaks everywhere at once, exactly as it did here.
-const instance: WorkspaceAuth = workspaceAuth('customer');
+/**
+ * 🔴 THE ID THE ARTIFACT AUTHENTICATES WITH — EXPORTED, BECAUSE SIGN-OUT MUST
+ * USE THE SAME ONE AND A SECOND LITERAL IS HOW IT STOPPED DOING SO.
+ *
+ * Measured on live: sign-out navigated to Keycloak's logout endpoint AND STAYED
+ * THERE. Keycloak had been handed an `id_token_hint` issued to
+ * `autoworkshop-customer-web` (this instance) together with
+ * `client_id=autoworkshop-workshop-web`, because each pack's `sign-out-action`
+ * still named its own pack. A post-logout redirect that does not belong to the
+ * presenting client is refused, so Keycloak ignored it and rendered its own
+ * "you are logged out" page — the session really did end, and the person was
+ * simply left on Keycloak.
+ *
+ * That is the "two literals in two files cannot be type-checked into agreement"
+ * failure this repository has paid for repeatedly. There is now one literal.
+ */
+export const ARTIFACT_WORKSPACE = 'customer';
+
+const instance: WorkspaceAuth = workspaceAuth(ARTIFACT_WORKSPACE);
 
 export const handlers: WorkspaceAuth['handlers'] = instance.handlers;
 export const auth: WorkspaceAuth['auth'] = instance.auth;
