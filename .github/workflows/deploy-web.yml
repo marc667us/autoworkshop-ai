@@ -162,9 +162,26 @@ jobs:
               sys.exit(f"REFUSED: {SID} is named {svc.get('name')!r}, not {NAME!r}")
           print(f"target: {svc['name']} [{SID}]  suspended={svc.get('suspended')}")
 
+          # 🔴 THE HEALTH CHECK PATH IS PART OF THE DEPLOY, NOT PART OF THE
+          # BLUEPRINT. `render.yaml` is documentation here — production runs
+          # prebuilt images (ADR-017) and Render never reads that file — so the
+          # LIVE service still carried `/home/dashboard`, workshop-web's
+          # dashboard from when workshop-web WAS the artifact. It is
+          # `/workshop/home/dashboard` now.
+          #
+          # Measured, not guessed: Release 31710286875 built the image, passed a
+          # container smoke test across all seven packs, and then ended
+          # `update_failed` — Render started a healthy container, asked it for a
+          # path the merged artifact does not serve, and rolled the deploy back.
+          # From outside that is indistinguishable from a broken image.
+          #
+          # `/` is the public marketplace and the only route that renders with
+          # neither the API nor Keycloak reachable, so it measures the app rather
+          # than its dependencies. Set on every deploy so it cannot drift back.
           call("PATCH", f"/services/{SID}",
-               {"serviceDetails": {"envSpecificDetails": {"imagePath": TAG}}})
-          print(f"image set to {TAG}")
+               {"serviceDetails": {"envSpecificDetails": {"imagePath": TAG},
+                                   "healthCheckPath": "/"}})
+          print(f"image set to {TAG}; healthCheckPath set to /")
 
           # 🔴 CAPTURE THE DEPLOY ID. Polling "is the service healthy?" answers a
           # different question from "did my deploy succeed?", and the two agree
