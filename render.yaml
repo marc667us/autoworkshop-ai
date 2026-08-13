@@ -1,118 +1,94 @@
 # Render Blueprint — AutoWorkshop AI
 #
-# WHAT THIS DEPLOYS, AND WHAT IT DELIBERATELY DOES NOT
+# ⚠️ READ THIS BEFORE TRUSTING THE FILE. THIS BLUEPRINT IS DOCUMENTATION, NOT
+# THE DEPLOY PATH. Production runs PREBUILT IMAGES (ADR-017): CI builds a
+# container, smoke-tests it, pushes it to GHCR, and `deploy-web.yml` points the
+# Render service at the tag. Render's own builder is out of the critical path
+# entirely, because it fails `next build` for this repository with exit 1 and
+# completely empty stderr — a fault that survived six attempts to diagnose and
+# does not reproduce on Linux in GitHub Actions.
 #
-# One free web service serving ONE of the seven Next apps at
-# `autoworkshop.aiappinvent.com`. That is the whole of it, and the honest
-# framing matters: Release 0.2 is the application SHELL, so what goes live is
-# real navigation, real routing, real theming and real responsive behaviour
-# wrapped around pages that say "not built yet" — because `05.txt` §2 forbids
-# shipping convincing mock screens. Phases 4-11 fill them in.
+# The previous version of this file described a `runtime: node` service named
+# `autoworkshop` that built `workshop-web` on Render's builder. That service was
+# DELETED on 2026-08-13: it had no custom domain, had been suspended for billing,
+# and `render-status.yml` had spent weeks reporting it as the retired one. A
+# blueprint describing a service that does not exist is worse than no blueprint,
+# which is why this is rewritten rather than left.
 #
-# NOT DEPLOYED HERE: Postgres, Keycloak, Redis, NATS, MinIO, the NestJS API, or
-# the other six web apps. Consequences, stated plainly rather than discovered:
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT ACTUALLY RUNS (2026-08-13, after ADR-021)
 #
-#   · SIGN-IN WILL NOT WORK. There is no Keycloak at a public URL, so the app
-#     renders its signed-out state. That state is correct and complete — no
-#     grants, no role, the workspace's default navigation — it is simply not
-#     signed in.
-#   · `GET /api/v1/me` is unreachable, which the shell handles by resolving the
-#     viewer to null rather than erroring. See `packages/next-shell/src/viewer.ts`.
+#   autoworkshop-web       srv-d9ju49id0e5s7389fjlg   ONE Next.js process serving
+#                                                     all seven packs. Holds
+#                                                     autoworkshop.aiappinvent.com.
+#   autoworkshop-keycloak  srv-d9ntf2u7bikc73cjq4e0   identity
+#   autoworkshop-api       srv-d9o9m1flk1mc7384r3ng   NestJS, 13 domains
+#   autoworkshop-postgres                             the database
 #
-# Making sign-in work is a separate decision about where Postgres and Keycloak
-# live. Render's free Postgres is explicitly ruled out by COMBINED_PLAN_v2 §6:
-# it expires at 30 days, which is the exact failure that took Solar down on
-# 2026-07-09.
+# That is the Solar shape (`solarpro-global` + `solarpro-keycloak` + a database),
+# which ADR-011 names as the reference. It replaced TEN services, of which two
+# were suspended by the platform for `billing`.
 #
-# ZERO COST. `plan: free` throughout (ADR-012). A free web service sleeps after
-# ~15 minutes idle and takes roughly 50 seconds to wake, so the first request
-# after a quiet period is slow. That is a property of the tier, not a fault.
+# 🔴 `autoworkshop-postgres` IS ON THE FREE PLAN AND EXPIRES 2026-09-01.
+# `COMBINED_PLAN_v2` §6 ruled out Render free Postgres by name because it expires
+# at thirty days — the failure that took Solar down on 2026-07-09. Nothing in
+# this file fixes that and nothing should pretend to.
+#
+# ZERO COST (ADR-012/016). A free web service sleeps after ~15 minutes idle and
+# takes roughly 50 seconds to wake — measured here at 126–137 s for Keycloak.
+# That is a property of the tier, not a fault. The free allowance is ~750
+# instance-hours against a ~730-hour month, which fits about ONE always-on
+# service; that arithmetic is the whole reason ADR-021 exists.
 
 services:
   - type: web
-    # THIS NAME IS LOAD-BEARING. Render derives `autoworkshop.onrender.com` from
-    # it, and the CNAME for `autoworkshop.aiappinvent.com` already points there.
-    # Renaming the service changes the hostname and breaks the domain.
-    name: autoworkshop
-    runtime: node
+    # THIS NAME IS LOAD-BEARING. Render derives `autoworkshop-web.onrender.com`
+    # from it, and `autoworkshop.aiappinvent.com` is attached to this service.
+    # Renaming it changes the hostname and detaches the domain.
+    name: autoworkshop-web
+    runtime: image
     plan: free
     region: oregon
-    branch: master
 
-    # ── build ───────────────────────────────────────────────────────────────
-    # `--filter @autoworkshop/workshop-web...` (note the trailing dots) installs
-    # this app plus the workspace packages it depends on, and nothing else. A
-    # bare `pnpm install` would also pull Playwright, Storybook and the whole
-    # NestJS toolchain — hundreds of megabytes that this service never runs, on
-    # a builder with no reason to carry them.
-    #
-    # corepack pins pnpm to the version in package.json's `packageManager`, so
-    # the lockfile is read by the same pnpm that wrote it. Without it Render
-    # uses whatever pnpm its image ships and `--frozen-lockfile` can fail on a
-    # lockfile-format difference alone.
-    buildCommand: >-
-      corepack enable &&
-      corepack prepare pnpm@9.15.4 --activate &&
-      pnpm install --frozen-lockfile --filter @autoworkshop/workshop-web... &&
-      pnpm --filter @autoworkshop/workshop-web build
+    image:
+      # Set per deploy by `deploy-web.yml`, which pins the commit SHA rather
+      # than `latest` so a rollback names an exact artifact.
+      url: ghcr.io/marc667us/autoworkshop-web:latest
 
-    # ── run ─────────────────────────────────────────────────────────────────
-    # `-p $PORT` is not optional: Render assigns the port and routes to it,
-    # while `package.json`'s own `start` hardcodes 3001 for local development.
-    # A server listening on 3001 here is a service that never passes a health
-    # check, with logs that look completely healthy.
-    startCommand: cd apps/workshop-web && ./node_modules/.bin/next start -p $PORT
-
-    healthCheckPath: /home/dashboard
+    # `/` is the public marketplace and the ONE route that renders with neither
+    # the API nor Keycloak reachable — so a health check here measures the app
+    # rather than its dependencies. The old value, `/home/dashboard`, belonged
+    # to workshop-web and now lives at `/workshop/home/dashboard`; left as it
+    # was, this service would have failed its health check while serving
+    # perfectly.
+    healthCheckPath: /
 
     envVars:
-      # Must match CI and `package.json` engines (>=20.19.0 <21). Render
-      # otherwise picks its own default, and Next 15 is unforgiving about it.
       - key: NODE_VERSION
         value: 20.19.2
 
       - key: NODE_ENV
         value: production
 
-      # `next build` re-runs ESLint and tsc, and on this builder that step dies
-      # SILENTLY — the log ends at "Linting and checking validity of types ..."
-      # and exits 1 with no diagnostic, because the checker is killed rather
-      # than reporting a fault. Observed on the first deploy of this service.
-      #
-      # Not a lowered bar: `pnpm typecheck` and `pnpm lint` are blocking gates on
-      # the same commit, so the check happens once, where its output is
-      # readable. Read by next.config.mjs in all seven apps; nothing but the
-      # deploy sets it, so a local build still checks everything.
-      - key: SKIP_BUILD_CHECKS
-        value: "1"
-
-      # REQUIRED TO SERVE A PAGE AT ALL, not merely to sign in. Every app runs
-      # `auth` as middleware on every request and the Auth.js config resolves
-      # this when it is built, so an absent AUTH_SECRET is a 500 on every route.
-      # `generateValue` has Render mint a random one and keep it — never commit
-      # a real secret here.
+      # REQUIRED TO SERVE A PAGE AT ALL, not merely to sign in. `auth` runs as
+      # middleware on every non-public request and its config resolves this when
+      # it is built, so an absent AUTH_SECRET is a 500 on every gated route.
+      # `generateValue` has Render mint one and keep it — never commit a secret.
       - key: AUTH_SECRET
         generateValue: true
 
       # Auth.js v5 rejects an unrecognised Host by default and only auto-detects
-      # Vercel. Behind Render's proxy that makes every `/api/auth/*` endpoint
-      # 500 while ordinary pages still return 200 — an asymmetry that hides the
-      # fault from any check that only loads a page. `trustHost` is also set in
-      # code; this is the belt to that braces, and it is safe because Keycloak's
-      # own `redirectUris` allow-list is what actually constrains the callback.
+      # Vercel. Behind Render's proxy that makes every `/api/auth/*` endpoint 500
+      # while ordinary pages still return 200 — an asymmetry invisible to any
+      # check that only loads a page. Keycloak's own `redirectUris` allow-list is
+      # what actually constrains the callback.
       - key: AUTH_TRUST_HOST
         value: "true"
 
-      # Where Keycloak WOULD be. Left pointing at the local realm on purpose:
-      # there is no public Keycloak yet, and inventing a plausible-looking URL
-      # here would turn "sign-in is not deployed" into "sign-in is broken".
-      # Update both when identity is hosted.
       - key: KEYCLOAK_URL
-        value: http://localhost:8080
+        value: https://autoworkshop-keycloak.onrender.com
       - key: KEYCLOAK_REALM
         value: autoworkshop
 
-      # Same reasoning. The shell degrades to a signed-out viewer when this is
-      # unreachable, which is the intended behaviour, not a workaround.
       - key: API_BASE_URL
-        value: http://localhost:4000
+        value: https://autoworkshop-api.onrender.com
