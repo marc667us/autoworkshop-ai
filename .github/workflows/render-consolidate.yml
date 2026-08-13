@@ -1,0 +1,182 @@
+# Render consolidation — DELETE the services the one-app architecture replaces.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS
+#
+# Owner direction, 2026-08-13: *"only autoworkshop app and its databases must be
+# there"* / *"remove all rest"*. AutoWorkshop had grown to TEN Render services
+# against a free allowance that fits roughly ONE always-on service, and two of
+# them were suspended by the platform for `billing` while the other eight ran.
+# Solar — the reference implementation under ADR-011 — runs ONE application
+# service plus Keycloak plus a database. This workflow is how the ten become
+# that.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE FOUR THINGS THAT STOP THIS DESTROYING SOMETHING
+#
+# 1. `confirm` must be the literal string DELETE. Every step is gated on it, so
+#    the default dispatch is a DRY RUN that prints exactly what it would remove
+#    and removes nothing.
+#
+#    🔴 A step gated on `confirm == APPLY` HAS NEVER RUN unless somebody typed
+#    it. This repo has been burned by a green workflow that did nothing (see
+#    `feedback_a_step_gated_on_confirm_has_never_run`). The dry run therefore
+#    prints DRY RUN on every line it would have acted on, and the apply path
+#    prints DELETED — the two are never confusable in a log.
+#
+# 2. The target comes from a `choice` input, never free text. A typo cannot
+#    address a neighbouring service.
+#
+# 3. THE NAME IS RE-READ FROM RENDER AND ASSERTED BEFORE THE DELETE. The id in
+#    the choice map could be stale — `render-status.yml` spent weeks pointed at
+#    a decommissioned service and cheerfully reported it healthy. So this
+#    fetches the service, refuses unless its live name starts with
+#    `autoworkshop-` AND equals the name the choice promised. The Solar
+#    services (`solarpro-*`) fail that test by construction; there is no input
+#    value that reaches them.
+#
+# 4. A SERVICE HOLDING A CUSTOM DOMAIN IS REFUSED unless `allow_domain_loss` is
+#    also set. `autoworkshop-web` holds `autoworkshop.aiappinvent.com`;
+#    deleting it releases the domain and the product goes dark until it is
+#    re-attached elsewhere. That must be a separate, deliberate decision, not a
+#    side effect of tidying up.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT IS DELIBERATELY *NOT* HERE
+#
+# · No database appears in the choice list. `/v1/postgres` is a different
+#   collection and this workflow never calls it. The owner's instruction was
+#   "the app AND ITS DATABASES must be there" — the databases stay.
+# · No `suspend` action. Render's API cannot resume a service the platform
+#   suspended (proven 2026-07-28: "only services suspended by a user can be
+#   resumed"), so a suspend here could be a one-way door with no delete
+#   recorded anywhere. Delete is at least honest about being final.
+# · Recreating a deleted service is NOT manual: every `deploy-*-web.yml` in this
+#   repo creates its service when absent. That is what makes this recoverable
+#   enough to do at all.
+name: Render consolidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Which service to delete (choice — never free text)'
+        required: true
+        type: choice
+        options:
+          # ── Safe now: no custom domain, replaced by the merged app ──────────
+          - autoworkshop-orphan-node    # srv-d9jsliu7r5hc73b1kncg — retired, suspended, no domain
+          - autoworkshop-fleet          # 4 pages
+          - autoworkshop-insurance      # 3 pages
+          - autoworkshop-admin          # 8 pages
+          - autoworkshop-towing         # 13 pages
+          - autoworkshop-supplier       # 8 pages
+          - autoworkshop-customer       # 42 pages — the public marketplace
+          # ── Needs allow_domain_loss / a working replacement first ───────────
+          - autoworkshop-api            # every web app reads from this
+          - autoworkshop-web            # HOLDS autoworkshop.aiappinvent.com
+      confirm:
+        description: 'Type DELETE to actually delete. Anything else = dry run.'
+        required: true
+        default: 'dry-run'
+        type: string
+      allow_domain_loss:
+        description: 'Required to delete a service that holds a custom domain'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      TARGET: ${{ inputs.service }}
+      CONFIRM: ${{ inputs.confirm }}
+      ALLOW_DOMAIN_LOSS: ${{ inputs.allow_domain_loss }}
+    steps:
+      - name: Resolve, assert, and delete
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+
+          KEY     = os.environ["RENDER_API_KEY"]
+          TARGET  = os.environ["TARGET"]
+          APPLY   = os.environ["CONFIRM"] == "DELETE"
+          ALLOWDL = os.environ["ALLOW_DOMAIN_LOSS"] == "true"
+
+          # The choice value → the id and the name we EXPECT Render to confirm.
+          # `autoworkshop-orphan-node` is the one entry whose choice label and
+          # real name differ: the service is literally named `autoworkshop`,
+          # which is far too close to `autoworkshop-web` to put in a dropdown a
+          # human will read at speed.
+          MAP = {
+              "autoworkshop-orphan-node": ("srv-d9jsliu7r5hc73b1kncg", "autoworkshop"),
+              "autoworkshop-fleet":       ("srv-d9sekk2jobas73f6q20g", "autoworkshop-fleet"),
+              "autoworkshop-insurance":   ("srv-d9sekk740ujc73d4tci0", "autoworkshop-insurance"),
+              "autoworkshop-admin":       ("srv-d9sekjvavr4c73b3tln0", "autoworkshop-admin"),
+              "autoworkshop-towing":      ("srv-d9sdhq142hec73c4bb50", "autoworkshop-towing"),
+              "autoworkshop-supplier":    ("srv-d9rru17avr4c739vti9g", "autoworkshop-supplier"),
+              "autoworkshop-customer":    ("srv-d9odi5oae00c73b7t1og", "autoworkshop-customer"),
+              "autoworkshop-api":         ("srv-d9o9m1flk1mc7384r3ng", "autoworkshop-api"),
+              "autoworkshop-web":         ("srv-d9ju49id0e5s7389fjlg", "autoworkshop-web"),
+          }
+          sid, expected = MAP[TARGET]
+
+          def call(method, path):
+              req = urllib.request.Request(
+                  f"https://api.render.com/v1{path}",
+                  headers={"Authorization": f"Bearer {KEY}"},
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  body = r.read()
+                  return r.status, (json.loads(body) if body else None)
+
+          _, svc = call("GET", f"/services/{sid}")
+          live = svc.get("name")
+          print(f"target      : {TARGET}")
+          print(f"id          : {sid}")
+          print(f"live name   : {live}")
+          print(f"type        : {svc.get('type')}   suspended: {svc.get('suspended')}")
+
+          # ── Guard 3. The id could be stale; the NAME is the fact. ───────────
+          if not (live or "").startswith("autoworkshop"):
+              sys.exit(f"REFUSED: live name {live!r} is not an AutoWorkshop service. "
+                       f"The id map is stale or wrong — fix it, do not override.")
+          if live != expected:
+              sys.exit(f"REFUSED: id {sid} is now named {live!r}, not {expected!r}. "
+                       f"Render ids outlive their meaning; re-run `render-inventory.yml`.")
+
+          # ── Guard 4. A custom domain is the product's front door. ───────────
+          _, doms = call("GET", f"/services/{sid}/custom-domains?limit=20")
+          names = [d.get("customDomain", d).get("name") for d in (doms or [])]
+          print(f"domains     : {names or '(none)'}")
+          if names and not ALLOWDL:
+              sys.exit(f"REFUSED: {live} holds {names}. Deleting it releases that domain "
+                       f"and the product goes dark until it is re-attached. Re-run with "
+                       f"allow_domain_loss=true ONLY when the replacement service is live "
+                       f"and ready to take the domain.")
+
+          if not APPLY:
+              print()
+              print(f"DRY RUN — would DELETE {live} [{sid}]. Nothing was changed.")
+              print("Re-run with confirm=DELETE to actually delete.")
+              raise SystemExit(0)
+
+          status, _ = call("DELETE", f"/services/{sid}")
+          print()
+          print(f"DELETED {live} [{sid}]  (HTTP {status})")
+
+          # Read back. A 404 is the proof; anything else means the delete did
+          # not take and the log would otherwise read as success.
+          try:
+              call("GET", f"/services/{sid}")
+              sys.exit("🔴 STILL PRESENT after DELETE — the service was NOT removed.")
+          except urllib.error.HTTPError as e:
+              if e.code == 404:
+                  print("Confirmed gone: GET now returns 404.")
+              else:
+                  raise
+          PY
