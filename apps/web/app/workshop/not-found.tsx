@@ -84,7 +84,7 @@ export default async function NotFound() {
         )}
 
         <p style={{ margin: 0 }}>
-          <Link href="/home/dashboard" style={{ color: primitive.color.blue[600], fontWeight: 600 }}>
+          <Link href="/workshop/home/dashboard" style={{ color: primitive.color.blue[600], fontWeight: 600 }}>
             Go to your dashboard
           </Link>
         </p>

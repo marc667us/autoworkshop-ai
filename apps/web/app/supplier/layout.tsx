@@ -10,7 +10,6 @@ import {
 
   ActingAsControl,
 } from '@autoworkshop/next-shell';
-import { themeBootScript } from '@autoworkshop/ui';
 import { signOutAction } from './sign-out-action';
 
 export const metadata: Metadata = {
@@ -42,48 +41,39 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   ]);
 
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* Applies the stored theme before first paint — prevents the
-            flash of incorrect theme. Must be inline and synchronous. */}
-        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
-      </head>
-      <body style={{ margin: 0, background: 'var(--aw-background-primary)', color: 'var(--aw-text-primary)' }}>
-        <WorkspaceShell
-          workspaceId="supplier"
-          grants={grantsFor(viewer)}
-          role={navRoleFor(viewer?.activeRole)}
-          {...viewerLabels(viewer)}
-          // T-0005 finding 5: a real sign-out — revoke the refresh token at
-          // Keycloak, clear the cookie, end the SSO session. Passed from the
-          // server layout because a server action cannot be created in the
-          // client shell that renders the button.
-          signOutAction={signOutAction}
-          signInHref="/api/auth/signin"
-          signedIn={signedIn}
-          // T-0016, as ONE shared component so all seven apps mount the identical
-          // control. It lists only the viewer's own memberships and the API
-          // re-validates the choice, REFUSING an organisation the viewer does not
-          // hold rather than downgrading. The ROLE half moved to `roleControl`
-          // below (owner request 2026-08-03). See `ViewerSwitchers`.
-          organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
-          // The ROLE, top right beside the user chip (owner request 2026-08-03).
-          // Renders the switcher only for a viewer holding several roles; a
-          // single-role viewer gets `null` here and the shell falls back to its
-          // read-only "Acting as" chip, so the role is stated either way.
-          roleControl={<ActingAsControl viewer={viewer} />}
-          topNavActions={[
-            { id: 'create', label: 'Create', icon: 'create' },
-            { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
-            { id: 'messages', label: 'Messages and calls', icon: 'messages' },
-            { id: 'notifications', label: 'Notifications', icon: 'notifications' },
-            { id: 'ai', label: 'AI assistant', icon: 'ai' },
-            { id: 'help', label: 'Help and support', icon: 'help' },
-          ]}
-        >
-          {children}
-        </WorkspaceShell>
-      </body>
-    </html>
+    <WorkspaceShell
+      workspaceId="supplier"
+      grants={grantsFor(viewer)}
+      role={navRoleFor(viewer?.activeRole)}
+      {...viewerLabels(viewer)}
+      // T-0005 finding 5: a real sign-out — revoke the refresh token at
+      // Keycloak, clear the cookie, end the SSO session. Passed from the
+      // server layout because a server action cannot be created in the
+      // client shell that renders the button.
+      signOutAction={signOutAction}
+      signInHref="/api/auth/signin"
+      signedIn={signedIn}
+      // T-0016, as ONE shared component so all seven apps mount the identical
+      // control. It lists only the viewer's own memberships and the API
+      // re-validates the choice, REFUSING an organisation the viewer does not
+      // hold rather than downgrading. The ROLE half moved to `roleControl`
+      // below (owner request 2026-08-03). See `ViewerSwitchers`.
+      organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
+      // The ROLE, top right beside the user chip (owner request 2026-08-03).
+      // Renders the switcher only for a viewer holding several roles; a
+      // single-role viewer gets `null` here and the shell falls back to its
+      // read-only "Acting as" chip, so the role is stated either way.
+      roleControl={<ActingAsControl viewer={viewer} />}
+      topNavActions={[
+        { id: 'create', label: 'Create', icon: 'create' },
+        { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
+        { id: 'messages', label: 'Messages and calls', icon: 'messages' },
+        { id: 'notifications', label: 'Notifications', icon: 'notifications' },
+        { id: 'ai', label: 'AI assistant', icon: 'ai' },
+        { id: 'help', label: 'Help and support', icon: 'help' },
+      ]}
+    >
+      {children}
+    </WorkspaceShell>
   );
 }

@@ -64,7 +64,7 @@ export function NotYourWorkspace({ name }: { name: string | null }) {
             it is offered rather than dangled. A link that refuses on arrival
             would be the same wall wearing a different sign.
           */}
-          <Link href="/marketplace">Browse the parts marketplace</Link>
+          <Link href="/customer/marketplace">Browse the parts marketplace</Link>
         </p>
       </div>
 

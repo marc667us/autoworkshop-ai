@@ -298,8 +298,13 @@ describe('workspace x role navigation', () => {
     const withFinance = hrefs(['finance.read', 'organization.admin']);
     const withoutFinance = hrefs(['organization.admin']);
 
-    expect(withFinance).toContain('/finance/invoices');
-    expect(withoutFinance).not.toContain('/finance/invoices');
+    // ADR-021: `visibleGroups` returns MOUNTED hrefs — the path the route is
+    // actually served at inside the single artifact — while `workspaces.ts`
+    // still transcribes the spec's `/finance/invoices` literally. Asserted in
+    // the mounted form deliberately: this test is about what a LINK points at,
+    // and a link that pointed at `/finance/invoices` would 404.
+    expect(withFinance).toContain('/workshop/finance/invoices');
+    expect(withoutFinance).not.toContain('/workshop/finance/invoices');
   });
 
   it('every role tree resolves breadcrumbs for its own items', () => {

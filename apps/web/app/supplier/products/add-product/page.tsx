@@ -32,5 +32,5 @@ import { redirect } from 'next/navigation';
  * works rather than an apology.
  */
 export default function AddProduct() {
-  redirect('/products/product-catalogue');
+  redirect('/supplier/products/product-catalogue');
 }

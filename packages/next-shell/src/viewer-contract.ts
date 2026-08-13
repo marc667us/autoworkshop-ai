@@ -207,6 +207,26 @@ const HOME_WORKSPACE: Readonly<Record<string, string>> = {
  * services' role checks and Postgres RLS deny independently, and every page
  * must remain safe if this call were deleted.
  */
+/**
+ * WHICH PACK A ROLE BELONGS IN — `main`'s dispatch (ADR-021).
+ *
+ * `HOME_WORKSPACE` has always encoded this; until the consolidation nothing
+ * needed to ASK it, because each pack was its own deployed application and a
+ * person arrived at the right hostname by holding the right link. One artifact
+ * has one front door, so `/` now has to decide where a signed-in visitor goes.
+ *
+ * ⚠️ THE `workshop` DEFAULT IS DELIBERATE AND IS NOT A GUESS. It matches
+ * `isForeignToWorkspace` exactly — every workshop staff role (owner, manager,
+ * technician, reception, cashier) is absent from the map for that reason, and a
+ * role nobody has mapped yet is far better served by the workshop tree, whose
+ * gating is the most thoroughly exercised in the product, than by a 404 at the
+ * front door.
+ */
+export function homeWorkspaceFor(activeRole: string | undefined): string {
+  if (activeRole === undefined) return 'workshop';
+  return HOME_WORKSPACE[activeRole] ?? 'workshop';
+}
+
 export function isForeignToWorkspace(
   workspaceId: string,
   activeRole: string | undefined,

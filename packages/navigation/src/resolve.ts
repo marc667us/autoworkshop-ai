@@ -7,6 +7,7 @@
  */
 
 import type { Crumb, NavGroup, PermissionKey, RoleId, Workspace } from './types';
+import { withPackBase } from './pack-base';
 
 /**
  * The navigation a ROLE sees inside a workspace — `07.txt` part 2 §46-§49.
@@ -79,9 +80,19 @@ export function visibleGroups(workspace: Workspace, grants: readonly PermissionK
   const held = new Set(grants);
   const allowed = (p?: PermissionKey) => p === undefined || held.has(p);
 
+  // ADR-021: hrefs leave here MOUNTED. `workspaces.ts` transcribes the spec's
+  // routes literally (`/<group>/<item>`); this is the one place that turns a
+  // transcribed route into the path it is actually served at inside the single
+  // artifact. `requireNavRoute` and `renderModulePage` apply the same base to
+  // the pathname they are given, which is what keeps the two sides comparable.
   return workspace.groups
     .filter((g) => allowed(g.permission))
-    .map((g) => ({ ...g, items: g.items.filter((i) => allowed(i.permission)) }))
+    .map((g) => ({
+      ...g,
+      items: g.items
+        .filter((i) => allowed(i.permission))
+        .map((i) => ({ ...i, href: withPackBase(workspace.id, i.href) })),
+    }))
     .filter((g) => g.items.length > 0);
 }
 
@@ -131,9 +142,17 @@ export function breadcrumbsFor(
 ): Crumb[] {
   const crumbs: Crumb[] = [{ label: workspace.label, href: homeHref }];
 
+  // ADR-021. Both sides are normalised to the MOUNTED form before comparison,
+  // rather than only the hrefs. `pathname` arrives mounted from the browser and
+  // unmounted from anything that works in the spec's own route strings — the
+  // tests do, and so does any caller holding a literal. `withPackBase` is
+  // idempotent, so normalising both makes the comparison correct for either,
+  // instead of correct for whichever the last caller happened to hold.
+  const here = withPackBase(workspace.id, pathname);
+
   for (const g of workspace.groups) {
     for (const i of g.items) {
-      if (isActive(i.href, pathname)) {
+      if (isActive(withPackBase(workspace.id, i.href), here)) {
         // The group itself is not navigable — it is an expander, not a page —
         // so it appears as a label with no href.
         crumbs.push({ label: g.label });

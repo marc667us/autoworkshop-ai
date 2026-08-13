@@ -12,7 +12,6 @@ import {
   ViewerSwitchers,
   ActingAsControl,
 } from '@autoworkshop/next-shell';
-import { themeBootScript } from '@autoworkshop/ui';
 import { prewarmKeycloak } from '@autoworkshop/auth';
 import { signOutAction, switchUserAction } from './sign-out-action';
 import { liveCounters } from './_screens/live-counters';
@@ -100,141 +99,132 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
 
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* Applies the stored theme before first paint — prevents the
-            flash of incorrect theme. Must be inline and synchronous. */}
-        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
-      </head>
-      <body style={{ margin: 0, background: 'var(--aw-background-primary)', color: 'var(--aw-text-primary)' }}>
-        <WorkspaceShell
-          workspaceId="workshop"
-          // The wordmark reaches the public landing, which this app now serves
-          // at `/` — the Solar pattern: one app, public and private routes side
-          // by side, no second service and therefore no DNS work.
-          brandHref="/"
-          // `/` is the public parts marketplace and the free VIN search. A
-          // signed-OUT visitor there gets no workshop menu and no placeholder
-          // badges; a signed-in one keeps the shell so they can get back.
-          publicPaths={['/']}
-          grants={grantsFor(viewer)}
-          role={navRoleFor(viewer?.activeRole)}
-          // A customer, supplier, fleet admin, insurance assessor or towing
-          // operator is signed in but this workspace is not theirs. Without
-          // this they received the full workshop menu: 45 of 45 items,
-          // measured, because the default staff tree is entirely ungated so
-          // grant filtering removed nothing. `requireNavRoute` refuses the
-          // routes; this removes the menu that advertised them.
-          foreignWorkspace={isForeignToWorkshop(viewer?.activeRole)}
-          {...viewerLabels(viewer)}
-          // 🔴 OVERRIDES THE ORGANISATION CHIP DURING ONBOARDING, and the order
-          // of these two lines is the fix. `/me` 401s for a user with no
-          // membership, so `currentViewer()` is null and `viewerLabels(null)`
-          // returns "Not signed in" — which the shell then rendered BESIDE a
-          // working "Sign out" button. Seen in a screenshot of the new
-          // onboarding screen, not reasoned about.
-          //
-          // That contradiction has cost this repo a session already (the
-          // 2026-08-02 issuer bug presented exactly the same way), so a new user
-          // meeting it on their FIRST screen would reasonably conclude sign-up
-          // had half-failed. It is a true statement about the viewer lookup and
-          // a false one about the person.
-          {...(onboarding ? { organizationLabel: 'No workshop yet' } : {})}
-          // T-0005 finding 5: a real sign-out — revoke the refresh token at
-          // Keycloak, clear the cookie, end the SSO session. Passed from the
-          // server layout because a server action cannot be created in the
-          // client shell that renders the button.
-          signOutAction={signOutAction}
-          switchUserAction={switchUserAction}
-          /*
-           * 🔴 SIGN IN LANDS ON THE DASHBOARD, NOT BACK ON THE LANDING.
-           *
-           * Reported three times by the owner as "customer page comes up when
-           * owner logs in", and the first two diagnoses were wrong — I chased
-           * role resolution and a stale role cookie. The MEASURED cause
-           * (`Diagnose identity RLS`, 2026-08-08) is that the account holds
-           * exactly ONE membership, `workshop_owner`, and resolves correctly.
-           * Nothing was mis-resolving.
-           *
-           * What actually happens: `app/page.tsx` renders the PUBLIC
-           * marketplace landing for everyone with no redirect — deliberately,
-           * because the owner asked that the landing stay reachable when signed
-           * in. Auth.js then returns the visitor to where they started, which
-           * for somebody who pressed Sign in on the landing is the landing. A
-           * workshop owner therefore signed in successfully and was handed a
-           * consumer shopfront, which is indistinguishable from "the customer
-           * app came up".
-           *
-           * ⚠️ "REACHABLE WHEN LOGGED IN" AND "WHERE I LAND AFTER SIGNING IN"
-           * ARE DIFFERENT REQUESTS, and conflating them is what caused this.
-           * `/` still renders the landing for a signed-in visitor — that
-           * request is untouched and `page.tsx` still has no redirect. This
-           * only changes where the SIGN IN BUTTON sends you, because pressing
-           * it means "let me in", not "show me the shop".
-           *
-           * `/home/dashboard` is the dashboard's one canonical URL (§18) and is
-           * role-aware, so every workspace tree lands its own audience.
-           */
-          signInHref="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard"
-          signedIn={signedIn}
-          // T-0016, as ONE shared component so all seven apps mount the identical
-          // control. It lists only the viewer's own memberships and the API
-          // re-validates the choice, REFUSING an organisation the viewer does not
-          // hold rather than downgrading. The ROLE half moved to `roleControl`
-          // below (owner request 2026-08-03). See `ViewerSwitchers`.
-          organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
-          // The ROLE, top right beside the user chip (owner request 2026-08-03).
-          // Renders the switcher only for a viewer holding several roles; a
-          // single-role viewer gets `null` here and the shell falls back to its
-          // read-only "Acting as" chip, so the role is stated either way.
-          roleControl={<ActingAsControl viewer={viewer} />}
-          // 🔴 REAL COUNTS, AND ONLY THE ONES THAT ARE REAL (slice 7).
-          //
-          // This block used to carry SEVEN INVENTED FIGURES — 7 open tasks, 12
-          // active jobs, 5 unread messages — on the first screen every user
-          // sees. Its own comment called them "provisional", but a badge does
-          // not read as provisional: it reads as a fact about your workshop,
-          // and a workshop with three jobs was being told it had twelve.
-          //
-          // `liveCounters()` returns what can be COUNTED from a real table
-          // today. Anything it cannot count is ABSENT rather than guessed —
-          // a missing badge says nothing, a wrong badge says something false.
-          // The remaining keys get their numbers as their slices land.
-          counters={onboarding ? {} : counters}
-          warnings={onboarding ? {} : warnings}
-          // 🔴 THE ASSISTANT IS REAL IN THIS WORKSPACE, AND ONLY IN THIS ONE.
-          // `AppShell` defaults `assistantUnavailableReason` to the Phase-8
-          // message, so customer-web, supplier-web, fleet-web, insurance-web,
-          // towing-web and admin-web keep saying the true thing about
-          // themselves — none of them has an agent host. This app passes `null`
-          // when the API answered, or the API's own reason when it did not.
-          assistantUnavailableReason={assistant.unavailableReason}
-          assistantProposals={assistant.proposals}
-          // The decision is a server action because it is an authenticated POST
-          // and the token lives in an httpOnly cookie. `AgentProposalService`
-          // re-checks staff membership and refuses a second decision on the
-          // same row; this only carries the answer back to the panel.
-          onAssistantDecision={decideProposalAction}
-          topNavActions={[
-            { id: 'create', label: 'Create', icon: 'create' },
-            { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
-            {
-              id: 'messages',
-              label: 'Messages and calls',
-              icon: 'messages',
-              // `undefined` rather than 0: the shell renders no badge at all
-              // when there is nothing waiting, which is the correct look for
-              // an empty inbox and not the same as a badge reading "0".
-              count: counters['workshop.messages.unread'] || undefined,
-            },
-            { id: 'notifications', label: 'Notifications', icon: 'notifications' },
-            { id: 'ai', label: 'AI assistant', icon: 'ai' },
-            { id: 'help', label: 'Help and support', icon: 'help' },
-          ]}
-        >
-          {children}
-        </WorkspaceShell>
-      </body>
-    </html>
+    <WorkspaceShell
+      workspaceId="workshop"
+      // The wordmark reaches the public landing, which this app now serves
+      // at `/` — the Solar pattern: one app, public and private routes side
+      // by side, no second service and therefore no DNS work.
+      brandHref="/"
+      // `/` is the public parts marketplace and the free VIN search. A
+      // signed-OUT visitor there gets no workshop menu and no placeholder
+      // badges; a signed-in one keeps the shell so they can get back.
+      publicPaths={['/']}
+      grants={grantsFor(viewer)}
+      role={navRoleFor(viewer?.activeRole)}
+      // A customer, supplier, fleet admin, insurance assessor or towing
+      // operator is signed in but this workspace is not theirs. Without
+      // this they received the full workshop menu: 45 of 45 items,
+      // measured, because the default staff tree is entirely ungated so
+      // grant filtering removed nothing. `requireNavRoute` refuses the
+      // routes; this removes the menu that advertised them.
+      foreignWorkspace={isForeignToWorkshop(viewer?.activeRole)}
+      {...viewerLabels(viewer)}
+      // 🔴 OVERRIDES THE ORGANISATION CHIP DURING ONBOARDING, and the order
+      // of these two lines is the fix. `/me` 401s for a user with no
+      // membership, so `currentViewer()` is null and `viewerLabels(null)`
+      // returns "Not signed in" — which the shell then rendered BESIDE a
+      // working "Sign out" button. Seen in a screenshot of the new
+      // onboarding screen, not reasoned about.
+      //
+      // That contradiction has cost this repo a session already (the
+      // 2026-08-02 issuer bug presented exactly the same way), so a new user
+      // meeting it on their FIRST screen would reasonably conclude sign-up
+      // had half-failed. It is a true statement about the viewer lookup and
+      // a false one about the person.
+      {...(onboarding ? { organizationLabel: 'No workshop yet' } : {})}
+      // T-0005 finding 5: a real sign-out — revoke the refresh token at
+      // Keycloak, clear the cookie, end the SSO session. Passed from the
+      // server layout because a server action cannot be created in the
+      // client shell that renders the button.
+      signOutAction={signOutAction}
+      switchUserAction={switchUserAction}
+      /*
+       * 🔴 SIGN IN LANDS ON THE DASHBOARD, NOT BACK ON THE LANDING.
+       *
+       * Reported three times by the owner as "customer page comes up when
+       * owner logs in", and the first two diagnoses were wrong — I chased
+       * role resolution and a stale role cookie. The MEASURED cause
+       * (`Diagnose identity RLS`, 2026-08-08) is that the account holds
+       * exactly ONE membership, `workshop_owner`, and resolves correctly.
+       * Nothing was mis-resolving.
+       *
+       * What actually happens: `app/page.tsx` renders the PUBLIC
+       * marketplace landing for everyone with no redirect — deliberately,
+       * because the owner asked that the landing stay reachable when signed
+       * in. Auth.js then returns the visitor to where they started, which
+       * for somebody who pressed Sign in on the landing is the landing. A
+       * workshop owner therefore signed in successfully and was handed a
+       * consumer shopfront, which is indistinguishable from "the customer
+       * app came up".
+       *
+       * ⚠️ "REACHABLE WHEN LOGGED IN" AND "WHERE I LAND AFTER SIGNING IN"
+       * ARE DIFFERENT REQUESTS, and conflating them is what caused this.
+       * `/` still renders the landing for a signed-in visitor — that
+       * request is untouched and `page.tsx` still has no redirect. This
+       * only changes where the SIGN IN BUTTON sends you, because pressing
+       * it means "let me in", not "show me the shop".
+       *
+       * `/home/dashboard` is the dashboard's one canonical URL (§18) and is
+       * role-aware, so every workspace tree lands its own audience.
+       */
+      signInHref="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard"
+      signedIn={signedIn}
+      // T-0016, as ONE shared component so all seven apps mount the identical
+      // control. It lists only the viewer's own memberships and the API
+      // re-validates the choice, REFUSING an organisation the viewer does not
+      // hold rather than downgrading. The ROLE half moved to `roleControl`
+      // below (owner request 2026-08-03). See `ViewerSwitchers`.
+      organizationSwitcher={<ViewerSwitchers viewer={viewer} />}
+      // The ROLE, top right beside the user chip (owner request 2026-08-03).
+      // Renders the switcher only for a viewer holding several roles; a
+      // single-role viewer gets `null` here and the shell falls back to its
+      // read-only "Acting as" chip, so the role is stated either way.
+      roleControl={<ActingAsControl viewer={viewer} />}
+      // 🔴 REAL COUNTS, AND ONLY THE ONES THAT ARE REAL (slice 7).
+      //
+      // This block used to carry SEVEN INVENTED FIGURES — 7 open tasks, 12
+      // active jobs, 5 unread messages — on the first screen every user
+      // sees. Its own comment called them "provisional", but a badge does
+      // not read as provisional: it reads as a fact about your workshop,
+      // and a workshop with three jobs was being told it had twelve.
+      //
+      // `liveCounters()` returns what can be COUNTED from a real table
+      // today. Anything it cannot count is ABSENT rather than guessed —
+      // a missing badge says nothing, a wrong badge says something false.
+      // The remaining keys get their numbers as their slices land.
+      counters={onboarding ? {} : counters}
+      warnings={onboarding ? {} : warnings}
+      // 🔴 THE ASSISTANT IS REAL IN THIS WORKSPACE, AND ONLY IN THIS ONE.
+      // `AppShell` defaults `assistantUnavailableReason` to the Phase-8
+      // message, so customer-web, supplier-web, fleet-web, insurance-web,
+      // towing-web and admin-web keep saying the true thing about
+      // themselves — none of them has an agent host. This app passes `null`
+      // when the API answered, or the API's own reason when it did not.
+      assistantUnavailableReason={assistant.unavailableReason}
+      assistantProposals={assistant.proposals}
+      // The decision is a server action because it is an authenticated POST
+      // and the token lives in an httpOnly cookie. `AgentProposalService`
+      // re-checks staff membership and refuses a second decision on the
+      // same row; this only carries the answer back to the panel.
+      onAssistantDecision={decideProposalAction}
+      topNavActions={[
+        { id: 'create', label: 'Create', icon: 'create' },
+        { id: 'tasks', label: 'Tasks and approvals', icon: 'tasks' },
+        {
+          id: 'messages',
+          label: 'Messages and calls',
+          icon: 'messages',
+          // `undefined` rather than 0: the shell renders no badge at all
+          // when there is nothing waiting, which is the correct look for
+          // an empty inbox and not the same as a badge reading "0".
+          count: counters['workshop.messages.unread'] || undefined,
+        },
+        { id: 'notifications', label: 'Notifications', icon: 'notifications' },
+        { id: 'ai', label: 'AI assistant', icon: 'ai' },
+        { id: 'help', label: 'Help and support', icon: 'help' },
+      ]}
+    >
+      {children}
+    </WorkspaceShell>
   );
 }

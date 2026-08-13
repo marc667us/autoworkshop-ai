@@ -168,7 +168,7 @@ export async function RequestSpecialistScreen() {
             header: '',
             nowrap: true,
             // One place to reply, not two.
-            cell: () => <Link href="/communication/messages">Open</Link>,
+            cell: () => <Link href="/workshop/communication/messages">Open</Link>,
           },
         ]}
       />

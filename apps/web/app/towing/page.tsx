@@ -7,5 +7,5 @@ import { redirect } from 'next/navigation';
  * disagreeing.
  */
 export default function Index() {
-  redirect('/operations/dashboard');
+  redirect('/towing/operations/dashboard');
 }

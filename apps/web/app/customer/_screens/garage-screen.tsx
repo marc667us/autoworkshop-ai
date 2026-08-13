@@ -185,7 +185,7 @@ async function GarageList() {
               }}
             >
               {customerStage(current.get(v.id)!.stage).detail}{' '}
-              <Link href="/service-and-repairs/repair-tracking">Track this repair</Link>
+              <Link href="/customer/service-and-repairs/repair-tracking">Track this repair</Link>
             </p>
           ) : null}
 

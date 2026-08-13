@@ -109,9 +109,9 @@ async function Board() {
                   ? 'No driver is free. '
                   : 'No truck is free. '}
               Free one by completing a job on{' '}
-              <Link href="/operations/active-recoveries">Active Recoveries</Link>, or add to the roster on{' '}
-              <Link href="/operations/drivers">Drivers</Link> and{' '}
-              <Link href="/operations/recovery-vehicles">Recovery Vehicles</Link>.
+              <Link href="/towing/operations/active-recoveries">Active Recoveries</Link>, or add to the roster on{' '}
+              <Link href="/towing/operations/drivers">Drivers</Link> and{' '}
+              <Link href="/towing/operations/recovery-vehicles">Recovery Vehicles</Link>.
             </p>
           ) : (
             <form

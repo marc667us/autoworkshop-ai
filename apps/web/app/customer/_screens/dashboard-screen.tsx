@@ -173,7 +173,7 @@ export async function CustomerDashboardScreen() {
                         its owner is never told they are the blocker is the
                         expensive version of this. */}
                     {needsCustomer(current.get(v.id)!.stage) ? (
-                      <Link href="/service-and-repairs/repair-tracking">Action needed</Link>
+                      <Link href="/customer/service-and-repairs/repair-tracking">Action needed</Link>
                     ) : null}
                   </span>
                 ) : null}
@@ -184,7 +184,7 @@ export async function CustomerDashboardScreen() {
         <p style={{ marginBottom: 0, marginTop: primitive.space[3] }}>
           {/* `next/link`, not `<a>`: an internal navigation should be client-side,
               and the project lints for it. */}
-          <Link href="/my-vehicles/garage">Open your garage</Link>
+          <Link href="/customer/my-vehicles/garage">Open your garage</Link>
         </p>
       </Card>
 
@@ -278,7 +278,7 @@ export async function CustomerDashboardScreen() {
           </ul>
         )}
         <p style={{ marginBottom: 0, marginTop: primitive.space[3] }}>
-          <Link href="/parts-and-warranty/parts-orders">Open your parts orders</Link>
+          <Link href="/customer/parts-and-warranty/parts-orders">Open your parts orders</Link>
         </p>
       </Card>
 

@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { viewerHasSession } from '@autoworkshop/next-shell';
+import { currentViewer, homeWorkspaceFor, viewerHasSession } from '@autoworkshop/next-shell';
 import { MarketplaceLanding } from '@autoworkshop/marketplace-ui';
 import { AddToBasket } from '@autoworkshop/marketplace-ui';
 
@@ -41,7 +41,19 @@ function one(value: string | string[] | undefined): string {
 
 export default async function Index({ searchParams }: { searchParams?: Promise<SearchParams> }) {
   if (await viewerHasSession('customer')) {
-    redirect('/home/dashboard');
+    // ADR-021 — `main` DISPATCHES. Before the consolidation this line could
+    // simply send everyone to `/home/dashboard`, because the only people who
+    // ever reached this page were on the customer application's own hostname.
+    // One artifact has one front door, and a workshop owner, a supplier and an
+    // insurer all arrive here now.
+    //
+    // `homeWorkspaceFor` is the SAME map `isForeignToWorkspace` uses to decide
+    // that a role does not belong in a pack. Reusing it is what stops the front
+    // door sending somebody to a pack that will immediately 404 them — two
+    // separate answers to "where does this role live" is precisely the
+    // "two literals in two files" trap this repo has already paid for.
+    const viewer = await currentViewer('customer');
+    redirect(`/${homeWorkspaceFor(viewer?.activeRole)}/home/dashboard`);
   }
 
   const params = (await searchParams) ?? {};
@@ -128,7 +140,7 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // break this mount silently while the apex kept working, because only one
       // of the two spellings would have been updated.
       requestServiceHref={REQUEST_SERVICE_PATH}
-      basketHref="/parts-and-warranty/parts-orders"
+      basketHref="/customer/parts-and-warranty/parts-orders"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
       )}

@@ -107,7 +107,7 @@ export async function MySecurityScreen() {
       </p>
 
       <p style={{ margin: '1.5rem 0 0' }}>
-        <Link href="/support/support-cases">Tell the workshop about a security concern</Link>
+        <Link href="/customer/support/support-cases">Tell the workshop about a security concern</Link>
       </p>
     </>
   );

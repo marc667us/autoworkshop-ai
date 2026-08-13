@@ -16,7 +16,7 @@ import { currentViewer, viewerHasSession } from '@autoworkshop/next-shell';
  *
  * ── WHY THIS REPLACED A REDIRECT, AND WHERE THE PATTERN CAME FROM ──────────
  *
- * This route used to be `redirect('/home/dashboard')`, on the grounds that §18
+ * This route used to be `redirect('/workshop/home/dashboard')`, on the grounds that §18
  * makes the dashboard a workspace's default landing. The consequence was that
  * `autoworkshop.aiappinvent.com` — the only address anyone has — answered with
  * a sign-in wall. The public parts marketplace and the free VIN search existed

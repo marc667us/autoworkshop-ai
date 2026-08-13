@@ -1,6 +1,4 @@
 import type { Metadata } from 'next';
-import { ThemeProvider, themeBootScript } from '@autoworkshop/ui';
-import { prewarmKeycloak } from '@autoworkshop/auth';
 
 export const metadata: Metadata = {
   title: 'Abossey Okai Auto Parts Marketplace — AutoWorkshop AI',
@@ -9,64 +7,28 @@ export const metadata: Metadata = {
 };
 
 /**
- * ROOT LAYOUT — html, body, the theme boot script and the theme provider.
- * No application shell.
+ * THE CUSTOMER PACK'S LAYOUT — and it is deliberately almost nothing.
  *
- * ⚠️ WHY THE APPLICATION SHELL IS NO LONGER HERE. This layout wraps EVERY route
- * in the workspace, including the public landing page at `/`. When it rendered
- * `WorkspaceShell` directly, a signed-out visitor arriving at the marketplace
- * got the signed-in application's navigation — the home and dashboard tree —
- * before they had an account. That contradicts the requirement directly: a
- * visitor may only VIEW, and sees home and the dashboard once signed in.
+ * ⚠️ IT DOES NOT RENDER `WorkspaceShell`, AND THAT IS THE POINT, not an
+ * omission. This layout wraps EVERY route in the pack, including the public
+ * marketplace. When it rendered the shell directly (before 2026-08-03), a
+ * signed-out visitor arriving to browse parts was shown the signed-in
+ * application's navigation — the home and dashboard tree — before they had an
+ * account. The shell lives one level down in `(app)/layout.tsx`, which wraps
+ * the authenticated routes and nothing else. Route groups do not appear in the
+ * URL, so the paths are unchanged by that split.
  *
- * The shell therefore moved down one level into the `(app)` route group, which
- * wraps the authenticated routes and nothing else. Route groups do not appear
- * in the URL, so `/home/dashboard` is still `/home/dashboard`; the only thing
- * that changed is which layouts wrap it.
+ * WHAT IT USED TO DO AND NO LONGER DOES (ADR-021). It owned `<html>`, `<body>`,
+ * the theme boot script, `ThemeProvider` and the Keycloak prewarm, because it
+ * was the ROOT layout of a separately deployed application. There is one
+ * artifact now and exactly one layout may open a document: `main`'s, at
+ * `apps/web/app/layout.tsx`, which carries all five.
  *
- * ⚠️ `ThemeProvider` IS RENDERED HERE FOR TWO REASONS, AND THE SECOND IS NOT
- * COSMETIC. First, the public landing page should honour the visitor's
- * light/dark preference like every other screen — it used to inherit that from
- * the shell, and the split would otherwise have taken it away.
- *
- * Second, it is the root layout's CLIENT BOUNDARY, and removing it breaks the
- * build. With a root layout containing no client component at all, Next 15.1.3
- * fails to prerender `/_not-found` with "Cannot read properties of null
- * (reading 'useContext')" and then falls back to generating the pages-router
- * error page, which dies with "<Html> should not be imported outside of
- * pages/_document". Both symptoms have this one cause; both were measured by
- * removing and restoring this component. If it is ever taken out, the app
- * router needs another client boundary at the root, not a workaround on the
- * 404 route.
+ * So what is left is the pack's own `metadata` and a pass-through. That looks
+ * like a file worth deleting and it is not — remove it and this pack inherits
+ * the artifact's generic title, losing the marketplace's own description on the
+ * one surface in this product that strangers reach from a search engine.
  */
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Start Keycloak waking NOW, not when somebody presses "Sign in".
-  //
-  // A CUSTOMER is the visitor most exposed to the cold start: they arrive from a
-  // link, sign in once, and never see the product again that day — so they are
-  // almost always the first request after a quiet period. Fire-and-forget and
-  // throttled to one ping per five minutes per process; see `prewarm.ts`.
-  //
-  // Safe in a synchronous component precisely because nothing is awaited.
-  prewarmKeycloak();
-
-  return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        {/* Applies the stored theme before first paint — prevents the flash of
-            incorrect theme. Must be inline and synchronous: a React effect runs
-            after paint, which is exactly too late. */}
-        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
-      </head>
-      <body
-        style={{
-          margin: 0,
-          background: 'var(--aw-background-primary)',
-          color: 'var(--aw-text-primary)',
-        }}
-      >
-        <ThemeProvider>{children}</ThemeProvider>
-      </body>
-    </html>
-  );
+export default function CustomerLayout({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
 }

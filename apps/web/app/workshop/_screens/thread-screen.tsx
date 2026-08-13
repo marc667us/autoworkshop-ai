@@ -97,7 +97,7 @@ export async function ThreadScreen({ threadId }: { threadId: string }) {
       />
 
       <p style={{ margin: '0 0 1rem' }}>
-        <Link href="/communication/messages" prefetch={false}>
+        <Link href="/workshop/communication/messages" prefetch={false}>
           ← All conversations
         </Link>
       </p>

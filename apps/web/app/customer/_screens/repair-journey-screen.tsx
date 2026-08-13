@@ -210,7 +210,7 @@ async function JourneyList({ view }: { view: JourneyView }) {
         >
           <strong>{waiting}</strong>{' '}
           {waiting === 1 ? 'repair is waiting on you' : 'repairs are waiting on you'}.{' '}
-          <Link href="/service-and-repairs/repair-proposals">See what is needed</Link>
+          <Link href="/customer/service-and-repairs/repair-proposals">See what is needed</Link>
         </p>
       ) : null}
 

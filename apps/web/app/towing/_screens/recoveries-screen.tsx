@@ -160,7 +160,7 @@ function Settle({ recovery }: { recovery: Recovery }) {
   if (recovery.invoiceId) {
     return (
       <p style={{ margin: `${primitive.space[3]} 0 0 0`, color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
-        Invoiced ({recovery.invoiceStatus}) — see <Link href="/operations/invoices">Invoices</Link>.
+        Invoiced ({recovery.invoiceStatus}) — see <Link href="/towing/operations/invoices">Invoices</Link>.
       </p>
     );
   }
@@ -173,7 +173,7 @@ function Settle({ recovery }: { recovery: Recovery }) {
       </button>
       <span style={{ color: themeVar.textSecondary, fontSize: primitive.fontSize.sm }}>
         Call-out fee and per-km rate come from{' '}
-        <Link href="/operations/settings">Settings</Link>
+        <Link href="/towing/operations/settings">Settings</Link>
         {recovery.distanceKm
           ? ` · ${recovery.distanceKm} km recorded`
           : ' · no distance recorded, so the invoice will be the call-out fee alone'}
