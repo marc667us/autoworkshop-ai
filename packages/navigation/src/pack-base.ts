@@ -27,6 +27,17 @@ import type { WorkspaceId } from './types';
  * cannot be type-checked into agreement" once.
  */
 
+/**
+ * The seven mount points, as a value rather than a type.
+ *
+ * Kept here rather than derived from `workspaces` to avoid a circular import —
+ * `workspaces.ts` is the largest module in the package and this one is imported
+ * by `resolve.ts`, which it in turn imports.
+ */
+const PACK_IDS = [
+  'customer', 'workshop', 'supplier', 'fleet', 'insurance', 'towing', 'admin',
+] as const;
+
 /** `customer` → `/customer`. The prefix a pack's routes are mounted under. */
 export function packBase(workspaceId: WorkspaceId | string): string {
   return `/${workspaceId}`;
@@ -44,6 +55,29 @@ export function packBase(workspaceId: WorkspaceId | string): string {
 export function withPackBase(workspaceId: WorkspaceId | string, path: string): string {
   const base = packBase(workspaceId);
   if (path === base || path.startsWith(base + '/')) return path;
+
+  // ⚠️ THE ROOT PATH IS THE ONE THAT BITES. A naive concatenation turns `/` into
+  // `/customer/` — with a trailing slash that matches no navigation href, so the
+  // route resolves to nothing and the page renders its not-found branch. It is
+  // reachable: `renderModulePage` builds its path from `params.slug`, and an
+  // empty slug produces exactly `/`. Measured, not imagined.
+  if (path === '' || path === '/') return base;
+
+  // 🔴 A PATH CARRYING ANOTHER PACK'S PREFIX IS A BUG, AND WITHOUT THIS IT IS A
+  // SILENT ONE. Codex finding 2: `withPackBase('customer', '/workshop/home/
+  // dashboard')` produced `/customer/workshop/home/dashboard` — a path no pack
+  // serves and no href advertises, so `requireNavRoute` 404s with nothing in any
+  // log to say why. Returning it unchanged still 404s (customer's tree does not
+  // advertise a workshop route) but it 404s the ORIGINAL path, which is the one
+  // a person can search for.
+  //
+  // Deliberately NOT a throw. This runs inside server components on every gated
+  // page; turning a mis-typed link into a 500 across the artifact would be a far
+  // worse trade than a legible 404.
+  if (PACK_IDS.some((id) => path === `/${id}` || path.startsWith(`/${id}/`))) {
+    return path;
+  }
+
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 

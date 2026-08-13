@@ -53,7 +53,30 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
     // separate answers to "where does this role live" is precisely the
     // "two literals in two files" trap this repo has already paid for.
     const viewer = await currentViewer('customer');
-    redirect(`/${homeWorkspaceFor(viewer?.activeRole)}/home/dashboard`);
+
+    // 🔴 DO NOT DISPATCH ON AN UNRESOLVED VIEWER. Codex findings 4 and 5, which
+    // are the same defect approached from two directions.
+    //
+    // `viewerHasSession` reads a COOKIE; `currentViewer` calls `/api/v1/me` with
+    // a token. The second can fail while the first says yes — an API outage, a
+    // cold start, or an access token that expired because middleware does not
+    // run on `/` (it is deliberately public so a missing AUTH_SECRET cannot 500
+    // the storefront). In all of those, `activeRole` is undefined.
+    //
+    // `homeWorkspaceFor(undefined)` answers `workshop`, correctly, because that
+    // is the right default for STAFF whose role has not resolved yet. Used here
+    // it would take a signed-in CUSTOMER — whose session is perfectly valid —
+    // and send them to `/workshop/home/dashboard`, where the foreign-role guard
+    // 404s them the moment their viewer DOES resolve. A guess about identity,
+    // cashed at the one moment identity was unavailable.
+    //
+    // So it dispatches only when it actually knows. Otherwise it falls through
+    // to the marketplace below, which renders for anyone, needs no viewer, and
+    // is a page rather than a dead end. The shell resolves them on their next
+    // navigation, by which time middleware has run and refreshed the token.
+    if (viewer?.activeRole) {
+      redirect(`/${homeWorkspaceFor(viewer.activeRole)}/home/dashboard`);
+    }
   }
 
   const params = (await searchParams) ?? {};
