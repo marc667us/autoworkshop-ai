@@ -78,28 +78,36 @@ jobs:
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       DB_NAME: autoworkshop-postgres
+      # Applies to psql AND pg_dump identically, which a URL parameter
+      # appended in one place did not.
+      PGSSLMODE: require
 
     steps:
       - uses: actions/checkout@v4
 
-      # ⚠️ CLIENT 16, MATCHING THE SERVER — AND THE PROBE IS WHAT SETTLED IT.
+      # ⚠️ CLIENT 17 AGAINST A SERVER 16, DELIBERATELY, AND THAT IS NOT THE
+      # OBVIOUS CHOICE — SO HERE IS THE EVIDENCE.
       #
-      # 🔴 PRODUCTION IS PostgreSQL 16.14. I installed client 17 by copying
-      # `apply-migrations.yml`, which pins 17 and works — because it only ever
-      # runs `psql`, and psql tolerates the mismatch. `pg_dump` does not: it
-      # failed in ~0.2s with "SSL connection has been closed unexpectedly",
-      # which names TLS and means nothing of the kind.
+      # The probe printed `PostgreSQL 16.14`, so matching the server looked
+      # right and I pinned client 16. Every connection then failed, INCLUDING
+      # psql's: that run's whole probe step finished in 0.55s having printed
+      # nothing, where the client-17 run took 0.75s and returned the version
+      # string. The only configuration in which anything has connected to this
+      # database from a runner is client 17 — which is also what
+      # `apply-migrations.yml` pins, and it has been reaching this database for
+      # weeks.
       #
-      # That error cost two wrong diagnoses (TLS, then the database firewall),
-      # each of which I asserted as measured and neither of which was. What
-      # settled it was running psql and pg_dump SIDE BY SIDE on the same
-      # connection string in the same job: psql returned "PostgreSQL 16.14" and
-      # pg_dump failed on the line below it.
+      # ⚠️ SO "MATCH THE SERVER VERSION" IS THE WRONG RULE HERE and it cost a
+      # run to learn. pg_dump refuses a server NEWER than itself; it is happy
+      # with an older one. The binding constraint is whatever Render's endpoint
+      # will negotiate, and only 17 has.
       #
-      # ⚠️ DO NOT "FIX" THIS BY COPYING THE 17 FROM apply-migrations.yml AGAIN.
-      # That workflow is right for what it does. The version has to match what
-      # the SERVER runs, and the server's version is printed by the probe step
-      # every run so the next person can see it drift.
+      # 🔴 THE REMAINING FAILURE IS pg_dump-SPECIFIC AND UNEXPLAINED. psql
+      # connects on 17 and pg_dump does not, sharing one libpq and one string.
+      # SSL is now requested through PGSSLMODE rather than a URL parameter, so
+      # the two are configured identically and the difference cannot be the
+      # string. If it still fails, that is the finding, and the probe's own
+      # output is the evidence to read next — not another theory.
       #
       # The full path, not bare `pg_dump`: Ubuntu runners ship their own client
       # on PATH and it is not this one.
@@ -113,9 +121,9 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
             | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-16 >/dev/null
-          echo "PGBIN=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
-          /usr/lib/postgresql/16/bin/pg_dump --version
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          echo "PGBIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Find the database and take its connection string
         run: |
@@ -247,8 +255,8 @@ jobs:
           SRC="$(cat /tmp/dburl)"
           echo "--- psql, connection string exactly as Render gave it ---"
           "$PGBIN/psql" "$SRC" -tA -c "select version()" || echo "psql(bare) FAILED rc=$?"
-          echo "--- psql, with sslmode=require ---"
-          "$PGBIN/psql" "${SRC}?sslmode=require" -tA -c "select 1" || echo "psql(ssl) FAILED rc=$?"
+          echo "--- psql again (PGSSLMODE=require is set for the whole job) ---"
+          "$PGBIN/psql" "$SRC" -tA -c "select 1" || echo "psql(ssl) FAILED rc=$?"
           echo "--- pg_dump, schema only, no data ---"
           "$PGBIN/pg_dump" --schema-only --no-owner --no-acl -f /tmp/probe.sql "$SRC" \
             && echo "pg_dump(schema-only) OK $(wc -c < /tmp/probe.sql) bytes" \
@@ -279,11 +287,6 @@ jobs:
           # a leftover ephemeral entry becomes permanent otherwise, which that
           # workflow already found once.
           SRC="$(cat /tmp/dburl)"
-          case "$SRC" in
-            *sslmode=*) ;;
-            *\?*) SRC="${SRC}&sslmode=require" ;;
-            *)    SRC="${SRC}?sslmode=require" ;;
-          esac
           STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
 
@@ -316,7 +319,7 @@ jobs:
       - name: Record what production actually holds
         run: |
           set -euo pipefail
-          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)?sslmode=require" -tA -F'|' -c "
+          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$(cat /tmp/dburl)" -tA -F'|' -c "
             SELECT n.nspname || '.' || c.relname, c.reltuples::bigint
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE c.relkind = 'r'
@@ -368,7 +371,7 @@ jobs:
           # Compare live counts, not the planner's `reltuples` estimate, on the
           # tables that carry the data anybody would miss.
           for t in identity.organizations identity.memberships core.customers core.vehicles; do
-            S=$("$PGBIN/psql" -tA "$(cat /tmp/dburl)?sslmode=require" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
+            S=$("$PGBIN/psql" -tA "$(cat /tmp/dburl)" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
             D=$("$PGBIN/psql" -tA "$TARGET" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
             printf '  %-28s production=%-8s restored=%-8s\n' "$t" "$S" "$D"
             if [ "$S" != "skip" ] && [ "$S" != "$D" ]; then
