@@ -1,0 +1,107 @@
+# Render inventory — READ-ONLY. What does this account actually run, and what
+# is each service costing us in free instance hours?
+#
+# WHY THIS EXISTS, AND WHY IT ENUMERATES WHEN `render-status.yml` DELIBERATELY
+# DOES NOT
+#
+# `render-status.yml` probes three hardcoded service ids precisely so that no
+# typo can address a neighbouring service — the same Render account also hosts
+# the Solar production application, which is off-limits under ADR-011. That
+# scoping is right for a health probe and useless for a CONSOLIDATION, which
+# has to answer "how many services exist, which are suspended, and which custom
+# domains are attached to which" before anything can safely be deleted.
+#
+# So this workflow enumerates, and protects the Solar boundary a different way:
+#
+#   · it makes GET requests only — it creates, updates, resumes and deletes
+#     nothing, so enumerating cannot damage a neighbour;
+#   · anything whose name does not start with `autoworkshop` is REDACTED to a
+#     type and a suspended flag. The name, id, URL and commands are never
+#     printed. We need to know that the account carries other services (they
+#     consume the same free allowance); we do not need to know which.
+#
+# 🔴 IT ASSERTS NOTHING AND ALWAYS EXITS 0. Same rule as
+# `scripts/record-live-state.sh`: this is a CAMERA, not a gate. An exit code
+# from a workflow that only reads has misled this repository before.
+name: Render inventory
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: List services
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          # `?limit=100` in one page. This account has ~12 services; if it ever
+          # exceeds 100 the cursor loop would matter, and the count printed at
+          # the end is what would reveal the truncation.
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services?limit=100" > services.json
+
+          python3 - <<'PY'
+          import json, urllib.request, os
+
+          KEY = os.environ["RENDER_API_KEY"]
+          rows = json.load(open("services.json"))
+
+          def get(path):
+              req = urllib.request.Request(
+                  f"https://api.render.com/v1{path}",
+                  headers={"Authorization": f"Bearer {KEY}"},
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.load(r)
+
+          ours, theirs = [], []
+          for row in rows:
+              svc = row.get("service", row)
+              (ours if (svc.get("name") or "").startswith("autoworkshop") else theirs).append(svc)
+
+          print(f"TOTAL SERVICES ON THIS ACCOUNT: {len(rows)}")
+          print(f"  autoworkshop-*: {len(ours)}     other (REDACTED — Solar boundary): {len(theirs)}")
+          print()
+
+          print("=" * 78)
+          print("AUTOWORKSHOP SERVICES")
+          print("=" * 78)
+          for s in sorted(ours, key=lambda s: s.get("name") or ""):
+              det = s.get("serviceDetails", {}) or {}
+              esd = det.get("envSpecificDetails", {}) or {}
+              print(f"\n{s.get('name')}   [{s.get('id')}]")
+              print(f"  type        : {s.get('type')}   runtime: {det.get('env') or det.get('runtime')}")
+              print(f"  plan/region : {det.get('plan')} / {det.get('region')}")
+              # WHO suspended it is the entire diagnosis and the two causes look
+              # identical from outside: an empty `suspenders` list with
+              # suspended=suspended means the PLATFORM did it (free instance
+              # hours), whereas ['user'] means somebody chose to. Only the second
+              # can be lifted through the API.
+              print(f"  suspended   : {s.get('suspended')}   suspenders: {s.get('suspenders')}")
+              print(f"  autoDeploy  : {s.get('autoDeploy')}   branch: {s.get('branch')}")
+              print(f"  url         : {det.get('url')}")
+              print(f"  image       : {(esd.get('image') or {}).get('imagePath')}")
+              print(f"  healthCheck : {det.get('healthCheckPath')!r}")
+
+              # Custom domains decide what a consolidation may delete. A service
+              # holding `autoworkshop.aiappinvent.com` cannot simply be removed:
+              # the domain has to move first, or the product goes dark.
+              if s.get("type") == "web_service":
+                  try:
+                      doms = get(f"/services/{s['id']}/custom-domains?limit=20")
+                      names = [d.get("customDomain", d).get("name") for d in doms]
+                      print(f"  domains     : {names if names else '(none — onrender.com only)'}")
+                  except Exception as e:
+                      print(f"  domains     : ERROR {e}")
+
+          print()
+          print("=" * 78)
+          print("OTHER SERVICES ON THE SAME FREE ALLOWANCE (names withheld — ADR-011)")
+          print("=" * 78)
+          for s in theirs:
+              print(f"  type={s.get('type')}  plan={(s.get('serviceDetails') or {}).get('plan')}  suspended={s.get('suspended')}")
+          PY
