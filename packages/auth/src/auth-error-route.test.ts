@@ -24,41 +24,58 @@ describe('the auth error route Auth.js is configured to redirect to', () => {
   const appsDir = join(__dirname, '../../../apps');
 
   /**
-   * A "web app" here means a Next app with an `app/` directory. That excludes
-   * `api` (NestJS), `mobile` (Expo), `e2e` (Playwright) and `storybook`, none of
-   * which serve `/api/auth/*` and none of which can receive this redirect.
+   * 🔴 REWRITTEN FOR ADR-021, AND THE OLD VERSION EARNED ITS KEEP ON THE WAY OUT.
+   *
+   * It asserted that at least SEVEN Next apps existed under `apps/` and that each
+   * one mounted `app/auth/error/page.tsx`, because there were seven deployed
+   * applications and `pages.error` is set once for all of them. That is now one
+   * artifact with one such route, so the count assertion had to go.
+   *
+   * ⚠️ WHAT MUST NOT GO IS THE PROPERTY. During the consolidation all seven
+   * copies moved with their packs to `/<pack>/auth/error`, while
+   * `workspace-auth.ts` still pointed `pages.error` at the ARTIFACT path
+   * `/auth/error` — seven mounted routes covering a path nothing referenced, and
+   * the referenced path missing. A failed sign-in would have hit a bare 404
+   * instead of the "Keycloak is starting up" screen, at exactly the moment people
+   * meet it: Keycloak is 126–137s from cold here.
+   *
+   * So this no longer counts apps. It READS the configured path out of
+   * `workspace-auth.ts` and requires a route file to exist for whatever it says.
+   * Change the config and this test follows it; move the route and this fails.
+   * The previous version could only have caught a route that moved, not a config
+   * that did — and it is the pair that has to agree.
    */
-  const webApps = readdirSync(appsDir).filter((name) => {
-    const appRouter = join(appsDir, name, 'app');
-    return existsSync(appRouter) && statSync(appRouter).isDirectory();
+  const config = readFileSync(join(__dirname, 'workspace-auth.ts'), 'utf8');
+  const configured = /pages:\s*\{\s*error:\s*'([^']+)'/.exec(config)?.[1];
+
+  it('pages.error declares a path at all', () => {
+    expect(
+      configured,
+      'no `pages: { error: ... }` found in workspace-auth.ts — either it was ' +
+        'removed (Auth.js then renders its own error page) or its shape changed ' +
+        'and this test can no longer see it',
+    ).toBeTruthy();
   });
 
-  it('found the web apps to check', () => {
-    // Guards the discovery itself. Without this, a wrong path would produce an
-    // EMPTY list and every assertion below would pass while proving nothing.
-    expect(webApps.length, 'no Next apps found under apps/').toBeGreaterThanOrEqual(7);
-    expect(webApps).toContain('workshop-web');
-    expect(webApps).toContain('customer-web');
-  });
-
-  it.each(webApps)('%s mounts /auth/error', (app) => {
-    const page = join(appsDir, app, 'app/auth/error/page.tsx');
+  it('a route file exists for the path Auth.js redirects to', () => {
+    const page = join(appsDir, 'web', 'app', ...configured!.split('/').filter(Boolean), 'page.tsx');
     expect(
       existsSync(page),
-      `${app} has no app/auth/error/page.tsx — a failed sign-in there 404s, because ` +
-        'workspace-auth.ts sets pages.error = "/auth/error" for every workspace',
+      `apps/web has no route for ${configured} (looked for ${page}) — a failed ` +
+        'sign-in 404s, which is the worst possible moment to lose an explanation',
     ).toBe(true);
   });
 
-  it('still has pages.error pointing where these routes are', () => {
-    // The other direction: if somebody removes or renames the override, these
-    // seven pages become dead code and this suite would happily keep passing.
-    // `readFileSync` imported at the top, not `require()`d inline: the lint
-    // rule forbidding require() is not cosmetic here — it is what kept CI red
-    // for this file, and CI red is what nobody reads.
-    const config = readdirSync(__dirname).includes('workspace-auth.ts')
-      ? readFileSync(join(__dirname, 'workspace-auth.ts'), 'utf8')
-      : '';
-    expect(config).toContain("pages: { error: '/auth/error' }");
+  it('the packs do NOT each carry their own copy', () => {
+    // Seven copies at /<pack>/auth/error is precisely the state that made the
+    // real route missing look harmless: plenty of files, none of them reachable.
+    const packsWithOwnCopy = readdirSync(join(appsDir, 'web', 'app'), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith('_') && !e.name.startsWith('('))
+      .filter((e) => existsSync(join(appsDir, 'web', 'app', e.name, 'auth/error/page.tsx')));
+
+    expect(
+      packsWithOwnCopy.map((e) => e.name),
+      'a pack carries its own auth/error — Auth.js will never redirect there',
+    ).toEqual([]);
   });
 });
