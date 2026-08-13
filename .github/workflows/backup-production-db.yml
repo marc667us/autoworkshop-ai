@@ -287,6 +287,30 @@ jobs:
           # a leftover ephemeral entry becomes permanent otherwise, which that
           # workflow already found once.
           SRC="$(cat /tmp/dburl)"
+
+          # 🔴 DUMP ONLY THE SCHEMAS THIS USER OWNS — AND THIS IS THE ACTUAL BUG
+          # THAT FOUR EARLIER THEORIES MISSED.
+          #
+          # KEYCLOAK SHARES THIS DATABASE. Its Liquibase tables live alongside
+          # ours and the application user cannot read them, so a whole-database
+          # pg_dump hit `permission denied for table databasechangeloglock`, and
+          # the server then dropped the socket — which libpq reports as "SSL
+          # connection has been closed unexpectedly". That message names TLS and
+          # is a permissions error. It cost diagnoses of TLS, the firewall, and
+          # the client version before the probe printed the real line.
+          #
+          # ⚠️ SCHEMAS ARE DISCOVERED, NOT LISTED. Hardcoding today's schema
+          # names would silently stop backing up the next one somebody adds —
+          # a backup that quietly narrows is worse than one that fails.
+          SCHEMAS=$("$PGBIN/psql" -tA "$SRC" -c "
+            SELECT string_agg('--schema=' || quote_ident(nspname), ' ')
+            FROM pg_namespace n
+            WHERE nspname NOT LIKE 'pg\_%'
+              AND nspname <> 'information_schema'
+              AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user")
+          [ -n "$SCHEMAS" ] || { echo "::error::no schemas owned by this user — refusing to write an empty backup"; exit 1; }
+          echo "dumping schemas: $SCHEMAS"
+
           STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
 
@@ -323,7 +347,9 @@ jobs:
             SELECT n.nspname || '.' || c.relname, c.reltuples::bigint
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE c.relkind = 'r'
-              AND n.nspname NOT IN ('pg_catalog','information_schema')
+              AND n.nspname NOT LIKE 'pg\_%'
+              AND n.nspname <> 'information_schema'
+              AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user
             ORDER BY 1;" > /tmp/source-tables.txt
           echo "tables in production: $(wc -l < /tmp/source-tables.txt)"
           head -25 /tmp/source-tables.txt
