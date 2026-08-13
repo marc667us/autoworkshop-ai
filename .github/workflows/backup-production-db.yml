@@ -201,6 +201,43 @@ jobs:
           # Render applies the rule asynchronously; connecting immediately races it.
           sleep 20
 
+      # 🔴 A PROBE, BECAUSE I HAVE GUESSED THE CAUSE TWICE AND BEEN WRONG TWICE.
+      #
+      # `pg_dump` fails here with "SSL connection has been closed unexpectedly"
+      # in about 0.2s. I blamed TLS (added sslmode=require — identical failure)
+      # and then the database firewall (opened a /32, PATCH 200, waited 20s —
+      # identical failure). Meanwhile `apply-migrations.yml` reaches this exact
+      # host with `psql` and the exact same connection string, successfully, in
+      # the same minute.
+      #
+      # So the question is no longer "why can nothing connect" — something can.
+      # It is "what differs between psql here and psql there", and the cheapest
+      # way to find out is to run psql HERE, on the same string, immediately
+      # before pg_dump. Two outcomes, both informative:
+      #
+      #   · psql succeeds and pg_dump fails → it is pg_dump-specific (protocol,
+      #     version negotiation, or something Render's endpoint refuses).
+      #   · psql fails too → it is this JOB's environment, and the obvious
+      #     suspect is the `services:` container this workflow has and
+      #     apply-migrations.yml does not.
+      #
+      # `continue-on-error` so the probe REPORTS rather than replaces the real
+      # failure — a diagnostic that halts the run tells you less than one that
+      # lets the run reach its actual error.
+      - name: Probe the connection with psql before dumping
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          SRC="$(cat /tmp/dburl)"
+          echo "--- psql, connection string exactly as Render gave it ---"
+          "$PGBIN/psql" "$SRC" -tA -c "select version()" || echo "psql(bare) FAILED rc=$?"
+          echo "--- psql, with sslmode=require ---"
+          "$PGBIN/psql" "${SRC}?sslmode=require" -tA -c "select 1" || echo "psql(ssl) FAILED rc=$?"
+          echo "--- pg_dump, schema only, no data ---"
+          "$PGBIN/pg_dump" --schema-only --no-owner --no-acl -f /tmp/probe.sql "$SRC" \
+            && echo "pg_dump(schema-only) OK $(wc -c < /tmp/probe.sql) bytes" \
+            || echo "pg_dump(schema-only) FAILED rc=$?"
+
       - name: Dump production (read-only)
         run: |
           set -euo pipefail
