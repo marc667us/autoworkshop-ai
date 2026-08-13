@@ -46,7 +46,15 @@
  */
 
 /** The customer-web route that takes a complaint and a car description. */
-export const REQUEST_SERVICE_PATH = '/service-and-repairs/request-service';
+// 🔴 ADR-021 — MOUNTED. This is a CUSTOMER pack route, and under one artifact
+// the customer pack lives at `/customer`. Unmounted it produced
+// `/api/auth/signin?callbackUrl=%2Fservice-and-repairs%2Frequest-service`, so
+// the marketplace's primary "request a service" call to action returned a
+// signed-in visitor to a 404 — measured on the live apex, not inferred.
+//
+// The constant is exported and imported rather than retyped precisely so a
+// change like this happens once; that reasoning is in `app/page.tsx` too.
+export const REQUEST_SERVICE_PATH = '/customer/service-and-repairs/request-service';
 
 /**
  * The hardened base URL of a sibling app, or `undefined` when it is not usably

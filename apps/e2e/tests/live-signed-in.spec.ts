@@ -157,7 +157,20 @@ const APEX = (process.env['APEX_URL'] ?? 'https://autoworkshop.aiappinvent.com')
  * the local part and reading the resulting failure as an outage.
  */
 async function signIn(page: Page): Promise<void> {
-  await page.goto(`${APEX}/home/dashboard`, { waitUntil: 'domcontentloaded' });
+  // 🔴 ADR-021: `/workshop/home/dashboard`, NOT `/home/dashboard`. The apex used
+  // to BE workshop-web, so its dashboard sat at the root; the seven packs are
+  // paths inside one artifact now.
+  //
+  // This is what failed the signed-in job on the first run after the merge, and
+  // the failure told the truth in a misleading way: `/home/dashboard` 404s, a
+  // 404 renders no shell, and the helper timed out waiting for the shell's
+  // "Sign in". Read literally that says "the shell did not render" — which is
+  // correct, and nothing to do with sign-in being broken.
+  //
+  // The apex root `/` is deliberately NOT usable here: it is the public
+  // marketplace and renders no shell at all, by the same 2026-08-03 decision
+  // that a signed-out visitor must not be shown the application's navigation.
+  await page.goto(`${APEX}/workshop/home/dashboard`, { waitUntil: 'domcontentloaded' });
 
   // The shell's own control, scoped — the page body may carry its own sign-in
   // affordance and an unscoped locator fails Playwright's strict mode.
@@ -243,7 +256,7 @@ test.describe('the live site, signed in as the workshop owner', () => {
    */
   test('the dashboard renders the workshop tree, not a customer page', async ({ page }) => {
     await signIn(page);
-    await page.goto(`${APEX}/home/dashboard`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${APEX}/workshop/home/dashboard`, { waitUntil: 'domcontentloaded' });
 
     const body = await page.locator('body').innerText();
 
@@ -297,7 +310,9 @@ test.describe('the live site, signed in as the workshop owner', () => {
     const route = ownerLeadsRoute();
 
     await signIn(page);
-    const response = await page.goto(`${APEX}${route}`, {
+    // ADR-021: `route` is the workshop pack's spec route, so it mounts
+    // under `/workshop` like every other one in that tree.
+    const response = await page.goto(`${APEX}/workshop${route}`, {
       waitUntil: 'domcontentloaded',
     });
     expect(

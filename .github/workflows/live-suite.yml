@@ -621,7 +621,13 @@ jobs:
 
           # ── MY OWN CHANGE, VERIFIED ON LIVE ────────────────────────────────
           def robots_protects_private_areas():
-              s, body = fetch(f'{CUSTOMER}/robots.txt')
+              # 🔴 ADR-021: THE ARTIFACT ROOT, NOT THE CUSTOMER PACK. `robots.ts`
+              # was hoisted to `app/` with the rest of the public surface, so it
+              # is served at `/robots.txt`. Left as `{CUSTOMER}/robots.txt` this
+              # SKIPPED with "not deployed yet" — which is how a real gap and a
+              # moved file look identical, and a skip is not a pass.
+              # Confirmed 200 at the apex before changing it.
+              s, body = fetch(f'{APEX}/robots.txt')
               if s != 200:
                   return None, f'robots.txt returned {s} — not deployed yet'
               blocks_private = '/my-vehicles' in body and '/payments' in body

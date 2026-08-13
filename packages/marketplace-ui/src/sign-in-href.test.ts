@@ -50,9 +50,19 @@ describe('signInHrefFor — sign in on the host that owns the destination', () =
     expect(decodeURIComponent(href)).toContain(`/service-and-repairs/request-service?workshop=${ORG}`);
   });
 
-  it('falls back to the dashboard rather than building a link to nowhere', () => {
+  it('falls back to the DISPATCHER rather than building a link to nowhere', () => {
+    // 🔴 ADR-021 CHANGED THE RIGHT ANSWER HERE, and the old one was measured
+    // wrong on production. `/home/dashboard` was the apex's dashboard when the
+    // apex was workshop-web. Under one artifact a workshop owner's is
+    // `/workshop/home/dashboard` and a customer's is `/customer/home/dashboard`,
+    // so NO single literal can be right for every visitor — and the one that was
+    // here returned people to a 404 after signing in.
+    //
+    // `/` is right because `app/page.tsx` is the dispatcher: it resolves the
+    // viewer and forwards them to their own pack. Asserted as an exact value,
+    // not `toContain`, because `toContain('/')` would pass on literally any path.
     const href = signInHrefFor(undefined, ORG);
-    expect(decodeURIComponent(href)).toContain('/home/dashboard');
+    expect(decodeURIComponent(href)).toBe('/api/auth/signin?callbackUrl=/');
   });
 
   it('carries the workshop, so the funnel does not lose the chosen garage', () => {

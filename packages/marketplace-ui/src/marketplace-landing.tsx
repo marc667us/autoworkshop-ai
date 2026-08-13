@@ -400,7 +400,7 @@ export function MarketplaceLanding({
                   pressing it means "let me in", not "show me the shop".
                 */}
                 {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-                <a href="/api/auth/signin?callbackUrl=%2Fhome%2Fdashboard" style={BUTTON_SECONDARY}>
+                <a href="/api/auth/signin?callbackUrl=%2F" style={BUTTON_SECONDARY}>
                   Sign in
                 </a>
                 {basketHref ? <BasketLink href={basketHref} /> : null}
@@ -1439,7 +1439,17 @@ export function signInHrefFor(
   organizationId: string,
 ): string {
   if (!requestServiceHref) {
-    return `/api/auth/signin?callbackUrl=${encodeURIComponent('/home/dashboard')}`;
+    // 🔴 ADR-021: `/` NOT `/home/dashboard`. That path was the apex's dashboard
+    // when the apex was workshop-web; under one artifact it is
+    // `/workshop/home/dashboard`, and a customer's is `/customer/home/dashboard`
+    // — so no single literal here can be right for everybody.
+    //
+    // `/` is, because `app/page.tsx` is the dispatcher: it resolves the viewer
+    // and sends them to their OWN pack's dashboard. Landing a person on `/`
+    // after sign-in is not a compromise, it is the one destination that knows
+    // where they belong. Measured wrong on production before this: signing in
+    // from the apex returned to a 404.
+    return `/api/auth/signin?callbackUrl=${encodeURIComponent('/')}`;
   }
   const target = `${requestServiceHref}?workshop=${organizationId}`;
   if (/^https?:\/\//i.test(requestServiceHref)) {
