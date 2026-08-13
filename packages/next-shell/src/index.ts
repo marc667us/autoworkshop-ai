@@ -22,6 +22,7 @@ export {
   organizationsFromMemberships,
   rolesFromMemberships,
   holdsRoleInActiveOrganization,
+  homeWorkspaceFor,
 } from './viewer-contract';
 export { viewerHasSession } from './viewer';
 export { hasWorkspaceAccess, WorkspaceAccessDenied } from './WorkspaceGate';

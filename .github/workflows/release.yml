@@ -87,7 +87,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/workshop-web/Dockerfile
+          file: apps/web/Dockerfile
           # Load into the local daemon so the smoke test runs the EXACT artifact
           # that would be published. Building once and testing a rebuild would
           # test something else.
@@ -111,7 +111,7 @@ jobs:
 
           # Wait for readiness rather than sleeping a guessed interval.
           for i in $(seq 1 40); do
-            if curl -fsS -o /dev/null http://localhost:3000/home/dashboard; then
+            if curl -fsS -o /dev/null http://localhost:3000/; then
               echo "server up after ${i}s"; break
             fi
             if ! docker ps --filter name=aw --filter status=running -q | grep -q .; then
@@ -131,7 +131,27 @@ jobs:
             fi
           }
 
-          check /home/dashboard 200 "the health check path Render will use"
+          # ADR-021 MOVED THE HEALTH CHECK, AND THIS STEP WOULD OTHERWISE HAVE
+          # BLOCKED EVERY RELEASE. `/home/dashboard` was workshop-web's dashboard
+          # when workshop-web WAS the artifact; it is `/workshop/home/dashboard`
+          # now, so this check could no longer pass and Release would have failed
+          # its own smoke test on a perfectly good image. `/` is what
+          # `render.yaml` health-checks and is also the only route that renders
+          # with neither the API nor Keycloak reachable — which is the situation
+          # this container is in.
+          check / 200 "the health check path Render will use"
+
+          # 🔴 EVERY PACK IS CHECKED, because the whole point of the merge is
+          # that one image carries all seven. A pack that failed to mount returns
+          # 404 here, and nothing else in the pipeline would notice: the image
+          # builds, the server starts, and six of seven work.
+          for pack in customer workshop supplier fleet insurance towing admin; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000/${pack}")"
+            case "$code" in
+              200|307|308) echo "ok   /${pack} → ${code}" ;;
+              *) echo "::error::/${pack} returned ${code} — that pack did not mount"; fail=1 ;;
+            esac
+          done
           # THE ASYMMETRY THAT TWICE ESCAPED EVERY OTHER GATE. These 500 while
           # pages return 200 when AUTH_TRUST_HOST or the provider issuer is
           # wrong, so they are checked explicitly and separately.
@@ -156,7 +176,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/workshop-web/Dockerfile
+          file: apps/web/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import {
   getWorkspace,
   visibleGroups,
+  withPackBase,
   workspaceForRole,
 } from '@autoworkshop/navigation';
 import { currentViewer, viewerRole } from './viewer';
@@ -96,6 +97,18 @@ export async function requireNavRoute(
   const workspace = workspaceForRole(base, role);
   const groups = visibleGroups(workspace, grantsFor(viewer));
 
-  const advertised = groups.some((g) => g.items.some((i) => i.href === pathname));
+  // ADR-021 SYMMETRY. `visibleGroups` now returns MOUNTED hrefs (`/customer/...`),
+  // while the 341 pages that call this still pass their own literal spec route
+  // (`/customer-reception/customers`) because none of them were edited by the
+  // consolidation. Normalising here — rather than at 341 call sites — is what
+  // keeps the two comparable.
+  //
+  // 🔴 IF THIS LINE IS REMOVED THE FAILURE IS SILENT AND TOTAL: no href would
+  // ever equal an unmounted pathname, `advertised` would be false everywhere,
+  // and every gated page in the product would 404 underneath a green build.
+  // `withPackBase` is idempotent, so a caller that already passes a mounted
+  // path is unaffected.
+  const wanted = withPackBase(workspaceId, pathname);
+  const advertised = groups.some((g) => g.items.some((i) => i.href === wanted));
   if (!advertised) notFound();
 }

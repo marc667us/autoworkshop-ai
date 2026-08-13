@@ -19,6 +19,8 @@ export type {
 
 export { getWorkspace, pendingWorkspaces, workspaces } from './workspaces';
 
+export { packBase, withPackBase, withoutPackBase } from './pack-base';
+
 export {
   breadcrumbsFor,
   defaultExpanded,

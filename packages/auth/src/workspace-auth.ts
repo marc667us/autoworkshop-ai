@@ -163,7 +163,39 @@ export interface WorkspaceAuth {
  * again on the next visit. That is the intended, one-time cost.
  */
 export function sessionCookieName(workspaceId: WorkspaceId | string, secure: boolean): string {
-  return `${secure ? '__Secure-' : ''}authjs.session-token.${workspaceId}`;
+  // 🔴 ADR-021 — THE WORKSPACE IS NO LONGER IN THE NAME, AND THE PARAGRAPHS
+  // ABOVE ARE KEPT BECAUSE THEY EXPLAIN WHY IT ONCE WAS.
+  //
+  // Read the fourth paragraph again: it predicted exactly this. *"The moment two
+  // apps share a domain (subdomains under one parent, or two paths behind one
+  // proxy) it becomes a cross-workspace session."* That moment arrived on
+  // 2026-08-13, when the seven deployed applications became seven packs inside
+  // one artifact. The difference is that they are no longer two apps sharing a
+  // domain — they are ONE app, one process, one origin.
+  //
+  // So the defect the suffix was written to prevent cannot occur: there is no
+  // second application to read the first one's cookie. Keeping the suffix would
+  // not isolate anything, because the same process serves every pack and the
+  // browser would send all seven cookies on every request. What it WOULD do is
+  // demand a fresh sign-in each time somebody moved between packs, in a product
+  // whose premise is that a workshop owner also buys parts and a customer also
+  // tracks a repair.
+  //
+  // ⚠️ AUTHORITY NEVER CAME FROM WHICH COOKIE WAS PRESENTED, and that is what
+  // makes this safe rather than merely convenient. A session says only who the
+  // visitor is. What they may reach comes from the membership and grant resolved
+  // server-side in `resolveTenantContext`, and from RLS beneath it; a pack a
+  // viewer holds no membership for refuses them via `requireWorkspaceAccess()`
+  // whether or not a cookie for it exists. The 2026-08-04 defect was a session
+  // being ACCEPTED by an app that never issued it — here there is one issuer.
+  //
+  // The parameter is retained deliberately. Every caller across seven packs
+  // passes its own id, and none of those 300-odd call sites needed to change for
+  // this; making the argument meaningless in one function is the whole point of
+  // fixing the fact instead of the call sites. It also leaves the door open to
+  // re-scoping per pack if this app is ever split back apart.
+  void workspaceId;
+  return `${secure ? '__Secure-' : ''}authjs.session-token`;
 }
 
 /**

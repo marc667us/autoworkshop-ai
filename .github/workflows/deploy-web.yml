@@ -1,0 +1,227 @@
+# Deploy THE AutoWorkshop application — one artifact, all seven packs (ADR-021).
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THIS REPLACES SEVEN DEPLOY WORKFLOWS
+#
+# `deploy-customer-web.yml`, `deploy-supplier-web.yml`, `deploy-towing-web.yml`,
+# `deploy-fleet-web.yml`, `deploy-insurance-web.yml`, `deploy-admin-web.yml` and
+# the workshop half of `release.yml` each built one app and pushed it to one
+# Render service. There is one service now, so there is one of these.
+#
+# 🔴 THE FIVE DEFECTS THE OLD COPIES CARRIED ARE FIXED HERE, NOT INHERITED.
+# They were found on 2026-08-10 while modelling a new workflow ON supplier-web,
+# which is how a review of a copy became a review of the original:
+#
+#   1. `curl … || echo 000` YIELDS `000000`, NOT `000`. curl prints its `000`
+#      AND exits non-zero, so the `echo` appends a second one. Measured, length
+#      6. Every `= "000"` comparison written to catch a transport blip was
+#      therefore false, and the retry those tests guarded never ran. Here the
+#      exit code is captured separately and never OR-ed into the output.
+#   2. The deploy poll fell through to a GREEN READ-BACK OF THE OLD IMAGE. If
+#      the poll timed out, the next step read the service, found it healthy —
+#      because the PREVIOUS image was still serving — and reported success.
+#      Here a poll that does not reach `live` fails the job.
+#   3. THE DEPLOY ID WAS DISCARDED, so the poll asked "is this service healthy?"
+#      rather than "did MY deploy succeed?". Two different questions with the
+#      same answer on a good day. The id is captured and polled by id.
+#   4. THE RETRIES HAD NO DELAY, so four attempts landed inside one transient
+#      window and proved nothing. There is a backoff.
+#   5. `NEXT_PUBLIC_` VALUES ARE BUILD-TIME. Setting one as a Render env var
+#      changes nothing, because the string was already inlined when the image
+#      was built. None are set at runtime here.
+name: Deploy web
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to deploy. Anything else builds and stops.'
+        required: true
+        default: 'dry-run'
+        type: string
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SERVICE_ID: srv-d9ju49id0e5s7389fjlg     # autoworkshop-web — holds the apex domain
+      SERVICE_NAME: autoworkshop-web
+      IMAGE: ghcr.io/${{ github.repository_owner }}/autoworkshop-web
+      APPLY: ${{ inputs.confirm == 'APPLY' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without the things this cannot run without
+        run: |
+          set -euo pipefail
+          [ -f apps/web/Dockerfile ] || { echo "::error::apps/web/Dockerfile is missing"; exit 1; }
+          # Standalone output is what the runtime stage copies. Without it the
+          # image BUILDS and the container dies at start, which on Render is a
+          # failed health check with no build error — the hardest shape to read.
+          grep -q "output: 'standalone'" apps/web/next.config.mjs || {
+            echo "::error::apps/web is not configured for standalone output"; exit 1; }
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          # 🔴 NO PIPE TO `tail`. A pipeline reports the LAST command's status,
+          # and this repository has been told "docker exited 0" three times by a
+          # `tail` that was itself fine while the build had failed.
+          docker build -f apps/web/Dockerfile -t "$IMAGE:${GITHUB_SHA}" -t "$IMAGE:latest" .
+
+      # ⚠️ UNGATED ON PURPOSE — it runs on a dry run too. A local build cannot
+      # prove a `standalone` Dockerfile works on Windows; only the Linux image
+      # can, so the one check that exercises the real artifact must not be
+      # behind the flag that says "do not deploy".
+      - name: Smoke-test the container before anything is pushed
+        run: |
+          set -euo pipefail
+          docker run -d --name aw-smoke -p 3000:3000 \
+            -e AUTH_SECRET=smoke-test-only-not-a-real-secret \
+            -e AUTH_TRUST_HOST=true \
+            -e API_BASE_URL=http://127.0.0.1:9 \
+            -e KEYCLOAK_URL=http://127.0.0.1:9 \
+            -e KEYCLOAK_REALM=autoworkshop \
+            "$IMAGE:${GITHUB_SHA}"
+
+          # The public marketplace at `/` is the right probe: it is the one route
+          # that must render with NO API and NO Keycloak reachable, so a failure
+          # here is the app, not its dependencies.
+          ok=""
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            sleep 3
+            CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:3000/)" || CODE=""
+            echo "attempt $attempt: '${CODE}'"
+            case "$CODE" in 200|307|308) ok=1; break ;; esac
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::the container never served / — the image is not deployable"
+            docker logs aw-smoke | tail -60
+            exit 1
+          fi
+          echo "container serves / — image is deployable"
+          docker rm -f aw-smoke >/dev/null
+
+      - name: Stop here on a dry run
+        if: env.APPLY != 'true'
+        run: |
+          echo "DRY RUN — image built and smoke-tested, nothing pushed, nothing deployed."
+          echo "Re-run with confirm=APPLY to ship it."
+
+      - name: Push the image
+        if: env.APPLY == 'true'
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:latest"
+
+      - name: Point the service at it, and wait for MY deploy
+        if: env.APPLY == 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error
+
+          KEY  = os.environ["RENDER_API_KEY"]
+          SID  = os.environ["SERVICE_ID"]
+          NAME = os.environ["SERVICE_NAME"]
+          TAG  = f'{os.environ["IMAGE"]}:{os.environ["GITHUB_SHA"]}'
+
+          def call(method, path, body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(
+                  f"https://api.render.com/v1{path}",
+                  data=data, method=method,
+                  headers={"Authorization": f"Bearer {KEY}",
+                           "Content-Type": "application/json"})
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  raw = r.read()
+                  return r.status, (json.loads(raw) if raw else None)
+
+          # Assert the NAME before writing. An id outlives its meaning, and this
+          # account also carries Solar.
+          _, svc = call("GET", f"/services/{SID}")
+          if svc.get("name") != NAME:
+              sys.exit(f"REFUSED: {SID} is named {svc.get('name')!r}, not {NAME!r}")
+          print(f"target: {svc['name']} [{SID}]  suspended={svc.get('suspended')}")
+
+          call("PATCH", f"/services/{SID}",
+               {"serviceDetails": {"envSpecificDetails": {"imagePath": TAG}}})
+          print(f"image set to {TAG}")
+
+          # 🔴 CAPTURE THE DEPLOY ID. Polling "is the service healthy?" answers a
+          # different question from "did my deploy succeed?", and the two agree
+          # on every day except the one that matters — the old image keeps
+          # serving happily while the new one fails.
+          _, dep = call("POST", f"/services/{SID}/deploys", {"imageUrl": TAG})
+          did = dep.get("id")
+          if not did:
+              sys.exit(f"::error::no deploy id in the response: {dep}")
+          print(f"deploy {did} created")
+
+          DEADLINE = time.time() + 25 * 60
+          last = None
+          while time.time() < DEADLINE:
+              time.sleep(15)
+              _, d = call("GET", f"/services/{SID}/deploys/{did}")
+              st = d.get("status")
+              if st != last:
+                  print(f"  {st}")
+                  last = st
+              if st == "live":
+                  print(f"deploy {did} is LIVE")
+                  raise SystemExit(0)
+              if st in ("build_failed", "update_failed", "canceled", "pre_deploy_failed"):
+                  sys.exit(f"::error::deploy {did} ended {st}")
+
+          # 🔴 A TIMEOUT IS A FAILURE, NOT A REASON TO GO AND ASK SOMETHING
+          # EASIER. The old workflows fell through to a health read here, which
+          # the PREVIOUS image answered 200 to.
+          sys.exit(f"::error::deploy {did} did not reach 'live' within 25 minutes "
+                   f"(last status: {last}). The old image may still be serving — "
+                   f"that is NOT success.")
+          PY
+
+      - name: Prove the deployed artifact serves every pack
+        if: env.APPLY == 'true'
+        run: |
+          set -euo pipefail
+          BASE="https://autoworkshop.aiappinvent.com"
+          fail=0
+          # `/` must render with no session. The seven pack roots redirect into
+          # their own trees, so 200/307/308 all pass; what must NOT happen is a
+          # 404, which is what a pack that failed to mount would return.
+          for path in "/" "/customer" "/workshop" "/supplier" "/fleet" "/insurance" "/towing" "/admin"; do
+            CODE=""
+            for attempt in 1 2 3 4; do
+              CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 180 "${BASE}${path}")" || CODE=""
+              case "$CODE" in 200|307|308|401|403) break ;; esac
+              echo "  ${path}: '${CODE}' — retrying (${attempt})"
+              sleep 10
+            done
+            printf '%-14s -> %s\n' "$path" "${CODE:-transport-failure}"
+            case "$CODE" in
+              200|307|308|401|403) ;;
+              404) echo "::error::${path} 404s — that pack did not mount"; fail=1 ;;
+              *)   echo "::error::${path} returned '${CODE}'"; fail=1 ;;
+            esac
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "all seven packs are mounted and serving from one artifact"

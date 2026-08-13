@@ -3,6 +3,7 @@ import { PageHeader, EmptyState, StatusBadge } from '@autoworkshop/ui';
 import {
   getWorkspace,
   visibleGroups,
+  withPackBase,
   workspaceForRole,
   type PermissionKey,
 } from '@autoworkshop/navigation';
@@ -91,7 +92,12 @@ export async function renderModulePage(
 
   const workspace = workspaceForRole(base, await viewerRole(workspaceId));
 
-  const pathname = '/' + (slug ?? []).join('/');
+  // ADR-021: `params.slug` holds the segments AFTER the pack's mount point, so
+  // Next hands this an UNMOUNTED path while `visibleGroups` returns mounted
+  // hrefs. Same symmetry as `requireNavRoute`, same silent failure if dropped —
+  // nothing would resolve and every catch-all route would render the not-found
+  // branch.
+  const pathname = withPackBase(workspaceId, '/' + (slug ?? []).join('/'));
   // Resolve against the filtered tree, not `workspace.groups` — otherwise a
   // module hidden from the side nav is still reachable by typing its URL.
   const groups = visibleGroups(workspace, grants);
