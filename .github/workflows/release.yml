@@ -87,7 +87,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/workshop-web/Dockerfile
+          file: apps/web/Dockerfile
           # Load into the local daemon so the smoke test runs the EXACT artifact
           # that would be published. Building once and testing a rebuild would
           # test something else.
@@ -156,7 +156,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: apps/workshop-web/Dockerfile
+          file: apps/web/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ github.sha }}

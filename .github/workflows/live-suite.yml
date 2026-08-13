@@ -41,33 +41,61 @@
 
 name: Live suite
 
+# 🔴 ADR-021 CHANGED WHAT THESE URLS MEAN, AND THIS FILE IS ONLY PARTLY ADAPTED.
+#
+# Each pack used to be its own Render service on its own hostname, so `customer`
+# was `https://autoworkshop-customer.onrender.com` and the suite composed
+# `f'{CUSTOMER}/some/path'`. Those five services were DELETED on 2026-08-13 and
+# their hostnames now 404 at Render's edge — so left unchanged, every check
+# against them would have failed for a reason that has nothing to do with the
+# product.
+#
+# The base URLs below now point at the packs' mount points inside the one
+# artifact, which is the correct structural change and is what makes the
+# `f'{PACK}/path'` composition keep working unaltered.
+#
+# ⚠️ TWO KNOWN PATHS ARE NOT YET RIGHT, AND ARE WRITTEN DOWN RATHER THAN LEFT TO
+# BE DISCOVERED AS MYSTERY FAILURES:
+#
+#   · `f'{CUSTOMER}/robots.txt'` — `robots.ts` was hoisted to the ARTIFACT root
+#     with the rest of the public surface, so it is served at `/robots.txt`, not
+#     at `/customer/robots.txt`.
+#   · `APEX` used to serve the public marketplace at `/` because workshop-web
+#     held the apex. The marketplace is still at `/`, but `/workshop` now
+#     redirects into the workshop dashboard — so any APEX check that expects
+#     storefront CONTENT at a workshop path is asserting the old topology.
+#
+# 🔴 THIS SUITE HAS NOT BEEN RUN SINCE THE CONSOLIDATION. Do not quote a number
+# from it until it has. A partly-adapted gate that reports a count is worse than
+# one that plainly has not run — "a green gate that runs nothing" is a recorded
+# defect in this repository.
 on:
   workflow_dispatch:
     inputs:
       apex:
-        description: 'Apex (workshop-web) base URL'
+        description: 'Apex — the ONE artifact (ADR-021). The packs are paths beneath it.'
         required: false
         default: 'https://autoworkshop.aiappinvent.com'
       customer:
         description: 'customer-web base URL'
         required: false
-        default: 'https://autoworkshop-customer.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/customer'
       towing:
         description: 'towing-web base URL'
         required: false
-        default: 'https://autoworkshop-towing.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/towing'
       admin:
         description: 'admin-web base URL'
         required: false
-        default: 'https://autoworkshop-admin.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/admin'
       fleet:
         description: 'fleet-web base URL'
         required: false
-        default: 'https://autoworkshop-fleet.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/fleet'
       insurance:
         description: 'insurance-web base URL'
         required: false
-        default: 'https://autoworkshop-insurance.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/insurance'
       api:
         description: 'API base URL'
         required: false
@@ -91,11 +119,11 @@ jobs:
     timeout-minutes: 30
     env:
       APEX: ${{ inputs.apex || 'https://autoworkshop.aiappinvent.com' }}
-      CUSTOMER: ${{ inputs.customer || 'https://autoworkshop-customer.onrender.com' }}
-      TOWING: ${{ inputs.towing || 'https://autoworkshop-towing.onrender.com' }}
-      ADMIN: ${{ inputs.admin || 'https://autoworkshop-admin.onrender.com' }}
-      FLEET: ${{ inputs.fleet || 'https://autoworkshop-fleet.onrender.com' }}
-      INSURANCE: ${{ inputs.insurance || 'https://autoworkshop-insurance.onrender.com' }}
+      CUSTOMER: ${{ inputs.customer || 'https://autoworkshop.aiappinvent.com/customer' }}
+      TOWING: ${{ inputs.towing || 'https://autoworkshop.aiappinvent.com/towing' }}
+      ADMIN: ${{ inputs.admin || 'https://autoworkshop.aiappinvent.com/admin' }}
+      FLEET: ${{ inputs.fleet || 'https://autoworkshop.aiappinvent.com/fleet' }}
+      INSURANCE: ${{ inputs.insurance || 'https://autoworkshop.aiappinvent.com/insurance' }}
       API: ${{ inputs.api || 'https://autoworkshop-api.onrender.com' }}
       KEYCLOAK: ${{ inputs.keycloak || 'https://autoworkshop-keycloak.onrender.com' }}
       REALM: autoworkshop
