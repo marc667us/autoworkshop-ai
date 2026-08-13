@@ -144,17 +144,27 @@ jobs:
       - name: Dump production (read-only)
         run: |
           set -euo pipefail
-          # 🔴 `sslmode=require`, OR THE CONNECTION IS CLOSED MID-HANDSHAKE.
-          # Measured, not guessed: without it pg_dump failed with "SSL connection
-          # has been closed unexpectedly" against
-          # dpg-….oregon-postgres.render.com. Render's EXTERNAL endpoint demands
-          # TLS, and libpq's default `sslmode=prefer` will fall back to plaintext
-          # — the server then drops the socket, which surfaces as an SSL error
-          # rather than as "TLS is required" and reads like a network fault.
+          # ⚠️ `sslmode=require` IS KEPT AND IS NOT WHAT WAS WRONG. I wrote a
+          # confident comment here claiming it was — "measured, not guessed" —
+          # and then re-ran with it applied and got the IDENTICAL failure in the
+          # identical 0.18s. Correcting it rather than deleting it: an assertion
+          # of cause that was never tested against the fix is exactly the shape
+          # of error this file's header is about.
           #
-          # `apply-migrations.yml` hits the same host without this and works,
-          # because psql negotiates before pg_dump's first COPY. Do not conclude
-          # from that workflow that the string is fine as-is.
+          # 🔴 THE REAL CAUSE IS RENDER'S DATABASE FIREWALL. `autoworkshop-postgres`
+          # carries an `ipAllowList`, and a runner that is not on it has its
+          # socket dropped after the TCP handshake — which libpq reports as "SSL
+          # connection has been closed unexpectedly", so it reads like TLS and is
+          # not. `apply-migrations.yml` reaches this same host because it PATCHes
+          # the runner's /32 into the allow-list first and always restores it
+          # after; this workflow does not, which is why it cannot connect at all.
+          #
+          # ▶ STILL TO DO: copy that open-and-always-restore pair from
+          # `apply-migrations.yml` (steps "Allow this runner through the database
+          # firewall" and "Always restore the database firewall"). A single /32,
+          # never 0.0.0.0/0, and the restore must run even when the job fails —
+          # a leftover ephemeral entry becomes permanent otherwise, which that
+          # workflow already found once.
           SRC="$(cat /tmp/dburl)"
           case "$SRC" in
             *sslmode=*) ;;
