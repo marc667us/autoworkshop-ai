@@ -302,22 +302,28 @@ jobs:
           # ⚠️ SCHEMAS ARE DISCOVERED, NOT LISTED. Hardcoding today's schema
           # names would silently stop backing up the next one somebody adds —
           # a backup that quietly narrows is worse than one that fails.
+          # ⚠️ NO BACKTICKS ANYWHERE BELOW, INCLUDING IN THE SQL COMMENTS. This
+          # is a double-quoted shell string and backticks EXECUTE inside one.
+          # A previous version quoted a table name in backticks in a COMMENT;
+          # the shell ran it and the step died before printing a single line.
+          # That defect is already recorded in this repository, and it came back
+          # inside a comment written to explain a different one.
           SCHEMAS=$("$PGBIN/psql" -tA "$SRC" -c "
             SELECT string_agg('--schema=' || quote_ident(nspname), ' ')
             FROM pg_namespace n
             WHERE nspname NOT LIKE 'pg\_%'
               AND nspname <> 'information_schema'
               AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user
-              -- 🔴 `keycloak` IS OWNED BY US AND NOT READABLE BY US. We created
+              -- 🔴 keycloak IS OWNED BY US AND NOT READABLE BY US. We created
               -- the schema, so ownership says yes; Keycloak's own role owns the
               -- TABLES inside it, so SELECT says no — and that mismatch is what
-              -- produced `permission denied for table databasechangeloglock`
+              -- produced permission denied for table databasechangeloglock
               -- twice, once before schema scoping and once after, because the
               -- discovery query happily included it.
               --
               -- Excluded on merit, not just to make the dump pass: Keycloak's
               -- data is the identity server's, with its own lifecycle and its
-              -- own realm export in `infrastructure/backup/`. This workflow
+              -- own realm export in infrastructure/backup/. This workflow
               -- backs up the APPLICATION'S data.
               AND nspname <> 'keycloak'")
           [ -n "$SCHEMAS" ] || { echo "::error::no schemas owned by this user — refusing to write an empty backup"; exit 1; }
