@@ -1,6 +1,6 @@
-import { ARTIFACT_WORKSPACE } from '../../auth';
 'use server';
 
+import { ARTIFACT_WORKSPACE } from '../../auth';
 import { performSignOut } from '@autoworkshop/auth';
 
 /**
