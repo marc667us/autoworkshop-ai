@@ -109,9 +109,31 @@ export interface AccountType {
   caveat?: string;
 }
 
-/** The group labels of a workspace, in the order the sidebar shows them. */
+/**
+ * What a workspace visibly offers, in the order the sidebar shows it.
+ *
+ * Group labels normally — "My Vehicles · Service and Repairs · Payments" tells
+ * somebody what the workspace is for at a glance.
+ *
+ * 🔴 EXCEPT WHEN THERE IS ONLY ONE GROUP, WHICH TOWING IS. `02.txt` §52 gives
+ * towing a single `operations` group holding all ten of its screens, so the
+ * group-label rule produced a one-word feature list reading "You get:
+ * Operations" — technically derived from the model and useless to the person
+ * deciding whether this is them. Caught by `account-types.spec.ts`, which
+ * asserts a door lists more than two things; the assertion was arbitrary and
+ * the failure was not.
+ *
+ * So a single-group workspace drops one level and lists its ITEMS instead. The
+ * rule is "show the most specific level that has several entries", which is
+ * true of any future tree without needing to know its shape.
+ */
 function groupsOf(workspaceId: keyof typeof workspaces): readonly string[] {
-  return workspaces[workspaceId].groups.map((g) => g.label);
+  const groups = workspaces[workspaceId].groups;
+  if (groups.length === 1) {
+    const only = groups[0];
+    if (only) return only.items.map((i) => i.label);
+  }
+  return groups.map((g) => g.label);
 }
 
 /**
@@ -219,6 +241,37 @@ export const ACCOUNT_TYPES: readonly AccountType[] = [
     caveat:
       'Your account works immediately. The fleet is queued for platform verification in the same way a supplier is.',
   },
+  {
+    id: 'insurance-company',
+    label: 'I assess insurance claims',
+    summary:
+      'Review claims on vehicles being repaired, assess damage, and authorise repair work.',
+    href: '/insurance/home/dashboard',
+    cta: 'Register my company',
+    roleName: 'insurance_assessor',
+    features: groupsOf('insurance'),
+    // 🔴 THE TENANCY GUARANTEE, STATED WHERE THE DECISION IS MADE. Migration
+    // 080 gives the company its own tenant precisely because an insurer and the
+    // workshop whose repairs it assesses sit on opposite sides of a claim.
+    // Somebody choosing this door is entitled to know that before choosing it.
+    caveat:
+      'Your company gets its own workspace, separate from every workshop on the platform. Queued for platform verification like a supplier or a fleet.',
+  },
+  {
+    id: 'towing-company',
+    label: 'I recover and tow vehicles',
+    summary:
+      'Take recovery requests, run a dispatch board, and manage your drivers and recovery vehicles.',
+    href: '/towing/operations/dashboard',
+    cta: 'Register my company',
+    roleName: 'towing_operator',
+    features: groupsOf('towing'),
+    // ⚠️ THE ONLY DOOR WHOSE WORKSPACE IS ALREADY FINISHED. Migration 074 built
+    // all ten towing screens on 2026-08-09; only the door was missing. Said
+    // plainly because every other caveat on this screen warns the opposite.
+    caveat:
+      'The towing screens are already built — dispatch board, recoveries, drivers and vehicles. Queued for platform verification like the others.',
+  },
 ];
 
 /**
@@ -253,18 +306,11 @@ export const NOT_SELF_SERVICE: readonly UnofferedRole[] = [
     reason:
       'Your workshop owner adds you from Settings → Staff and roles. Sign up here first with the email address they will use, then tell them it is ready.',
   },
-  {
-    id: 'insurance-assessor',
-    label: 'Insurance assessor',
-    reason:
-      'There is no sign-up for insurers yet. The screens exist but no way to create an insurance company does, so this cannot be offered honestly.',
-  },
-  {
-    id: 'towing-operator',
-    label: 'Towing operator',
-    reason:
-      'There is no sign-up for towing firms yet, for the same reason as insurance.',
-  },
+  // ⚠️ `insurance_assessor` AND `towing_operator` USED TO BE LISTED HERE, with
+  // the true reason that no path could create either. Migration 080 built both
+  // doors, so they moved UP into `ACCOUNT_TYPES` above. Recorded rather than
+  // silently deleted, because "which roles are not self-service, and why" is the
+  // question this list exists to answer and its answer just changed.
   {
     id: 'platform-administrator',
     label: 'Platform administrator',

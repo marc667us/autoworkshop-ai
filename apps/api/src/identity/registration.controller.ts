@@ -76,6 +76,29 @@ export const RegisterFleetBody = z.object({
 });
 
 /**
+ * The bodies of `POST /registration/insurance` and `/registration/towing`.
+ *
+ * ⚠️ TWO FIELDS, AND NO ROLE — the same rule as every sibling above. The roles
+ * (`insurance_assessor`, `towing_operator`) and the organisation types
+ * (`insurance_company`, `towing_company`) are literals inside migration 080. A
+ * `roleName` field accepted here would turn a self-service sign-up into
+ * privilege escalation as a REST call, and these two are the highest-value
+ * targets for that: an `insurance_assessor` reads claim and repair data across
+ * the workshops it assesses.
+ */
+type RegisterInsurerBody = z.infer<typeof RegisterInsurerBody>;
+const RegisterInsurerBody = z.object({
+  insurerName: z.string().trim().min(2).max(120),
+  locationName: z.string().trim().min(1).max(120).optional(),
+});
+
+type RegisterTowingBody = z.infer<typeof RegisterTowingBody>;
+const RegisterTowingBody = z.object({
+  companyName: z.string().trim().min(2).max(120),
+  locationName: z.string().trim().min(1).max(120).optional(),
+});
+
+/**
  * The body of `POST /registration/customer`.
  *
  * ⚠️ ONE FIELD, AND `.strict()` VIA `validatedBody` REJECTS ANY OTHER. The
@@ -343,6 +366,102 @@ export class RegistrationController {
       }
       if (message.includes('a fleet needs a name')) {
         throw new BadRequestException('A fleet needs a name.');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * `POST /registration/insurance` — register my insurance company.
+   *
+   * 🔴 THE FOURTH ROLE THAT COULD NOT EXIST. `insurance_assessor` was in
+   * `GRANTABLE_ROLES`, in the permission matrix and owned a 28-entry navigation
+   * tree, and no production path could write it — nor could anything create an
+   * INDEPENDENT `insurance_company`, because `POST /organizations` is behind
+   * `TenantGuard` and would have filed the insurer inside the caller's own
+   * tenant. See migration 080's header for why that is backwards.
+   *
+   * ⚠️ ON `UserGuard`, NECESSARILY — the caller has no membership yet, which is
+   * the entire point. What makes it safe is in 080: the role and the org type
+   * are literals, the caller is the token subject, an account that already
+   * belongs anywhere is refused BY THE DATABASE under a per-identity advisory
+   * lock, and the bootstrap RLS door pins every inserted row to this user.
+   *
+   * ⚠️ THE INSURER IS NOT VERIFIED BY THIS CALL. 080 widened the verification
+   * queue's `kind` to accept `'insurance'`, so registering enqueues the company
+   * for a platform administrator exactly as a supplier or fleet does.
+   */
+  @Post('insurance')
+  async registerInsurer(
+    @Req() req: UserRequest,
+    @Body(validatedBody(RegisterInsurerBody)) parsed: RegisterInsurerBody,
+  ) {
+    const subject = await this.subjectOf(req);
+    try {
+      const created = await this.memberships.registerInsurer(
+        subject,
+        parsed.insurerName,
+        parsed.locationName,
+      );
+      return { ...created, roleName: 'insurance_assessor', verificationStatus: 'pending' };
+    } catch (err) {
+      // 🔴 THE DATABASE'S REFUSAL MUST REACH THE USER AS AN ANSWER, NOT A 500.
+      // `registerWorkshop` shipped that exact defect: a double-submitted form
+      // returned "Internal server error" for a guard that had worked perfectly,
+      // and the person concluded registration was broken when it had already
+      // succeeded. Matched on the messages 080 raises; both strings are quoted
+      // in the migration, so a rewording falls back to a 500 rather than
+      // drifting unnoticed into a silently-wrong error page.
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('already belongs to an organisation')) {
+        throw new ConflictException(
+          'This account already belongs to an organisation. Sign in with a different account to register an insurance company, or ask a platform administrator to add you to an existing one.',
+        );
+      }
+      if (message.includes('no active application user')) {
+        throw new BadRequestException('This account is not active.');
+      }
+      if (message.includes('an insurance company needs a name')) {
+        throw new BadRequestException('An insurance company needs a name.');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * `POST /registration/towing` — register my towing company.
+   *
+   * 🔴 THE FIFTH ROLE THAT COULD NOT EXIST. Identical reasoning to the insurer
+   * route above, and the towing pack is the sharper example: migration 074
+   * built towing end to end and all 10 of its screens on 2026-08-09, and
+   * `towing_operator` still had no production writer. Ten working screens for
+   * a role nobody could hold.
+   */
+  @Post('towing')
+  async registerTowingOperator(
+    @Req() req: UserRequest,
+    @Body(validatedBody(RegisterTowingBody)) parsed: RegisterTowingBody,
+  ) {
+    const subject = await this.subjectOf(req);
+    try {
+      const created = await this.memberships.registerTowingOperator(
+        subject,
+        parsed.companyName,
+        parsed.locationName,
+      );
+      return { ...created, roleName: 'towing_operator', verificationStatus: 'pending' };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('already belongs to an organisation')) {
+        throw new ConflictException(
+          'This account already belongs to an organisation. Sign in with a different account to register a towing company, or ask a platform administrator to add you to an existing one.',
+        );
+      }
+      if (message.includes('no active application user')) {
+        throw new BadRequestException('This account is not active.');
+      }
+      if (message.includes('a towing company needs a name')) {
+        throw new BadRequestException('A towing company needs a name.');
       }
       throw err;
     }

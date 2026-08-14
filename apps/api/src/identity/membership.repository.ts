@@ -417,6 +417,76 @@ export class MembershipRepository {
   }
 
   /**
+   * The two doors migration 080 opened — `insurance_assessor` and
+   * `towing_operator`.
+   *
+   * 🔴 THE FOURTH AND FIFTH ROLE THAT COULD NOT EXIST IN PRODUCTION. Both were
+   * in `GRANTABLE_ROLES`, in the permission matrix and each owned a navigation
+   * tree, and no code path could write either. `grant()` was not the escape
+   * hatch it appears to be: it needs an organisation in the CALLER's tenant,
+   * and the only way to create one is behind `TenantGuard`, so an insurer could
+   * only ever have been created inside a workshop's tenant — putting the
+   * assessor's records under the RLS scope of the workshop whose repairs they
+   * assess. See 080's header for the full argument.
+   *
+   * ⚠️ ONE PRIVATE HELPER, TWO PUBLIC METHODS, rather than one method taking a
+   * function name. A caller-supplied function name is dynamic SQL on the
+   * platform's privilege-granting surface; the two literals below are the whole
+   * safety property and they must not become a parameter that travels.
+   */
+  private async registerOrganisation(
+    fn: 'identity.register_insurer' | 'identity.register_towing_operator',
+    subject: string,
+    name: string,
+    locationName: string | undefined,
+  ): Promise<{
+    tenantId: string;
+    organizationId: string;
+    branchId: string;
+    membershipId: string;
+  }> {
+    const rows = await this.db.queryWithoutTenant<{
+      o_tenant_id: string;
+      o_organization_id: string;
+      o_branch_id: string;
+      o_membership_id: string;
+    }>(
+      // The interpolation is of a UNION-TYPED LITERAL, not of user input —
+      // TypeScript admits exactly the two spellings above and nothing reaches
+      // here from a request body. The three real arguments stay parameterised.
+      `SELECT o_tenant_id, o_organization_id, o_branch_id, o_membership_id
+         FROM ${fn}($1, $2, $3)`,
+      [subject, name, locationName ?? ''],
+    );
+    const row = rows[0];
+    if (!row) throw new Error(`${fn} returned no row`);
+    return {
+      tenantId: row.o_tenant_id,
+      organizationId: row.o_organization_id,
+      branchId: row.o_branch_id,
+      membershipId: row.o_membership_id,
+    };
+  }
+
+  async registerInsurer(subject: string, insurerName: string, locationName?: string) {
+    return this.registerOrganisation(
+      'identity.register_insurer',
+      subject,
+      insurerName,
+      locationName,
+    );
+  }
+
+  async registerTowingOperator(subject: string, companyName: string, locationName?: string) {
+    return this.registerOrganisation(
+      'identity.register_towing_operator',
+      subject,
+      companyName,
+      locationName,
+    );
+  }
+
+  /**
    * ENROLMENT — an identity becomes a CUSTOMER of a workshop that publishes
    * itself (migration 061).
    *

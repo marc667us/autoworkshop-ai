@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
+import { landingPathFor, workspaces } from '@autoworkshop/navigation';
 import {
   currentViewer,
   homeWorkspaceFor,
@@ -135,8 +136,15 @@ export default async function OnboardingPage() {
             You already belong to an organisation, so there is nothing to set up
             here.
           </p>
+          {/* ⚠️ THE SAME `landingPathFor` THE FRONT DOOR USES. Written as
+              `/${workspace}/home/dashboard` here too, and it would have sent a
+              platform administrator and a towing operator to a 404 from this
+              page as well — a third copy of the literal, in the one screen
+              whose entire job is to stop people reaching dead ends. */}
           <Link
-            href={`/${homeWorkspaceFor(viewer?.activeRole)}/home/dashboard`}
+            href={
+              landingPathFor(homeWorkspaceFor(viewer?.activeRole), Object.values(workspaces)) ?? '/'
+            }
             style={{ color: themeVar.actionPrimary }}
           >
             Open your workspace

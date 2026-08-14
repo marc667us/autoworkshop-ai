@@ -123,3 +123,69 @@ export function packServingLegacyPath(
     .map((w) => w.id);
   return matches.length === 1 ? matches[0]! : null;
 }
+
+/**
+ * WHERE A WORKSPACE'S FRONT DOOR SHOULD SEND SOMEBODY — read from the
+ * navigation model rather than assumed.
+ *
+ * ── 🔴 THE DEFECT THIS FIXES, AND WHY NOTHING COULD SEE IT ─────────────────
+ *
+ * `app/page.tsx` dispatched a signed-in viewer with
+ *
+ *     redirect(`/${homeWorkspaceFor(activeRole)}/home/dashboard`)
+ *
+ * and SIX of the seven packs do have a `home` group whose first item is
+ * `dashboard`. **Towing does not.** `02.txt` §52 gives it an `operations` group
+ * instead, so its dashboard lives at `/towing/operations/dashboard` — which
+ * `app/towing/page.tsx` already redirects to correctly, and which the front
+ * door did not know.
+ *
+ * So `/towing/home/dashboard` is not in the towing tree, `renderModulePage`
+ * ends `if (!group || !item) notFound()`, and a `towing_operator` signing in at
+ * the front door would have been **404'd on their own dashboard**.
+ *
+ * ⚠️ IT WAS INVISIBLE BECAUSE THE ROLE COULD NOT EXIST. Nothing in the product
+ * could write a `towing_operator` membership until migration 080, so the
+ * dispatch line had never once been executed for this role — while migration
+ * 074 built towing end to end and shipped all ten of its screens. Opening the
+ * door is what exposed it. That is this repository's recurring shape: a defect
+ * behind an unreachable state stays green for ever, and the fix that makes the
+ * state reachable is what finds it.
+ *
+ * ⚠️ DERIVED, NOT LISTED. A second map of "which pack lands where" is the
+ * "two literals in two files cannot be type-checked into agreement" trap that
+ * has already cost this repo a sign-out outage and a job-card link class. The
+ * navigation model already states every route every pack serves; this reads it.
+ * A future workspace whose first group is not `home` is correct automatically.
+ *
+ * Returns `null` when the workspace is unknown or has no items at all, so the
+ * caller decides what to do rather than being handed a plausible-looking path
+ * that 404s.
+ */
+export function landingPathFor(
+  workspaceId: WorkspaceId | string,
+  workspaces: ReadonlyArray<{ id: string; groups: ReadonlyArray<{ items: ReadonlyArray<{ href: string }> }> }>,
+): string | null {
+  const workspace = workspaces.find((w) => w.id === workspaceId);
+  if (!workspace) return null;
+  // The FIRST item of the FIRST group — `01 (1).txt` §18 makes the dashboard a
+  // workspace's landing page, and in every transcribed tree that dashboard is
+  // exactly this position. Reading the position rather than searching for the
+  // word "dashboard" keeps it true of a tree that names its landing screen
+  // something else.
+  for (const group of workspace.groups) {
+    const first = group.items[0];
+    // 🔴 MOUNTED BEFORE IT IS RETURNED. `item()` builds every href as
+    // `/${groupId}/${id}` — UNMOUNTED — and the pack base is applied later by
+    // `withPackBase`. A caller passing the raw value to `redirect()` would send
+    // a towing operator to `/operations/dashboard` at the ARTIFACT root, where
+    // the legacy redirector would then resolve it and, because towing is the
+    // only pack advertising that path, land them correctly by accident. That
+    // accident is not worth depending on, and it breaks the moment a second
+    // pack adds an `operations` group. Mounting here means the value is a real
+    // URL, and `landing-path.test.ts` asserts every one of them resolves in its
+    // own tree.
+    if (first) return withPackBase(workspaceId, first.href);
+  }
+  return null;
+}

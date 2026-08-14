@@ -147,7 +147,7 @@ describe('the roles the onboarding screen names', () => {
       for (const m of sql.matchAll(/INSERT INTO identity\.memberships[\s\S]{0,600}?/g)) {
         const window = sql.slice(m.index, m.index + 600);
         for (const r of window.matchAll(
-          /'(workshop_owner|supplier_owner|fleet_administrator|customer)'/g,
+          /'(workshop_owner|supplier_owner|fleet_administrator|customer|insurance_assessor|towing_operator)'/g,
         )) {
           if (r[1]) written.add(r[1]);
         }
@@ -157,7 +157,7 @@ describe('the roles the onboarding screen names', () => {
     expect(
       written.size,
       'no self-service role literal found in any migration — the reader is broken, not the product',
-    ).toBeGreaterThanOrEqual(4);
+    ).toBeGreaterThanOrEqual(6);
 
     const offered = new Set(
       ACCOUNT_TYPES.map((t) => t.roleName).filter((r): r is string => r !== null),

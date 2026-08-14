@@ -8,6 +8,7 @@ import {
   registrationStatus,
   viewerHasSession,
 } from '@autoworkshop/next-shell';
+import { landingPathFor, workspaces } from '@autoworkshop/navigation';
 import { MarketplaceLanding } from '@autoworkshop/marketplace-ui';
 import { AddToBasket } from '@autoworkshop/marketplace-ui';
 
@@ -106,7 +107,37 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
     // is a page rather than a dead end. The shell resolves them on their next
     // navigation, by which time middleware has run and refreshed the token.
     if (viewer?.activeRole) {
-      redirect(`/${homeWorkspaceFor(viewer.activeRole)}/home/dashboard`);
+      // 🔴 THE LANDING PATH IS ASKED OF THE NAVIGATION MODEL, NOT SPELLED OUT.
+      //
+      // This line read `/${homeWorkspaceFor(...)}/home/dashboard`, and TWO of
+      // the seven packs do not serve that path:
+      //
+      //   · towing  — `02.txt` §52 gives it `operations`, so its dashboard is
+      //     `/towing/operations/dashboard`
+      //   · admin   — its Home group's only dashboard is `operations-dashboard`
+      //
+      // `renderModulePage` ends `if (!group || !item) notFound()`, so BOTH
+      // roles were 404'd on their own dashboard by the front door. Each pack's
+      // own `page.tsx` had it right the whole time — `app/admin/page.tsx`
+      // redirects to `/admin/home/operations-dashboard` — so the two answers
+      // disagreed, which is the "two literals in two files cannot be
+      // type-checked into agreement" failure this repo has paid for repeatedly.
+      //
+      // 🔴 ADMIN HAS BEEN BROKEN ON PRODUCTION SINCE THE ADR-021 CONSOLIDATION
+      // ON 2026-08-13, and the owner is a platform administrator. This is very
+      // probably the "access is denied to users" report that the 08-13 handover
+      // recorded as unverified against a session-cookie hypothesis.
+      //
+      // Towing was invisible for a different reason: no production path could
+      // write a `towing_operator` membership until migration 080, so the line
+      // had never once executed for that role.
+      //
+      // `landingPathFor` reads the tree the ROUTER resolves against, so the
+      // dispatch and the router cannot disagree. `null` only when a workspace
+      // is unknown or empty; falling through to the marketplace then is the
+      // same safe default this function already uses for an unresolved viewer.
+      const landing = landingPathFor(homeWorkspaceFor(viewer.activeRole), Object.values(workspaces));
+      if (landing) redirect(landing);
     }
 
     // Reached only when the session is live and no role resolved. Two very
