@@ -464,7 +464,18 @@ jobs:
           PGPASSWORD: verify-only-not-a-real-secret
         run: |
           set -euo pipefail
-          TARGET="postgresql://postgres@127.0.0.1:5432/verify"
+          # sslmode=disable IN THE STRING, because PGSSLMODE=require is set
+          # for the whole job and the throwaway verify container does not speak
+          # SSL at all:
+          #
+          #   psql: error: connection to server at "127.0.0.1", port 5432
+          #         failed: server does not support SSL, but SSL was required
+          #
+          # The job-wide setting is correct for PRODUCTION and must stay. An
+          # explicit connection parameter beats the environment variable in
+          # libpq, so naming it here overrides it for this one target without
+          # weakening anything that talks to Render.
+          TARGET="postgresql://postgres@127.0.0.1:5432/verify?sslmode=disable"
 
           # `pg_restore` reports errors for objects it cannot recreate (roles,
           # extensions it lacks). Those are expected here and are NOT the thing
