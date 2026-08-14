@@ -28,6 +28,36 @@ answers 200 on production.
 
 ## ▶ WHAT IS NOT FINISHED, IN ORDER
 
+### 0. FIRST: confirm migration 083 is applied on production
+
+Dispatched at the close of 2026-08-14 and NOT confirmed before the session
+ended. Check it, and if it is pending, apply it:
+
+```bash
+gh run list --workflow=apply-migrations.yml --limit 3
+gh workflow run apply-migrations.yml -f confirm=APPLY     # alone, nothing else running
+curl -s https://autoworkshop-api.onrender.com/api/v1/public/insurance-products
+```
+
+**Until 083 is applied, the live insurance listing returns `200 []`** — a
+published, verified product exists on production and no shopper can see it.
+
+🔴 **WHY, AND IT IS A LESSON ALREADY RECORDED TWICE.** 082 exposed the listing
+through a SECURITY DEFINER function. **A definer function runs as its OWNER,
+and FORCE RLS binds the owner on Render**, so it ran with no tenant context and
+matched nothing. Locally it worked because the local role is a SUPERUSER and
+bypasses RLS — which is why every local check passed. 083 adds the permissive
+`is_published AND is_verified` SELECT policy that `catalogue.parts` has always
+had. Proven locally: published visible 1, drafts hidden 0, under the app role.
+
+⚠️ **RUN IT ALONE.** Pushing triggers `apply-migrations` via `workflow_run`, so
+a manual dispatch made at the same time races it on the database firewall —
+each run restores the ORIGINAL allow-list on teardown and deletes the other's
+entry. That produced repeated "SSL connection has been closed unexpectedly"
+failures today and is NOT the database.
+
+---
+
 ### 1. The customer cannot BUY yet — the marketplace is half a marketplace
 
 `GET /public/insurance-products` is live and anonymous, and **no screen renders
@@ -71,11 +101,16 @@ action. **Never propose spending.**
 `pg_dump --schema=` does not dump extensions; without them only 21 of 114
 tables restore.
 
-### 6. Finish the UAT case that could not be run on 2026-08-14
+### 6. ✅ DONE — the insurance UAT case ran on production
 
-The owner's UAT asked for an "insurance sales pipeline". It was the ONE case of
-eight that could not be populated, because none of it existed — reported as a
-named zero row rather than faked. **It exists now**, so close the loop:
+Ran on PRODUCTION at the close of 2026-08-14. The gate held there:
+**"unverified listing correctly REFUSED"**, then a sale accrued
+**GHS 120.00 at 10%** with no application code computing it. 24 of 24 UAT
+measures now match, and `uat_verify.sql`'s "NO PRODUCTION PATH" row is
+replaced by four real ones.
+
+What remains of it is only the shopper's view — see task 0 and task 1.
+The original steps, for reference:
 
 1. Register an insurance company (`POST /registration/insurance`) tagged
    `UAT-2026-08-14`, so it sits with the rest of the UAT population.
