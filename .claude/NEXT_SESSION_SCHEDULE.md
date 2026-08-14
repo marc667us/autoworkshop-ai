@@ -73,6 +73,26 @@ trading name is now on the product, set by a trigger at INSERT and re-synced if
 the organisation is renamed — kept honest by the database rather than by
 discipline.
 
+🔴 **084 FAILED ONCE ON PRODUCTION AND THE FIX IS ALREADY COMMITTED.** Its own
+backfill joined `identity.organizations` and matched zero rows under FORCE RLS,
+so `SET NOT NULL` refused:
+
+```
+ERROR: column "insurer_name" of relation "products" contains null values
+```
+
+**The migration written to fix an RLS-join bug contained the same RLS-join bug.**
+Fixed by opening the platform escape at the top of the migration
+(`set_config('app.current_role','admin',true)`), which every seed script here
+already does. The migration is transactional so the failed attempt left nothing
+behind; it re-applies cleanly locally.
+
+**THIS IS THE THIRD TIME IN ONE DAY** that "local is superuser, Render is not"
+produced a green local result and a red production one — the backup's `pg_dump`,
+the public listing's join, and this. **Any migration or query that reads a
+FORCE-RLS table with no tenant context needs that escape, and local will never
+tell you.**
+
 ⚠️ **RUN THE APPLY ALONE.** Pushing triggers `apply-migrations` via
 `workflow_run`, which is a DRY RUN. Twice today I read that dry run's "success"
 and believed a migration had applied when it had not. **Capture the run id of
