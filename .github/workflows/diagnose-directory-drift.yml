@@ -1,0 +1,133 @@
+# Read-only: why does production create a mechanic_directory row that local does not?
+#
+# ══════════════════════════════════════════════════════════════════════════
+# On 2026-08-14 the UAT seeder registered a workshop, approved it, and then
+# failed inserting into `catalogue.mechanic_directory` with a duplicate on
+# `uq_directory_org` — a row for that brand-new organisation already existed.
+# The same sequence inserts cleanly locally.
+#
+# This asks the production catalogue what writes that row, instead of guessing.
+# Five confident diagnoses were wrong on 2026-08-13 and each cost a cycle.
+#
+# 🔴 READ-ONLY. Every statement in the SQL is a SELECT against a system
+# catalogue. It writes nothing and needs no confirm input, which is the point:
+# a diagnostic nobody can run without ceremony does not get run.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Diagnose directory drift
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diagnose-directory-drift
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d.get('id','')); break
+          ")"
+          [ -n "$DB_ID" ] || {
+            echo "::group::what /v1/postgres returned"; head -c 500 /tmp/pg_list.json; echo "::endgroup::"
+            echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          # `or []`: Render returns the key PRESENT and null when the list is
+          # empty, so a dict default would never fire.
+          print(json.dumps(d.get('ipAllowList') or []))" > /tmp/ip_allow_original.json
+
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'demo seeding'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          echo "firewall open"
+
+      - name: Ask production what writes the directory
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL"             -f infrastructure/seed/diagnose_directory_drift.sql | tee /tmp/drift.txt
+
+      - name: Put it in the run summary
+        if: always()
+        run: |
+          {
+            echo "## Directory drift — production"
+            echo ""
+            echo "Local control, for comparison:"
+            echo "- organization_registrations triggers: 1 (trg_alert_admins_of_registration)"
+            echo "- organizations triggers: 0"
+            echo "- register_workshop mentions mechanic_directory: no"
+            echo ""
+            echo '```'
+            cat /tmp/drift.txt 2>/dev/null || echo "nothing was read"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl || true
