@@ -70,6 +70,25 @@ SET LOCAL lock_timeout = '5s';
 
 -- ── 1. The verification queue learns a fourth and fifth kind ──────────────
 --
+-- ⚠️ THIS TAKES AN `ACCESS EXCLUSIVE` LOCK ON `organization_registrations`
+-- (Codex, 2026-08-14, severity Low — accepted and recorded rather than
+-- "fixed", because there is no lighter way to widen a CHECK).
+--
+-- Both the DROP and the ADD need it, and once acquired it is held until COMMIT,
+-- so any concurrent read or write of that table WAITS for this migration rather
+-- than failing. `SET LOCAL lock_timeout = '5s'` above bounds how long WE wait to
+-- acquire it; it does not bound how long others wait once we hold it.
+--
+-- Accepted because the window is milliseconds — the table is small, `ADD
+-- CONSTRAINT` on a CHECK must scan it, and it holds only registration rows —
+-- and because the alternative shapes are worse: `NOT VALID` + `VALIDATE` still
+-- needs the exclusive lock for the ADD, and dropping the constraint permanently
+-- would remove the guard that makes `register_*` fail loudly on an unknown kind.
+--
+-- The failure mode is benign: the whole file is one transaction, so a timeout
+-- rolls everything back and nothing is half-applied. Migration 075 did exactly
+-- this and was applied to production without incident.
+--
 -- Both join the SAME admin gate as a workshop, a supplier and a fleet: the
 -- organisation works immediately and is invisible in any public registry until
 -- a platform administrator approves it. Adding the row without widening this

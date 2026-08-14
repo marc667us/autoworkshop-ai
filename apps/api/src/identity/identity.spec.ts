@@ -40,7 +40,25 @@ function fakeDb(rows: unknown[] = [], rowsFor?: (text: string) => unknown[] | un
   const client = {
     query: vi.fn(async (text: string, values?: unknown[]) => {
       queries.push({ text, values });
-      return { rows: rowsFor?.(text) ?? rows };
+      const answered = rowsFor?.(text);
+      if (answered !== undefined) return { rows: answered };
+      // 🔴 THE ORGANISATION LOOKUP NOW READS `org_type`, AND A GENERIC ROW HAS
+      // NONE. `grant()` used to ask `SELECT 1 FROM identity.organizations`,
+      // where any row meant "exists"; it now asks for `org_type` so it can
+      // refuse a role that does not belong in that kind of organisation (a
+      // `reception_staff` inside a `parts_supplier` was found in the
+      // development database). Replaying the generic canned row returned
+      // `org_type: undefined`, which the new check correctly refuses — so eight
+      // tests failed on the FIXTURE, not on the product.
+      //
+      // Defaulted to a workshop because that is what every one of those tests
+      // is about, and left overridable by `rowsFor` so a supplier or fleet case
+      // can still say otherwise. It is a default, not a bypass: the check still
+      // runs, and `membership-role-fit.spec.ts` asserts the pairings directly.
+      if (/org_type\s+FROM\s+identity\.organizations/.test(text)) {
+        return { rows: [{ org_type: 'individual_workshop' }] };
+      }
+      return { rows };
     }),
   };
   return {
@@ -246,7 +264,7 @@ describe('MembershipService — the privilege-granting surface', () => {
         /FROM identity\.users WHERE lower\(email\)/.test(text)
           ? [{ id: 'resolved-user-9' }]
           : /FROM identity\.organizations/.test(text)
-            ? [{ '?column?': 1 }]
+            ? [{ org_type: 'individual_workshop' }]
             : [membershipRow],
       );
       const svc = new MembershipService(db, fakeAudit());
@@ -266,7 +284,7 @@ describe('MembershipService — the privilege-granting surface', () => {
         /FROM identity\.users WHERE lower\(email\)/.test(text)
           ? [{ id: 'u1' }]
           : /FROM identity\.organizations/.test(text)
-            ? [{ '?column?': 1 }]
+            ? [{ org_type: 'individual_workshop' }]
             : [membershipRow],
       );
       await new MembershipService(db, fakeAudit()).grant(ctx(), {
@@ -332,7 +350,7 @@ describe('MembershipService — the privilege-granting surface', () => {
         if (/UPDATE identity\.memberships/.test(text) && insertDone) {
           return [{ ...membershipRow, status: 'active' }];
         }
-        if (/FROM identity\.organizations/.test(text)) return [{ '?column?': 1 }];
+        if (/FROM identity\.organizations/.test(text)) return [{ org_type: 'individual_workshop' }];
         return [membershipRow];
       });
       await expect(
@@ -364,7 +382,7 @@ describe('MembershipService — the privilege-granting surface', () => {
         /FROM identity\.users WHERE lower\(email\)/.test(text)
           ? [{ id: 'resolved-99' }]
           : /FROM identity\.organizations/.test(text)
-            ? [{ '?column?': 1 }]
+            ? [{ org_type: 'individual_workshop' }]
             : [membershipRow],
       );
       await new MembershipService(db, audit as never).grant(ctx(), {
@@ -397,7 +415,7 @@ describe('MembershipService — the privilege-granting surface', () => {
     // existence check while scoping the membership to the wrong site - which
     // §50's "approved role and branch" rule forbids.
     const { db, queries } = fakeDb([], (text) => {
-      if (/FROM identity\.organizations/.test(text)) return [{ '?column?': 1 }];
+      if (/FROM identity\.organizations/.test(text)) return [{ org_type: 'individual_workshop' }];
       if (/FROM identity\.branches/.test(text)) return [];
       return [membershipRow];
     });
@@ -427,7 +445,7 @@ describe('MembershipService — the privilege-granting surface', () => {
     const { db } = fakeDb([], (text) =>
       /INTO identity\.memberships|UPDATE identity\.memberships/.test(text)
         ? []
-        : [{ '?column?': 1 }],
+        : [{ org_type: 'individual_workshop' }],
     );
     const svc = new MembershipService(db, fakeAudit());
     await expect(

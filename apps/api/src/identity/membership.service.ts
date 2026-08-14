@@ -69,6 +69,81 @@ const GRANTABLE_ROLES = new Set([
 ]);
 
 /**
+ * The roles a WORKSHOP organisation may hold — the eight of `07.txt` pt2 §50,
+ * plus the two the product genuinely puts there.
+ *
+ * Derived from `GRANTABLE_ROLES` rather than retyped, so a role added above
+ * cannot be silently absent here. The four partner roles are subtracted by
+ * name because each belongs to its own organisation type.
+ */
+const WORKSHOP_ROLE_SET: readonly string[] = [
+  ...[...GRANTABLE_ROLES].filter(
+    (r) =>
+      r !== 'supplier_owner' &&
+      r !== 'fleet_administrator' &&
+      r !== 'insurance_assessor' &&
+      r !== 'towing_operator',
+  ),
+  // Not in `GRANTABLE_ROLES` — it cannot be granted through this service at all
+  // (migration 077/078 made it a grant RECORD). It is listed here because
+  // existing memberships carry the name inside the owner's workshop, and this
+  // map must not describe those as invalid.
+  'platform_administrator',
+];
+
+/**
+ * Which roles belong in which kind of organisation.
+ *
+ * 🔴 THE GAP THIS CLOSES, MEASURED. `grant()` checked who may grant, that the
+ * role is grantable, that the organisation is in the caller's tenant and that
+ * the branch is in the organisation — and never that the ROLE SUITS THE
+ * ORGANISATION. A query of the development database found
+ * `parts_supplier | reception_staff`, a workshop reception role inside a parts
+ * supplier, which every one of those gates passed.
+ *
+ * ⚠️ THE ORG TYPE KEYS ARE `ORG_TYPES` FROM `organization.schemas.ts`, which
+ * mirrors the `organizations_org_type_check` CHECK constraint in
+ * `001_tenancy_foundation.sql`. Two lists that must agree are a drift risk, and
+ * `membership-role-fit.spec.ts` reads the schema module and fails if this one
+ * names a type the database does not admit.
+ *
+ * ⚠️ AN ORG TYPE ABSENT FROM THIS MAP GRANTS NOTHING. `vehicle_owner` and
+ * `training_institution` have no roles defined yet, so a grant into one is
+ * refused rather than waved through. That is the fail-closed direction: a role
+ * nobody has designed for an organisation nobody has built is not a thing to
+ * guess at. When those organisations get roles, they get an entry here.
+ */
+const ROLES_BY_ORG_TYPE: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  // The three workshop shapes take the eight workshop roles of `07.txt` pt2
+  // §50, plus `customer` — migration 061 enrols a vehicle owner INTO the
+  // workshop's own organisation, so that pairing is what the product produces —
+  // plus `platform_administrator`, the documented compromise described above.
+  individual_workshop: WORKSHOP_ROLE_SET,
+  multi_branch_workshop: WORKSHOP_ROLE_SET,
+  mobile_technician: WORKSHOP_ROLE_SET,
+
+  parts_supplier: ['supplier_owner'],
+  fleet_operator: ['fleet_administrator'],
+  insurance_company: ['insurance_assessor'],
+  towing_company: ['towing_operator'],
+
+  // The platform's own organisation, if one is ever created. Named because
+  // leaving it out would refuse the one role that obviously belongs in it.
+  platform_operator: ['platform_administrator'],
+});
+
+/** Whether `roleName` may be granted inside an organisation of `orgType`. */
+function roleSuitsOrganisation(roleName: string, orgType: string): boolean {
+  // `Object.hasOwn` rather than a bare lookup, for the reason
+  // `permissionsForRole` documents: a plain index resolves up the PROTOTYPE
+  // chain, so `ROLES_BY_ORG_TYPE['constructor']` returns the Object function —
+  // truthy — and `?? []` never fires. On this function that would admit every
+  // role into an organisation type called `constructor`.
+  if (!Object.hasOwn(ROLES_BY_ORG_TYPE, orgType)) return false;
+  return ROLES_BY_ORG_TYPE[orgType]!.includes(roleName);
+}
+
+/**
  * Membership domain service — T-0003.
  *
  * `identity.memberships` is tenant-scoped and under `ENABLE` + `FORCE ROW LEVEL
@@ -202,11 +277,56 @@ export class MembershipService {
       //
       // Both lookups work because those tables are under FORCE RLS: a row in
       // another tenant is simply invisible here and returns nothing.
-      const org = await client.query(
-        `SELECT 1 FROM identity.organizations WHERE id = $1 AND tenant_id = $2`,
+      const org = await client.query<{ org_type: string }>(
+        // 🔴 `org_type`, NOT `1`. See the compatibility check below — the row's
+        // EXISTENCE was all this asked for, and existence is not the whole
+        // question on the privilege-granting operation.
+        `SELECT org_type FROM identity.organizations WHERE id = $1 AND tenant_id = $2`,
         [input.organizationId, ctx.tenantId],
       );
       if (org.rows.length === 0) throw new NotFoundException('organization not found');
+
+      // ── 🔴 THE ROLE MUST SUIT THE ORGANISATION IT IS GRANTED IN ───────────
+      //
+      // MEASURED, NOT HYPOTHETICAL. Before this check, a query of the
+      // development database returned:
+      //
+      //     parts_supplier | reception_staff | 1
+      //
+      // — a workshop reception role inside a PARTS SUPPLIER organisation. Every
+      // gate above passed it: `reception_staff` is in `GRANTABLE_ROLES`, the
+      // organisation was in the caller's tenant, and RLS `WITH CHECK` validates
+      // the tenant of the row being inserted and says nothing about whether the
+      // role makes sense where it landed.
+      //
+      // The consequence is not a cross-tenant leak — `resolveTenantContext`
+      // still pins the request to this organisation — it is INCOHERENCE, which
+      // fails in the quiet direction this repository keeps paying for. A
+      // `reception_staff` in a supplier organisation resolves the WORKSHOP
+      // reception navigation tree (`workspaceForRole`), so the person is shown
+      // Vehicle Intake and Customer Complaints for an organisation that has
+      // neither, and `isForeignToWorkspace` sends them to the workshop pack,
+      // where every API call is scoped to a supplier's tenant. Nothing errors.
+      //
+      // ⚠️ ENFORCED ON THE GRANT, NOT ON EXISTING ROWS. This is a forward
+      // constraint: the row above keeps working and is not migrated away, so no
+      // live membership breaks. A database CHECK would have been the stronger
+      // place and is not available — the pairing spans two tables.
+      //
+      // ⚠️ `platform_administrator` IS DELIBERATELY VALID IN A WORKSHOP. It is
+      // the documented compromise the model forces (the owner holds it via a
+      // membership attached to their own workshop), and since migration 078 the
+      // AUTHORITY comes from a grant record rather than this name, so admitting
+      // the name here confers nothing on its own.
+      const orgType = org.rows[0]!.org_type;
+      if (!roleSuitsOrganisation(input.roleName, orgType)) {
+        // Names the mismatch without enumerating the taxonomy, matching the
+        // deliberately vague 'unknown role' above: the caller learns that the
+        // pair is wrong, not what the full set of valid pairs is.
+        throw new BadRequestException(
+          `role '${input.roleName}' cannot be granted in a ${orgType} organisation`,
+        );
+      }
 
       if (input.branchId) {
         // Also asserts the branch belongs to THIS organization — a branch from

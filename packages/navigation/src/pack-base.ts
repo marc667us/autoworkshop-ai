@@ -164,17 +164,54 @@ export function packServingLegacyPath(
  */
 export function landingPathFor(
   workspaceId: WorkspaceId | string,
-  workspaces: ReadonlyArray<{ id: string; groups: ReadonlyArray<{ items: ReadonlyArray<{ href: string }> }> }>,
+  workspaces: ReadonlyArray<{
+    id: string;
+    groups: ReadonlyArray<{
+      permission?: string;
+      items: ReadonlyArray<{ href: string; permission?: string }>;
+    }>;
+  }>,
+  /**
+   * 🔴 THE VIEWER'S GRANTS, AND OMITTING THEM IS NOT A NEUTRAL DEFAULT.
+   *
+   * Codex asked whether the first item of the first group is ever
+   * PERMISSION-GATED, and I had not checked. It is: `adminGroups` opens with
+   *
+   *     group('home', 'Home', 'home', [['operations-dashboard', …]], 'platform.admin')
+   *
+   * — the whole group is behind `platform.admin`. `renderModulePage` resolves
+   * against `visibleGroups(workspace, grants)`, the FILTERED tree, so a viewer
+   * who lacks that permission is 404'd on a path the unfiltered tree happily
+   * returned. Since migration 078, `platform.admin` comes from a grant RECORD
+   * and not from the role name, so a `platform_administrator` whose grant has
+   * been revoked is exactly that viewer — and revocation is a case the product
+   * is supposed to handle well, not dump on a 404.
+   *
+   * Passing grants makes this function answer the same question the router
+   * will. `undefined` means "not known", and the ungated-only tree is then the
+   * safe reading: it can only ever return a route ANY member of the workspace
+   * may open.
+   *
+   * ⚠️ THIS IS NOT A SECURITY CONTROL, like everything else in this package. It
+   * decides where to SEND somebody; the API and RLS decide what they may see.
+   */
+  grants?: readonly string[],
 ): string | null {
   const workspace = workspaces.find((w) => w.id === workspaceId);
   if (!workspace) return null;
+
+  const held = new Set(grants ?? []);
+  const maySee = (permission?: string) => permission === undefined || held.has(permission);
   // The FIRST item of the FIRST group — `01 (1).txt` §18 makes the dashboard a
   // workspace's landing page, and in every transcribed tree that dashboard is
   // exactly this position. Reading the position rather than searching for the
   // word "dashboard" keeps it true of a tree that names its landing screen
   // something else.
   for (const group of workspace.groups) {
-    const first = group.items[0];
+    if (!maySee(group.permission)) continue;
+    // The first item THIS VIEWER may open, not the first item that exists. A
+    // group can be ungated while its opening item is not.
+    const first = group.items.find((i) => maySee(i.permission));
     // 🔴 MOUNTED BEFORE IT IS RETURNED. `item()` builds every href as
     // `/${groupId}/${id}` — UNMOUNTED — and the pack base is applied later by
     // `withPackBase`. A caller passing the raw value to `redirect()` would send

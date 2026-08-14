@@ -143,7 +143,13 @@ export default async function OnboardingPage() {
               whose entire job is to stop people reaching dead ends. */}
           <Link
             href={
-              landingPathFor(homeWorkspaceFor(viewer?.activeRole), Object.values(workspaces)) ?? '/'
+              landingPathFor(
+                homeWorkspaceFor(viewer?.activeRole),
+                Object.values(workspaces),
+                // Same reason as the front door: without grants this would link
+                // a revoked administrator to a route their filtered tree hides.
+                viewer?.permissions,
+              ) ?? '/'
             }
             style={{ color: themeVar.actionPrimary }}
           >

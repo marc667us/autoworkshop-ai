@@ -136,7 +136,26 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // dispatch and the router cannot disagree. `null` only when a workspace
       // is unknown or empty; falling through to the marketplace then is the
       // same safe default this function already uses for an unresolved viewer.
-      const landing = landingPathFor(homeWorkspaceFor(viewer.activeRole), Object.values(workspaces));
+      //
+      // 🔴 GRANTS ARE PASSED, AND WITHOUT THEM THIS WOULD 404 A REVOKED
+      // ADMINISTRATOR. `adminGroups`' Home group is gated on `platform.admin`,
+      // and since migration 078 that permission comes from a grant RECORD
+      // rather than the role name — so a `platform_administrator` whose grant
+      // was withdrawn still resolves `activeRole = 'platform_administrator'`,
+      // still dispatches to the admin pack, and would be sent to a route their
+      // own filtered tree hides. `renderModulePage` resolves against the
+      // FILTERED tree and would call `notFound()`. Codex asked whether the
+      // landing item is ever permission-gated; it is, in exactly one pack, and
+      // that pack is the owner's.
+      //
+      // With no visible landing, `landingPathFor` returns null and this falls
+      // through to the marketplace — a page rather than a dead end, which is
+      // this repository's standing preference.
+      const landing = landingPathFor(
+        homeWorkspaceFor(viewer.activeRole),
+        Object.values(workspaces),
+        viewer.permissions,
+      );
       if (landing) redirect(landing);
     }
 

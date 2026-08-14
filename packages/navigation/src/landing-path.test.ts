@@ -32,7 +32,12 @@ describe('landingPathFor', () => {
   it.each(ALL.map((w) => [w.id] as const))(
     '%s: the landing path is a route that workspace really serves',
     (id) => {
-      const landing = landingPathFor(id, ALL);
+      // ⚠️ EVERY PERMISSION GRANTED, deliberately: this test asks "is the
+      // landing a REAL ROUTE", not "who may open it". The permission question
+      // has its own describe block below. Passing the full set keeps this
+      // assertion about route existence even for the admin pack, whose Home
+      // group is gated on `platform.admin`.
+      const landing = landingPathFor(id, ALL, ['platform.admin', 'finance.read', 'organization.admin']);
       expect(landing, `${id} has no landing path at all`).not.toBeNull();
 
       // 🔴 RESOLVED AGAINST THE TREE, exactly as `renderModulePage` does it:
@@ -82,8 +87,10 @@ describe('landingPathFor', () => {
     // Two instances of one defect — towing and admin — in a seven-pack product,
     // both invisible for the same reason: the redirect target was a literal
     // rather than a question asked of the navigation model.
-    expect(landingPathFor('admin', ALL)).toBe('/admin/home/operations-dashboard');
-    expect(landingPathFor('admin', ALL)).not.toBe('/admin/home/dashboard');
+    expect(landingPathFor('admin', ALL, ['platform.admin'])).toBe(
+      '/admin/home/operations-dashboard',
+    );
+    expect(landingPathFor('admin', ALL, ['platform.admin'])).not.toBe('/admin/home/dashboard');
   });
 
   it('the five packs whose tree starts at home/dashboard still land there', () => {
@@ -92,6 +99,55 @@ describe('landingPathFor', () => {
     for (const id of ['customer', 'workshop', 'supplier', 'fleet', 'insurance']) {
       expect(landingPathFor(id, ALL), `${id} moved`).toBe(`/${id}/home/dashboard`);
     }
+  });
+
+  describe('permission-gated landings — Codex C6', () => {
+    /**
+     * 🔴 THE ADMIN PACK'S LANDING IS BEHIND `platform.admin`, AND I HAD NOT
+     * CHECKED. `adminGroups` opens with
+     * `group('home', 'Home', 'home', [...], 'platform.admin')`.
+     *
+     * `renderModulePage` resolves against `visibleGroups(workspace, grants)` —
+     * the FILTERED tree — so dispatching from the UNFILTERED one sends a viewer
+     * without that permission to a route their own tree hides, and the router
+     * then 404s them.
+     *
+     * Since migration 078 `platform.admin` comes from a grant RECORD, not from
+     * the role name, so the viewer this describes is real: a
+     * `platform_administrator` whose grant was withdrawn. Revocation is a case
+     * the product must handle well, and a 404 at the front door is not that.
+     */
+    it('an administrator WITH the grant lands on the operations dashboard', () => {
+      expect(landingPathFor('admin', ALL, ['platform.admin'])).toBe(
+        '/admin/home/operations-dashboard',
+      );
+    });
+
+    it('an administrator whose grant was REVOKED gets null, not a route that 404s', () => {
+      // Null, so the caller falls through to a page rather than a dead end.
+      // Every group in the admin tree is gated, so there is nothing to offer.
+      expect(landingPathFor('admin', ALL, [])).toBeNull();
+    });
+
+    it('omitting grants is the ungated-only reading, never the widest one', () => {
+      // `undefined` means "not known". It must not be treated as "holds
+      // everything" — that would reintroduce the 404 by a different route, and
+      // it is the fail-OPEN direction on a function that decides where somebody
+      // is sent.
+      expect(landingPathFor('admin', ALL)).toBeNull();
+    });
+
+    it('the ungated packs are unaffected by grants either way', () => {
+      // The other six packs open on an ungated group and item, so passing no
+      // grants must not move them. If this ever fails, a permission was added
+      // to a landing screen and somebody needs to decide where that role goes.
+      for (const id of ['customer', 'workshop', 'supplier', 'fleet', 'insurance']) {
+        expect(landingPathFor(id, ALL), `${id} needs a grant to land`).toBe(
+          `/${id}/home/dashboard`,
+        );
+      }
+      expect(landingPathFor('towing', ALL)).toBe('/towing/operations/dashboard');
+    });
   });
 
   it('returns null for a workspace nobody has transcribed', () => {
