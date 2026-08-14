@@ -13,6 +13,34 @@
 \set ON_ERROR_STOP on
 \pset format aligned
 
+-- 🔴 THIS READ MUST OPEN THE SAME DOOR THE WRITE DID, AND THE FIRST VERSION
+-- DID NOT. It reported 0 for all twenty measures on production against a seed
+-- run that had just printed "UAT population written" — a verification that
+-- lied, which is this repository's most-repeated defect shape.
+--
+-- The data was there. The QUERY could not see it. Every table below is under
+-- ENABLE + FORCE ROW LEVEL SECURITY, and the `tenant_isolation` policy admits
+-- a row only when `identity.is_platform_admin()` is true or the row's tenant
+-- matches the request's. `is_platform_admin()` requires BOTH halves:
+--
+--     identity.current_role_name() = 'admin'
+--     AND current_user = <owner of identity.platform_administrators>
+--
+-- `uat_population.sql` sets the GUC; this file did not, so the escape never
+-- opened. It passed LOCALLY because the local `autoworkshop` role is a
+-- SUPERUSER and bypasses RLS altogether — the exact local/Render privilege
+-- difference this repository has recorded repeatedly. Reproduced by running
+-- the same query under `SET ROLE autoworkshop_app`, which returned 0 locally
+-- too.
+--
+-- ⚠️ TRANSACTION-LOCAL (`true`), so it needs a transaction — and the pairing
+-- with `current_user` is what makes this safe to write here at all: the GUC
+-- alone confers nothing, because any role can set it. The escape belongs to
+-- whoever holds the OWNER credential, which is this workflow and migrations,
+-- and to nothing reachable from the application connection.
+BEGIN;
+SELECT set_config('app.current_role', 'admin', true);
+
 WITH ws AS (
     SELECT o.id AS org, o.tenant_id AS t
       FROM identity.organizations o
@@ -75,3 +103,5 @@ SELECT * FROM (
     UNION ALL SELECT 21, 'insurance pipeline / campaign (NO PRODUCTION PATH)', '0', 'n/a'
 ) rows
 ORDER BY ord;
+
+COMMIT;
