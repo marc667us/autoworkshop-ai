@@ -572,6 +572,38 @@ jobs:
           done
           echo "RESTORE VERIFIED — every production table is present and the sampled counts match"
 
+      # ======================================================================
+      # KEEP A DUMP THAT WAS PRODUCED EVEN WHEN THE VERIFICATION DID NOT RUN,
+      # AND LABEL IT SO IT CANNOT BE MISTAKEN FOR A BACKUP.
+      #
+      # On 2026-08-14 this workflow produced a 1,007,752-byte dump — the
+      # first it has ever produced — and then failed in the restore step
+      # because PGSSLMODE=require was applied to a throwaway container with
+      # no TLS. The upload sits after the compare, so the dump was DISCARDED.
+      # A real dump of a database that expires on 2026-09-01 was thrown away
+      # over an SSL flag in a verification container.
+      #
+      # This file opens by insisting a dump that has never been restored is
+      # a hypothesis, and that remains right — so the fix is NOT to relax the
+      # gate. The run still fails, the summary still says so, and the
+      # artifact is named UNVERIFIED. What changes is only that the bytes
+      # survive for a human to decide about, instead of being deleted by a
+      # step that had nothing to do with the dump.
+      # ======================================================================
+      - name: Keep the dump even if the verification failed (labelled UNVERIFIED)
+        if: always() && env.STAMP != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNVERIFIED-autoworkshop-db-${{ env.STAMP }}
+          path: |
+            /tmp/autoworkshop-${{ env.STAMP }}.dump
+            /tmp/autoworkshop-${{ env.STAMP }}.sha256
+          retention-days: 90
+          # Not an error: on a run that never got as far as dumping there is
+          # legitimately nothing to keep, and failing here would turn one
+          # failure into two.
+          if-no-files-found: ignore
+
       - uses: actions/upload-artifact@v4
         with:
           name: autoworkshop-db-${{ env.STAMP }}
