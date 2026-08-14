@@ -116,7 +116,33 @@ BEGIN
     -- ── 0. THE MARKER. Do nothing at all if this has already run ──────────
     SELECT count(*) INTO v_exists FROM identity.tenants WHERE name LIKE '%'||v_tag||'%';
     IF v_exists > 0 THEN
-        RAISE NOTICE 'UAT population % already exists (% tenants). Nothing written.',
+        -- 🔴 ONE RECONCILE BEFORE RETURNING, AND ONLY FOR A STEP THE FIRST RUN
+        -- COULD NOT HAVE KNOWN TO TAKE.
+        --
+        -- Publishing a supplier is a SECOND administrator action, separate from
+        -- approving its registration: `PATCH admin/catalogue/suppliers/:id/
+        -- publication` -> `setSupplierPublication`, which sets `is_published`
+        -- and optionally `is_verified`. Approving the registration does NOT do
+        -- it. That is by design, not a defect — but it meant the UAT supplier
+        -- was approved and still absent from the public supplier directory,
+        -- which is half of the "suppliers parts supply" use case.
+        --
+        -- Idempotent and narrowly scoped: it touches only the tagged supplier
+        -- and only when it is not already published, so a repeat run is still a
+        -- no-op. Everything else remains marker-guarded.
+        UPDATE catalogue.suppliers s
+           SET is_published = true, is_verified = true, updated_at = now()
+          FROM identity.organizations o
+         WHERE o.id = s.organization_id
+           AND o.name LIKE '%'||v_tag||'%'
+           AND s.is_published IS DISTINCT FROM true;
+        IF FOUND THEN
+            RAISE NOTICE 'reconciled: the UAT supplier is now published to the '
+                         'public directory (a separate admin action from '
+                         'approving its registration).';
+        END IF;
+
+        RAISE NOTICE 'UAT population % already exists (% tenants). Nothing else written.',
                      v_tag, v_exists;
         RETURN;
     END IF;
@@ -242,6 +268,11 @@ BEGIN
     UPDATE identity.organization_registrations
        SET status = 'approved', decided_by = v_admin, decided_at = now(),
            decision_note = 'UAT '||v_tag||': verified for acceptance testing'
+     WHERE organization_id = v_sup_org;
+    -- ...and published, which is the separate second admin action. Without it
+    -- an approved supplier is still invisible on the marketplace.
+    UPDATE catalogue.suppliers
+       SET is_published = true, is_verified = true, updated_at = now()
      WHERE organization_id = v_sup_org;
 
     -- ══ 4. TWO FLEET FIRMS, 10 CARS EACH ═════════════════════════════════
