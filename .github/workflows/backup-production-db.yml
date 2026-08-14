@@ -338,6 +338,46 @@ jobs:
             AND nspname <> 'keycloak';
           SQL
 
+          # ==================================================================
+          # A BOUNDED RETRY ON THE CONNECTION, AND IT IS NOT A DIAGNOSIS.
+          #
+          # Measured, twice in a row on identical code: the FIRST psql in
+          # this step fails before printing anything, with
+          #
+          #   psql: error: connection to server at ...render.com failed:
+          #         SSL connection has been closed unexpectedly
+          #
+          # while the immediately preceding run on the same commit
+          # connected, discovered 18 schemas and produced a 1,007,752-byte
+          # dump. So the fix works and the CONNECTION is what is flaky.
+          #
+          # This is a FREE Render Postgres and it was hit hard on
+          # 2026-08-14: three UAT seed runs, two diagnostics, four backup
+          # attempts and a live suite, each opening and closing the
+          # firewall. A connection cap or a throttle would look exactly
+          # like this. That is a HYPOTHESIS and it is deliberately not
+          # asserted anywhere else -- this repository has paid five times
+          # for a confident diagnosis of an error whose text was a lie,
+          # and this is the same error text.
+          #
+          # So the retry is honest resilience, not an explanation. It
+          # cannot mask a bad backup: the restore-and-compare below still
+          # has to reproduce production row for row, and a connection that
+          # never succeeds still fails the run loudly after five tries.
+          # ==================================================================
+          for attempt in 1 2 3 4 5; do
+            if "$PGBIN/psql" -tA -c "select 1" "$SRC" >/dev/null 2>/tmp/conn.err; then
+              echo "connected on attempt ${attempt}"
+              break
+            fi
+            echo "attempt ${attempt} failed: $(cat /tmp/conn.err)"
+            if [ "$attempt" -ge 5 ]; then
+              echo "::error::could not connect to production after 5 attempts"
+              exit 1
+            fi
+            sleep $(( attempt * 20 ))
+          done
+
           SCHEMAS="$("$PGBIN/psql" -tA -f /tmp/schemas.sql "$SRC")"
           [ -n "$SCHEMAS" ] || { echo "::error::no schemas owned by this user — refusing to write an empty backup"; exit 1; }
           echo "dumping schemas: $SCHEMAS"
