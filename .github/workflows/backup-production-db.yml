@@ -517,6 +517,37 @@ jobs:
           # weakening anything that talks to Render.
           TARGET="postgresql://postgres@127.0.0.1:5432/verify?sslmode=disable"
 
+          # ══════════════════════════════════════════════════════════════════
+          # THE EXTENSIONS MUST EXIST BEFORE THE RESTORE, AND pg_dump WILL NOT
+          # HAVE PUT THEM IN THE FILE.
+          #
+          # Measured: the restore produced 21 of production's 114 tables. The
+          # cause is a documented pg_dump behaviour that is easy to walk into —
+          # with --schema=, extensions are NOT dumped, because an extension
+          # belongs to the DATABASE rather than to any one schema.
+          #
+          # 95 columns in this database default to uuid_generate_v4(). Without
+          # uuid-ossp the target cannot create any of their tables, so 93 tables
+          # failed and 21 survived. That arithmetic is the whole diagnosis.
+          #
+          # pg_trgm and btree_gist back 10 indexes. vector is installed on
+          # production but ZERO columns use it, and it is not in the stock
+          # postgres image — so it is attempted and its failure is tolerated,
+          # rather than being allowed to fail a restore it cannot affect.
+          #
+          # NOTE THIS IS A PROPERTY OF THE BACKUP, NOT ONLY OF THIS TEST. Any
+          # future restore of this dump — into Neon, into a new Render database,
+          # onto a laptop — needs the same three extensions created first. That
+          # is now written down here rather than discovered during a recovery.
+          # ══════════════════════════════════════════════════════════════════
+          for x in '"uuid-ossp"' 'pg_trgm' 'btree_gist'; do
+            "$PGBIN/psql" -v ON_ERROR_STOP=1 "$TARGET" -c "CREATE EXTENSION IF NOT EXISTS $x;" \
+              || { echo "::error::could not create extension $x in the restore target"; exit 1; }
+          done
+          # Unused by any column; tolerated because the stock image lacks it.
+          "$PGBIN/psql" "$TARGET" -c 'CREATE EXTENSION IF NOT EXISTS vector;' \
+            >/dev/null 2>&1 || echo "note: pgvector unavailable in the target, and no column uses it"
+
           # `pg_restore` reports errors for objects it cannot recreate (roles,
           # extensions it lacks). Those are expected here and are NOT the thing
           # being tested — the row counts are. So its exit code is recorded and
@@ -527,7 +558,16 @@ jobs:
           RC=$?
           set -e
           echo "pg_restore exit ${RC} (not the verdict — row counts are)"
-          grep -ci "error" /tmp/restore.log || true
+          # THE RESTORE LOG IS PRINTED. It was written to a file and never
+          # shown, so when the restore produced 21 of 114 tables there was
+          # nothing to read and the cause had to be inferred. This file already
+          # says of the dump log that "a diagnostic that only prints on the
+          # success path is not a diagnostic"; this one printed on no path at
+          # all. Truncated because a failed restore can emit thousands of
+          # identical lines, and the first ones carry the cause.
+          echo "::group::pg_restore output (first 60 lines of $(grep -ci error /tmp/restore.log || echo 0) error lines)"
+          head -60 /tmp/restore.log || true
+          echo "::endgroup::"
 
           "$PGBIN/psql" -v ON_ERROR_STOP=1 "$TARGET" -tA -F'|' -c "
             SELECT n.nspname || '.' || c.relname, c.reltuples::bigint
