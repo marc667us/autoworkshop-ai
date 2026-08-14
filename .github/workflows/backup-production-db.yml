@@ -387,7 +387,44 @@ jobs:
           # Keycloak's role and refuse our SELECT. Both halves are required —
           # either alone still fails.
           # ══════════════════════════════════════════════════════════════════
+          # ==================================================================
+          # FORCE ROW LEVEL SECURITY IS WHY THIS HAS NEVER PRODUCED A DUMP,
+          # AND IT IS A DIFFERENT PROBLEM FROM THE keycloak ONE.
+          #
+          # With the schema list finally applied the dump got past keycloak,
+          # read every catalogue, and died on the first table of DATA:
+          #
+          #   ERROR: query would be affected by row-level security policy
+          #          for table "proposals"
+          #
+          # pg_dump sets row_security=off and Postgres REFUSES rather than
+          # returning a filtered subset. That refusal is correct, and it is
+          # the only reason this was not a silently half-empty backup months
+          # ago. On Render the owner is NOT a superuser, so FORCE RLS binds
+          # it.
+          #
+          # Two halves, both required:
+          #
+          #   PGOPTIONS opens the platform-admin escape AT CONNECTION TIME.
+          #   identity.is_platform_admin() requires the GUC AND current_user
+          #   = owner of identity.platform_administrators, so the setting
+          #   alone confers nothing - any role can write a GUC. Measured:
+          #   true with it, false without.
+          #
+          #   --enable-row-security tells pg_dump to evaluate the policies
+          #   instead of refusing. With the escape open every policy admits
+          #   every row.
+          #
+          # THE DANGER THIS CREATES, NAMED: --enable-row-security means a
+          # policy that does NOT honour the escape yields a SILENTLY PARTIAL
+          # dump - the worst failure a backup has, because it succeeds. The
+          # restore-and-compare below is what makes that loud, and its
+          # source-side counts had to be fixed to run under the same escape
+          # or BOTH sides would have read zero and "matched".
+          # ==================================================================
+          PGOPTIONS='-c app.current_role=admin' \
           "$PGBIN/pg_dump" --format=custom --no-owner --no-acl --verbose \
+            --enable-row-security \
             $SCHEMAS \
             --exclude-table='public.databasechangelog' \
             --exclude-table='public.databasechangeloglock' \
@@ -462,8 +499,20 @@ jobs:
 
           # Compare live counts, not the planner's `reltuples` estimate, on the
           # tables that carry the data anybody would miss.
-          for t in identity.organizations identity.memberships core.customers core.vehicles; do
-            S=$("$PGBIN/psql" -tA "$(cat /tmp/dburl)" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
+          # THE SOURCE COUNT RUNS UNDER THE SAME ESCAPE AS THE DUMP, AND
+          # WITHOUT IT THE WHOLE COMPARISON WAS VACUOUS. These tables are
+          # under FORCE RLS; a plain connection sees ZERO rows, so
+          # production would have reported 0, the restore 0, they would
+          # have "matched", and an empty backup would have been declared
+          # verified. A check that passes by seeing nothing is the defect
+          # shape this repository keeps recording.
+          #
+          # The list is wider than the original four and deliberately
+          # includes what the 2026-08-14 UAT populated: a backup that
+          # reproduces organisations but loses every job card and payment
+          # is not a backup.
+          for t in identity.organizations identity.memberships core.customers core.vehicles repair.job_cards finance.invoices finance.payments parts.stock_movements; do
+            S=$(PGOPTIONS='-c app.current_role=admin' "$PGBIN/psql" -tA "$(cat /tmp/dburl)" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
             D=$("$PGBIN/psql" -tA "$TARGET" -c "SELECT count(*) FROM $t" 2>/dev/null || echo skip)
             printf '  %-28s production=%-8s restored=%-8s\n' "$t" "$S" "$D"
             if [ "$S" != "skip" ] && [ "$S" != "$D" ]; then
