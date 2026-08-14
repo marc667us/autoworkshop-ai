@@ -132,6 +132,10 @@ jobs:
           export DATABASE_URL="$(cat /tmp/dburl)"
           PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
           "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -f infrastructure/seed/uat_population.sql
+          # The insurance case, which could not be run on the morning of
+          # 2026-08-14 because none of it existed. Separate file so it can be
+          # re-run alone, and idempotent by its own marker.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -f infrastructure/seed/uat_insurance.sql
 
       - name: Read the counts back — ALWAYS, whether or not this run wrote
         run: |

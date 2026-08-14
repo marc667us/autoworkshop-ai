@@ -96,11 +96,29 @@ SELECT * FROM (
     UNION ALL SELECT 20, 'fleet vehicles registered', count(*)::text, '20'
       FROM core.vehicles v JOIN identity.organizations o ON o.id = v.organization_id
      WHERE o.org_type = 'fleet_operator' AND o.name LIKE '%UAT-2026-08-14%'
-    -- 🔴 REPORTED AS ZERO RATHER THAN OMITTED. The owner asked for an insurance
-    -- sales pipeline and a marketing campaign; there is no production path for
-    -- either, so this row exists to say so on every run instead of the absence
-    -- being mistaken for an oversight.
-    UNION ALL SELECT 21, 'insurance pipeline / campaign (NO PRODUCTION PATH)', '0', 'n/a'
+    -- 🔴 THIS WAS A NAMED ZERO ROW UNTIL 2026-08-14. The owner asked for an
+    -- insurance sales pipeline and there was no production path for any of it,
+    -- so it was reported as an explicit zero rather than quietly omitted.
+    -- Migration 082 built it; these are the real counts now.
+    UNION ALL SELECT 21, 'insurance companies registered', count(*)::text, '1'
+      FROM identity.organizations
+     WHERE org_type = 'insurance_company' AND name LIKE '%UAT-2026-08-14%'
+    UNION ALL SELECT 22, 'insurance products listed for sale', count(*)::text, '1'
+      FROM insurance.products p
+      JOIN identity.organizations o ON o.id = p.organization_id
+     WHERE o.name LIKE '%UAT-2026-08-14%' AND p.is_published AND p.is_verified
+    UNION ALL SELECT 23, 'policies sold', count(*)::text, '2'
+      FROM insurance.policies po
+      JOIN identity.organizations o ON o.id = po.organization_id
+     WHERE o.name LIKE '%UAT-2026-08-14%'
+    -- The owner's actual requirement: "pays platform levy for selling on the
+    -- platform". A count alone would pass with a zero levy, so the TOTAL is
+    -- reported.
+    UNION ALL SELECT 24, 'platform levy accrued (GHS)',
+                        COALESCE(to_char(sum(lv.amount), 'FM999999.00'), '0'), '240.00'
+      FROM insurance.platform_levies lv
+      JOIN identity.organizations o ON o.id = lv.organization_id
+     WHERE o.name LIKE '%UAT-2026-08-14%'
 ) rows
 ORDER BY ord;
 
