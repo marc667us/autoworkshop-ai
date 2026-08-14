@@ -356,7 +356,41 @@ jobs:
           # Custom format: compressed, and `pg_restore` can read it selectively.
           # --no-owner/--no-acl so it restores anywhere, which is the whole point
           # of holding it — the destination will not have Render's role names.
+          # ══════════════════════════════════════════════════════════════════
+          # 🔴 `$SCHEMAS` IS PASSED HERE, AND UNTIL NOW IT WAS NOT.
+          #
+          # It was computed on line 341, guarded against emptiness on 342, and
+          # echoed on 343 — and then never reached this command. The comment
+          # 70 lines above says "DUMP ONLY THE SCHEMAS THIS USER OWNS — AND
+          # THIS IS THE ACTUAL BUG". The diagnosis was right, the query was
+          # right, the guard was right, and the fix was never wired in. So
+          # pg_dump kept dumping the WHOLE database and kept dying on
+          # `permission denied for table databasechangeloglock`, which libpq
+          # reports as "SSL connection has been closed unexpectedly" — the
+          # error that has now cost five wrong diagnoses across two sessions.
+          #
+          # This is the repository's most-repeated defect verbatim: config
+          # reads correct while the mechanism is INERT, and a comment claiming
+          # a safety net that does not exist. Recorded rather than quietly
+          # fixed, because the previous session closed believing the remaining
+          # work was one flag.
+          #
+          # ⚠️ `$SCHEMAS` IS DELIBERATELY UNQUOTED. It holds several arguments
+          # ("--schema=identity --schema=core ..."), so word-splitting is the
+          # mechanism, not an accident. Quoting it would pass one nonsense
+          # argument and pg_dump would refuse it.
+          #
+          # ⚠️ AND THE LIQUIBASE TABLES ARE EXCLUDED BY NAME. Keycloak's
+          # bookkeeping lives in `public`, not in the `keycloak` schema, so
+          # restricting to owned SCHEMAS does not exclude it: we own `public`,
+          # and `databasechangelog`/`databasechangeloglock` inside it belong to
+          # Keycloak's role and refuse our SELECT. Both halves are required —
+          # either alone still fails.
+          # ══════════════════════════════════════════════════════════════════
           "$PGBIN/pg_dump" --format=custom --no-owner --no-acl --verbose \
+            $SCHEMAS \
+            --exclude-table='public.databasechangelog' \
+            --exclude-table='public.databasechangeloglock' \
             --file="/tmp/autoworkshop-${STAMP}.dump" "$SRC" 2> /tmp/dump.log
 
           ls -lh "/tmp/autoworkshop-${STAMP}.dump"
