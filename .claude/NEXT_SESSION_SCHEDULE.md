@@ -1,7 +1,7 @@
 # Next session — start here
 
-**Written at the close of 2026-08-14. Tip `2d77d14` on `master`, tree clean,
-all pushed. 19 commits.**
+**Written at the close of 2026-08-14. Tip is the commit after `717b830`,
+tree clean, all pushed. 24 commits.**
 
 ```bash
 bash scripts/start-session.sh        # ALWAYS first
@@ -9,129 +9,67 @@ bash scripts/start-session.sh        # ALWAYS first
 
 ---
 
-## ▶ THE STATE, IN ONE TABLE
+## ▶ THE STATE, MEASURED AT CLOSE
 
 | | |
 |---|---|
-| Migrations in repo | **81** |
-| Applied on PRODUCTION | **79** — 081 and 082 are PENDING, deliberately |
-| Applied locally | 81 |
-| `apply-migrations` is RED | **and that is correct** — see task 1 |
-| Live suite | **70 passed / 0 failed / 1 skipped** (anon 66/0/1 + signed-in 4/0/0) |
-| Production backup | ✅ **WORKING AND VERIFIED — the first one ever** |
-| UAT population | ✅ live, tagged `UAT-2026-08-14`, 20 of 21 measures |
+| Migrations in repo / applied on PRODUCTION | **80 / 80 — in sync, PENDING 0** |
+| `apply-migrations` | green again (081 reverted, 082 deployed) |
+| **Live suite** | **70 passed / 0 failed / 1 skipped** (anon 66/0/1 + signed-in 4/0/0) |
+| Screen coverage | **272 of 384 (71%)** — re-measurable again |
+| Production backup | ✅ verified, 114/114 tables |
+| UAT population | ✅ live, tagged `UAT-2026-08-14` |
+
+**Deployed today:** migration 082 · API (insurance + admin verification) ·
+web (four insurance screens + the sales nav group). `GET /public/insurance-products`
+answers 200 on production.
 
 ---
 
-## 🔴 TASK 1 — DECIDE WHAT HAPPENS TO MIGRATIONS 081 AND 082
+## ▶ WHAT IS NOT FINISHED, IN ORDER
 
-**`apply-migrations.yml` is failing on every push and it is RIGHT to.** It is a
-drift detector, it inspects without writing, and it says:
+### 1. The customer cannot BUY yet — the marketplace is half a marketplace
 
-```
-MIGRATIONS   IN REPO 81   APPLIED 79   PENDING 2
-2 migration(s) are in this commit and NOT on production.
-```
+`GET /public/insurance-products` is live and anonymous, and **no screen renders
+it**. A shopper cannot see what insurers are selling. That is the half that
+makes this a marketplace rather than an insurer's private admin tool, and it is
+the single highest-value thing left.
 
-That is the intended state, not a fault — but it cannot stay, because a
-permanently red gate is one people learn to ignore.
+There is also no purchase flow: `POST /insurance/policies` is the INSURER
+recording a sale. Nothing lets a customer initiate one. Decide whether buying
+is self-service or an insurer-recorded act — the API currently assumes the
+latter.
 
-**082 (`insurance.*`) is finished and wants deploying.** Schema + API both
-exist and are proven: `verify/082` 7/7, and the API was confirmed by a RUNNING
-server (health 200, `/insurance/products` 401 unauthenticated,
-`/public/insurance-products` `[]` anonymous). What it lacks is **screens**.
+### 2. No admin SCREEN for verification
 
-**081 (`crm.campaigns`) is the WRONG SHAPE and has no caller.** It was built
-for an insurance "pipeline" before the owner clarified the product. The answer
-turned out to be a marketplace, not outbound marketing. Either give it a caller
-or **revert it** — shipping schema nobody reaches is the defect this repository
-has recorded four times.
+`PATCH /admin/insurance/products/:id/verification` and
+`GET /admin/insurance/review-queue` exist and are gated, and the admin pack has
+no screen for either. **Until one exists, no insurance product can ever be
+listed** — an administrator would have to call the API by hand. The parts
+equivalent lives under `admin/catalogue`; mirror it.
 
-⚠️ **DEPLOY ORDER IS MIGRATION THEN API, TOGETHER.** The insurance controller
-is already on `master`; deploying the API without 082 would 500 every
-`/insurance/*` route.
+### 3. Separation of duties inside an insurer does not exist
 
----
+`insurance_assessor` is the only insurance role, so whoever assesses claims can
+also register products and record sales. `USER_ROLES.md` names Claims Approver;
+the code has no such role. Recorded in `insurance-roles.ts`.
 
-## 🔴 TASK 2 — THE INSURANCE SCREENS, AND A NAVIGATION CHANGE THE OWNER APPROVED
+### 4. `register_workshop` drift — unchanged from this morning
 
-The insurance pack has **no marketing or sales group** in its tree — its groups
-are home, claims, assessment, repair-authorization, workshops-and-products,
-finance-and-reports, communication. Selling needs a new group.
+`docs/05-database/DRIFT_2026-08-14_register_workshop.md`. Production's function
+writes `mechanic_directory`; the repository's does not; checksums identical. The
+other four registration functions are **unexamined, not innocent**.
+`gh workflow run diagnose-directory-drift.yml` re-runs the evidence, read-only.
 
-`CLAUDE.md` prohibits *"changing approved navigation without review"*. **The
-owner approved it on 2026-08-14** when asked; that approval is what authorises
-the change, and it is recorded here so the next session does not re-litigate it.
+### 5. The backup has nowhere permanent to go
 
-Screens needed, all backed by routes that already exist:
+Verified and working, but the artifact expires in 90 days and **the database
+expires 2026-09-01**. Plan D6 names **Neon free**; the account is an owner
+action. **Never propose spending.**
 
-| Screen | Route |
-|---|---|
-| My products | `GET/POST /insurance/products` |
-| List / unlist a product | `PATCH /insurance/products/:id/publication` |
-| Policies sold | `GET/POST /insurance/policies` |
-| What we owe the platform | `GET /insurance/levies` |
-
-And on the customer side, the public listing `GET /public/insurance-products`
-has **no screen at all** — a shopper cannot yet see what insurers are selling.
-That is the half that makes the marketplace a marketplace.
-
-⚠️ **NO ADMIN VERIFICATION ROUTE EXISTS YET.** A product cannot be published
-until `is_verified` is true, and nothing can set it — the same shape as
-`PATCH admin/catalogue/suppliers/:id/publication` for suppliers. Without it
-every insurance product is permanently unlistable. **Build this before the
-screens or the whole flow dead-ends.**
-
----
-
-## 🔴 TASK 3 — PRODUCTION'S `register_workshop` IS NOT THE REPOSITORY'S
-
-Full write-up: `docs/05-database/DRIFT_2026-08-14_register_workshop.md`.
-
-Production's function contains `INSERT INTO catalogue.mechanic_directory (...)`;
-local's does not, and **every migration checksum is byte-identical**. So it was
-hand-applied outside the migration system. `run.sh`'s guard cannot see that — it
-checks the FILES have not changed, not that the DATABASE still matches them.
-
-Closing it needs the full production body dumped and diffed, then migration 083
-written from that diff — **not from the two lines already known**, or it becomes
-a third version. Then check the other four registration functions: if one
-drifted by hand, the others are unexamined, not innocent.
-
-Read-only, re-runnable: `gh workflow run diagnose-directory-drift.yml`.
-
----
-
-## 🔴 TASK 4 — THE COVERAGE AUDIT IS BROKEN AND HAS BEEN SINCE 08-13
-
-```
-node scripts/audit-menu-coverage.mjs --all
-ENOENT: apps/workshop-web/app
-```
-
-It still scans the seven pre-consolidation app directories, which ADR-021
-deleted. **So the "267 of 380 screens (70%)" in `CURRENT_PHASE.md` cannot be
-re-measured and must not be quoted as current.** Fix it to walk `apps/web/app`'s
-seven pack roots before making any claim about how complete the product is.
-
-This matters more than it looks: it is the only instrument that measures
-delivery, and it has been silently dead for a day while the phase file quotes
-its last reading as fact.
-
----
-
-## TASK 5 — THE BACKUP HAS NOWHERE PERMANENT TO GO
-
-The backup now works and is verified, but the artifact lives in GitHub Actions
-for 90 days and **the database expires 2026-09-01**. `COMBINED_PLAN_v2` D6 names
-**Neon free** (no expiry) as the destination and `infrastructure/neon/` has never
-been created. Creating the account is an **owner action**. **Never propose
-spending.**
-
-⚠️ **RESTORING THIS DUMP NEEDS THREE EXTENSIONS CREATED FIRST** — `uuid-ossp`,
-`pg_trgm`, `btree_gist`. `pg_dump --schema=` does not dump extensions, and
-without `uuid-ossp` only 21 of 114 tables restore. Written into the workflow;
-repeated here because a recovery is exactly when nobody reads a workflow.
+⚠️ **RESTORING NEEDS `uuid-ossp`, `pg_trgm`, `btree_gist` CREATED FIRST.**
+`pg_dump --schema=` does not dump extensions; without them only 21 of 114
+tables restore.
 
 ---
 
@@ -153,6 +91,15 @@ repeated here because a recovery is exactly when nobody reads a workflow.
 6. **The production backup, working for the first time.**
 7. **Migrations 081/082 + the insurance API.**
 
+8. **The production backup, verified 114/114 — the first this project has had.**
+9. **Migration 082 + the insurance marketplace**: products, policies, an
+   append-only platform levy computed by a TRIGGER, admin verification, four
+   screens and a public listing.
+10. **081 reverted** — built for a shape the owner then clarified away.
+11. **`audit-menu-coverage.mjs` fixed** — it had been scanning directories
+    ADR-021 deleted, so the coverage figure everyone quoted was a stale reading
+    from a dead instrument.
+
 ## 🔴 MY ERRORS TODAY — the part worth reading
 
 - **I edited migration 080 AFTER it was applied.** Comment-only, but that is a
@@ -170,3 +117,8 @@ repeated here because a recovery is exactly when nobody reads a workflow.
 - **I guessed four schema details** the database then refused: `o_`-prefixed
   columns on `register_workshop`, `tenant_id` on `mechanic_directory`, a
   `quantity` column on `stock_items`, `current_organization_ids()`.
+- **A stale server nearly fooled me.** The first probe of the admin routes hit
+  a leftover process — the log showed EADDRINUSE and the results meant nothing.
+  Killed the port, PROVED it empty, restarted. Read the log before the result.
+- **I enumerated a navigation tree from memory and was wrong** — `settings` is
+  a multi-line `group(` call a single-line grep cannot see.
