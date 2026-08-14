@@ -108,6 +108,49 @@ action. **Never propose spending.**
 `pg_dump --schema=` does not dump extensions; without them only 21 of 114
 tables restore.
 
+### 7. 🔴 THE DATABASE-FIREWALL WORKFLOWS RACE EACH OTHER AND IT COST HOURS
+
+Every workflow that reaches the production database does the same thing: read
+the CURRENT allow-list, append this runner's IP, and on teardown **restore the
+list it read at the start**. Two of them overlapping means the first to finish
+deletes the second's entry, and the second then fails with
+
+```
+psql: error: connection to server ... failed:
+      SSL connection has been closed unexpectedly
+```
+
+**That message is a lie about the cause** — it is a disallowed IP, not TLS and
+not the database. The live app kept serving throughout every one of these.
+
+Measured on 2026-08-14: **at least six failed runs** across `backup-production-db`,
+`apply-migrations` and `diagnose-directory-drift`, every one of them from this,
+and every one of them looking like a database outage. Run alone, each succeeded
+first try.
+
+It is made worse by `apply-migrations` being auto-triggered by `workflow_run` on
+every push — so a manual dispatch made near a push is *guaranteed* to overlap.
+
+**Affected files** (all share the copied firewall block):
+`backup-production-db.yml` · `apply-migrations.yml` · `seed-uat-population.yml` ·
+`seed-sample-population.yml` · `seed-repair-journeys.yml` ·
+`diagnose-directory-drift.yml`
+
+**The fix is not a retry** — a retry was added to the backup today and all five
+attempts failed identically, because the entry stays deleted. Options, in
+preference order:
+
+1. **Teardown removes only THIS runner's entry** rather than restoring a
+   snapshot. One-line change in each teardown, and it makes concurrency safe by
+   construction instead of by scheduling.
+2. A repository-level `concurrency:` group shared by all six, so they queue.
+   Simpler, but serialises unrelated work and does not fix the root cause.
+
+⚠️ **Until it is fixed, run one at a time**, and remember `workflow_run` dry
+runs count as one of them.
+
+---
+
 ### 6. ✅ DONE — the insurance UAT case ran on production
 
 Ran on PRODUCTION at the close of 2026-08-14. The gate held there:
