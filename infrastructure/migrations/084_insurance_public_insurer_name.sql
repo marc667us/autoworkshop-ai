@@ -49,6 +49,33 @@ BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- 🔴 THIS MIGRATION'S OWN BACKFILL HIT THE VERY BUG IT EXISTS TO FIX, AND
+-- PRODUCTION CAUGHT IT.
+--
+-- The first attempt failed on production with
+--
+--     ERROR: column "insurer_name" of relation "products" contains null values
+--
+-- because the backfill below joins `identity.organizations`, which is under
+-- FORCE ROW LEVEL SECURITY. A migration runs as the OWNER, and on Render the
+-- owner is NOT a superuser, so with no tenant context that join matched ZERO
+-- rows — the UPDATE silently did nothing and `SET NOT NULL` then refused.
+--
+-- LOCALLY it worked, because the local `autoworkshop` role IS a superuser and
+-- bypasses RLS. That is the THIRD time in one day this difference has produced
+-- a green local result and a red production one:
+--   · the backup's pg_dump refused by FORCE RLS
+--   · the public listing's join to organizations returning nothing
+--   · this
+--
+-- `app.current_role = 'admin'` paired with the owner's `current_user` is the
+-- escape `identity.is_platform_admin()` defines, and it is what every seed
+-- script in this repository already sets for exactly this reason. Transaction-
+-- local, so it cannot leak past COMMIT.
+-- ══════════════════════════════════════════════════════════════════════════
+SELECT set_config('app.current_role', 'admin', true);
+
 ALTER TABLE insurance.products ADD COLUMN insurer_name TEXT;
 
 -- Backfill under the platform escape, which this migration runs with.
