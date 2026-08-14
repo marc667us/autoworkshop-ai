@@ -74,8 +74,21 @@ const PACKS = new Set([
   'customer', 'workshop', 'supplier', 'fleet', 'insurance', 'towing', 'admin',
 ]);
 
-/** Paths the ARTIFACT owns at its root — never pack routes, never legacy. */
-const ROOT_OWNED = new Set(['api', 'auth', '_next', 'robots.txt', 'favicon.ico']);
+/**
+ * Paths the ARTIFACT owns at its root — never pack routes, never legacy.
+ *
+ * 🔴 `onboarding` IS HERE OR IT IS UNREACHABLE. The redirector below sends any
+ * first segment that is in neither set to `packServingLegacyPath`, and no pack
+ * claims `/onboarding`, so it would have redirected to `/` — the page would
+ * have existed, built, type-checked and been impossible to open. Codex named
+ * this as the exact required edit before the route was written.
+ *
+ * ⚠️ AND NOT IN `PUBLIC_PATHS`. `/onboarding` is for signed-in people, so the
+ * Auth.js handler SHOULD run there — that is what refreshes and persists the
+ * access token, which the page needs in order to ask the API what the viewer
+ * belongs to.
+ */
+const ROOT_OWNED = new Set(['api', 'auth', 'onboarding', '_next', 'robots.txt', 'favicon.ico']);
 
 export default function middleware(req: NextRequest, event: unknown) {
   const { pathname } = req.nextUrl;

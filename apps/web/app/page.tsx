@@ -1,5 +1,13 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { currentViewer, homeWorkspaceFor, viewerHasSession } from '@autoworkshop/next-shell';
+import { themeVar, primitive } from '@autoworkshop/design-tokens';
+import {
+  currentViewer,
+  homeWorkspaceFor,
+  needsWorkshop,
+  registrationStatus,
+  viewerHasSession,
+} from '@autoworkshop/next-shell';
 import { MarketplaceLanding } from '@autoworkshop/marketplace-ui';
 import { AddToBasket } from '@autoworkshop/marketplace-ui';
 
@@ -40,6 +48,29 @@ function one(value: string | string[] | undefined): string {
 }
 
 export default async function Index({ searchParams }: { searchParams?: Promise<SearchParams> }) {
+  /**
+   * 🔴 SIGNED IN, BELONGS NOWHERE — THE STATE THE FRONT DOOR COULD NOT SEE.
+   *
+   * Signing up creates a Keycloak user and nothing else: no membership, so no
+   * role, so `currentViewer` returns null and the branch below falls through to
+   * the marketplace. That is CORRECT for a parts buyer and WRONG for somebody
+   * who has just signed up meaning to register a workshop — and until now the
+   * two were indistinguishable, so both got a storefront with a "Create an
+   * account" button they had already used, and no way forward. It is the honest
+   * reading of the owner's "access is denied to users".
+   *
+   * ⚠️ AN INVITATION, NOT A REDIRECT, AND THAT IS THE WHOLE DESIGN.
+   * `hasWorkshop: false` means "no ACTIVE MEMBERSHIP AT ALL", and the parts
+   * buyer who never joins a workshop lives in that set permanently — the file
+   * comments on `registration.controller.ts:120` and the customer layout both
+   * say so. Redirecting on it would take the storefront away from the exact
+   * person the storefront is for, on every visit. Codex refused the redirect
+   * design for this reason, and it is the same lesson as 2026-08-13, when
+   * replacing this landing for a signed-in account with no workshop made the
+   * free VIN tool unreachable for the people it converts.
+   */
+  let needsSetup = false;
+
   if (await viewerHasSession('customer')) {
     // ADR-021 — `main` DISPATCHES. Before the consolidation this line could
     // simply send everyone to `/home/dashboard`, because the only people who
@@ -77,6 +108,20 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
     if (viewer?.activeRole) {
       redirect(`/${homeWorkspaceFor(viewer.activeRole)}/home/dashboard`);
     }
+
+    // Reached only when the session is live and no role resolved. Two very
+    // different causes, and `needsWorkshop` is what separates them:
+    //
+    //   · the API positively answered "no active membership" -> true, invite.
+    //   · the API could not be asked at all (expired access token — `/` is in
+    //     `PUBLIC_PATHS` so middleware does not refresh here — or an outage)
+    //     -> `registrationStatus` returns null and `needsWorkshop(null)` is
+    //     false, so the page renders exactly as it does today.
+    //
+    // Fail to "unknown", never to "new": the opposite would show an
+    // established workshop owner an invitation to set up the account they have
+    // had for weeks, every time the API hiccuped.
+    needsSetup = needsWorkshop(await registrationStatus('customer'));
   }
 
   const params = (await searchParams) ?? {};
@@ -138,7 +183,34 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
   if (vinResult && !vinResult.ok) problems.push(`VIN check: ${vinResult.reason}`);
 
   return (
-    <MarketplaceLanding
+    <>
+      {/* 🔴 ABOVE THE LANDING, NEVER INSTEAD OF IT. The storefront still
+          renders in full for this person — they may be here to buy a filter,
+          which needs no organisation at all. This only tells them the other
+          door exists, which nothing did before. */}
+      {needsSetup && (
+        <aside
+          style={{
+            border: `1px solid ${themeVar.borderDefault}`,
+            background: themeVar.surfaceRaised,
+            borderRadius: primitive.radius.md,
+            padding: primitive.space[4],
+            margin: `${primitive.space[4]} auto 0`,
+            maxWidth: '58rem',
+            fontSize: primitive.fontSize.sm,
+            color: themeVar.textPrimary,
+          }}
+        >
+          Your account is not attached to an organisation yet.{' '}
+          <Link href="/onboarding" style={{ color: themeVar.actionPrimary }}>
+            Finish setting it up
+          </Link>{' '}
+          to run a workshop, sell parts or manage a fleet — or carry on
+          browsing, which needs no organisation.
+        </aside>
+      )}
+
+      <MarketplaceLanding
       stats={statsResult.ok ? statsResult.data : null}
       facets={facetsResult.ok ? facetsResult.data : null}
       parts={partsResult.ok ? partsResult.data.parts : []}
@@ -167,6 +239,7 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />
       )}
-    />
+      />
+    </>
   );
 }
