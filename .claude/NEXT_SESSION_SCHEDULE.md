@@ -71,6 +71,29 @@ action. **Never propose spending.**
 `pg_dump --schema=` does not dump extensions; without them only 21 of 114
 tables restore.
 
+### 6. Finish the UAT case that could not be run on 2026-08-14
+
+The owner's UAT asked for an "insurance sales pipeline". It was the ONE case of
+eight that could not be populated, because none of it existed — reported as a
+named zero row rather than faked. **It exists now**, so close the loop:
+
+1. Register an insurance company (`POST /registration/insurance`) tagged
+   `UAT-2026-08-14`, so it sits with the rest of the UAT population.
+2. Register a product through the screen.
+3. Verify it as a platform administrator.
+4. List it, and confirm it appears in `GET /public/insurance-products` on LIVE.
+5. Record a sale and **confirm the levy accrued by itself** — that is the
+   owner's actual requirement ("pays platform levy for selling on the
+   platform"), and `verify/082` proves it locally but nothing has proved it on
+   production.
+6. Add the row to `infrastructure/seed/uat_verify.sql`, replacing the
+   "NO PRODUCTION PATH" line with a real count.
+
+⚠️ **DO NOT RUN TWO FIREWALL-OPENING WORKFLOWS AT ONCE.** Each restores the
+ORIGINAL allow-list on teardown and deletes a concurrent run's entry — that is
+what produced five identical "SSL connection has been closed unexpectedly"
+failures today, and it is not the database.
+
 ---
 
 ## What shipped on 2026-08-14
