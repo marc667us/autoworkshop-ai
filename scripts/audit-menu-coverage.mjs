@@ -121,23 +121,41 @@ function walkApp(appDir) {
 //
 // All seven are measured now. The number went down, and it is the true one.
 const TREES = {
-  'DEFAULT §34 (supervisor, QC, storekeeper, cashier, platform admin)': ['workshopGroups', 'workshop-web'],
-  'OWNER §46': ['workshopOwnerGroups', 'workshop-web'],
-  'MANAGER §47': ['workshopManagerGroups', 'workshop-web'],
-  'RECEPTION §48': ['workshopReceptionGroups', 'workshop-web'],
-  'TECHNICIAN §49': ['workshopTechnicianGroups', 'workshop-web'],
-  'CUSTOMER §33': ['customerGroups', 'customer-web'],
-  'SUPPLIER §35': ['supplierGroups', 'supplier-web'],
-  'FLEET §36': ['fleetGroups', 'fleet-web'],
-  'INSURANCE §37': ['insuranceGroups', 'insurance-web'],
-  'TOWING §38': ['towingGroups', 'towing-web'],
-  'PLATFORM ADMIN §32': ['adminGroups', 'admin-web'],
+  'DEFAULT §34 (supervisor, QC, storekeeper, cashier, platform admin)': ['workshopGroups', 'workshop'],
+  'OWNER §46': ['workshopOwnerGroups', 'workshop'],
+  'MANAGER §47': ['workshopManagerGroups', 'workshop'],
+  'RECEPTION §48': ['workshopReceptionGroups', 'workshop'],
+  'TECHNICIAN §49': ['workshopTechnicianGroups', 'workshop'],
+  'CUSTOMER §33': ['customerGroups', 'customer'],
+  'SUPPLIER §35': ['supplierGroups', 'supplier'],
+  'FLEET §36': ['fleetGroups', 'fleet'],
+  'INSURANCE §37': ['insuranceGroups', 'insurance'],
+  'TOWING §38': ['towingGroups', 'towing'],
+  'PLATFORM ADMIN §32': ['adminGroups', 'admin'],
 };
 
 const pagesByApp = new Map();
-function pagesFor(app) {
-  if (!pagesByApp.has(app)) pagesByApp.set(app, walkApp(join(ROOT, `apps/${app}/app`)));
-  return pagesByApp.get(app);
+// 🔴 ONE ARTIFACT, SEVEN PACKS — AND THIS SCRIPT HAD BEEN DEAD SINCE ADR-021.
+//
+// It walked `apps/<pack>-web/app`, seven directories the 2026-08-13
+// consolidation DELETED, so every run since has crashed with
+//
+//   ENOENT: scandir 'apps/workshop-web/app'
+//
+// Nobody noticed for a day, because the only thing that reads this number is
+// a human quoting `CURRENT_PHASE.md` — which went on citing its last
+// successful reading ("267 of 380, 70%") as though it were current. THE
+// INSTRUMENT THAT MEASURES DELIVERY WAS BROKEN WHILE ITS LAST OUTPUT WAS
+// BEING QUOTED AS FACT. That is worse than having no number, because a stale
+// number is trusted.
+//
+// The packs now live at `apps/web/app/<pack>`, and `walkApp` already strips
+// route groups — which matters because customer screens sit behind `(app)`.
+// The paths it returns stay UNMOUNTED (`/group/item`), the same shape the
+// navigation model stores, so the comparison below is unchanged.
+function pagesFor(pack) {
+  if (!pagesByApp.has(pack)) pagesByApp.set(pack, walkApp(join(ROOT, `apps/web/app/${pack}`)));
+  return pagesByApp.get(pack);
 }
 
 console.log('WHAT EACH ROLE SEES IN ITS MENU vs WHAT HAS A PAGE BEHIND IT\n');
