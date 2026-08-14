@@ -183,9 +183,36 @@ BEGIN
     -- directory is the PUBLIC face of a workshop — it is read by anonymous
     -- visitors on the marketplace — so it is deliberately not tenant-scoped and
     -- carries only what a stranger may see.
-    INSERT INTO catalogue.mechanic_directory
-        (organization_id, trading_name, city, country, is_published)
-    VALUES (v_ws_org, 'UAT Motors '||v_tag, 'Accra', 'Ghana', true);
+    -- 🔴 SELF-DIAGNOSING, BECAUSE PRODUCTION AND LOCAL DISAGREE HERE.
+    --
+    -- The first production run failed on `uq_directory_org`, a UNIQUE on
+    -- `organization_id` — a directory row for this BRAND-NEW organisation
+    -- already existed. Locally it does not: the same constraint is present and
+    -- the only trigger on `organization_registrations` is the admin alert, so
+    -- nothing local writes the directory on registration or approval.
+    --
+    -- That is schema or trigger DRIFT between the two databases, and it is
+    -- worth naming rather than papering over — so this reports which case it
+    -- took instead of silently swallowing a conflict. Whatever the cause, the
+    -- outcome the UAT needs is the same: exactly one PUBLISHED directory row,
+    -- which `enrol_as_customer` requires.
+    SELECT count(*) INTO v_exists
+      FROM catalogue.mechanic_directory WHERE organization_id = v_ws_org;
+
+    IF v_exists > 0 THEN
+        RAISE NOTICE 'DRIFT: a mechanic_directory row already existed for the '
+                     'newly registered workshop. Something on this database '
+                     'writes it during registration or approval; local does not. '
+                     'Updating it to published instead of inserting.';
+        UPDATE catalogue.mechanic_directory
+           SET trading_name = 'UAT Motors '||v_tag,
+               city = 'Accra', country = 'Ghana', is_published = true
+         WHERE organization_id = v_ws_org;
+    ELSE
+        INSERT INTO catalogue.mechanic_directory
+            (organization_id, trading_name, city, country, is_published)
+        VALUES (v_ws_org, 'UAT Motors '||v_tag, 'Accra', 'Ghana', true);
+    END IF;
 
     -- ══ 2. FIVE TECHNICIANS ══════════════════════════════════════════════
     v_tech := ARRAY[]::uuid[];
