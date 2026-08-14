@@ -181,15 +181,29 @@ ALTER TABLE crm.campaigns         FORCE  ROW LEVEL SECURITY;
 ALTER TABLE crm.campaign_members  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.campaign_members  FORCE  ROW LEVEL SECURITY;
 
+-- Organisation-scoped as well as tenant-scoped: one tenant may hold several
+-- organisations, so tenant alone leaves isolation to the application layer.
+-- `organisation-isolation.integration.spec.ts` enforces this.
 CREATE POLICY campaigns_tenant_isolation ON crm.campaigns
     FOR ALL
-    USING (identity.is_platform_admin() OR tenant_id = identity.current_tenant_id())
-    WITH CHECK (identity.is_platform_admin() OR tenant_id = identity.current_tenant_id());
+    USING (identity.is_platform_admin()
+           OR (tenant_id = identity.current_tenant_id()
+               AND organization_id = identity.current_organization_id()))
+    WITH CHECK (identity.is_platform_admin()
+           OR (tenant_id = identity.current_tenant_id()
+               AND organization_id = identity.current_organization_id()));
 
+-- Organisation-scoped as well as tenant-scoped: one tenant may hold several
+-- organisations, so tenant alone leaves isolation to the application layer.
+-- `organisation-isolation.integration.spec.ts` enforces this.
 CREATE POLICY campaign_members_tenant_isolation ON crm.campaign_members
     FOR ALL
-    USING (identity.is_platform_admin() OR tenant_id = identity.current_tenant_id())
-    WITH CHECK (identity.is_platform_admin() OR tenant_id = identity.current_tenant_id());
+    USING (identity.is_platform_admin()
+           OR (tenant_id = identity.current_tenant_id()
+               AND organization_id = identity.current_organization_id()))
+    WITH CHECK (identity.is_platform_admin()
+           OR (tenant_id = identity.current_tenant_id()
+               AND organization_id = identity.current_organization_id()));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON crm.campaigns        TO autoworkshop_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON crm.campaign_members TO autoworkshop_app;

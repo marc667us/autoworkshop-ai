@@ -132,6 +132,18 @@ export class PublicController {
     return this.catalogue.suppliers();
   }
 
+  /**
+   * `GET /public/insurance-products` — what insurers are selling.
+   *
+   * Anonymous, like every other route on this controller: a shopper compares
+   * cover before they have an account, exactly as they browse parts before
+   * they have one.
+   */
+  @Get('insurance-products')
+  async insuranceProducts() {
+    return this.catalogue.insuranceProducts();
+  }
+
   /** Counters for the landing page's KPI strip. */
   @Get('stats')
   async stats() {

@@ -482,6 +482,60 @@ export class CatalogueService {
    * and phone number are genuinely ABSENT from this response, not hidden in it,
    * so there is nothing for a devtools inspector to reveal.
    */
+  /**
+   * Insurance products offered for sale on the platform.
+   *
+   * ── WHY A FUNCTION RATHER THAN A QUERY ────────────────────────────────────
+   *
+   * Every other public read here is a plain `queryWithoutTenant` gated by an
+   * `is_published` policy. `insurance.products` deliberately has no such
+   * policy: it holds an insurer's UNPUBLISHED DRAFTS, and an RLS policy wide
+   * enough for an anonymous shopper is also wide enough for every authenticated
+   * tenant's ordinary queries. So migration 082 exposes exactly the public
+   * projection through a SECURITY DEFINER function, and this calls it.
+   *
+   * The function returns only products that are BOTH published and verified,
+   * and only the fields a shopper needs — no draft, no `created_by`, no owning
+   * tenant id.
+   */
+  async insuranceProducts(): Promise<
+    {
+      id: string;
+      insurer: string;
+      name: string;
+      summary: string | null;
+      coverType: string;
+      premium: string;
+      currency: string;
+      termMonths: number;
+      excess: string | null;
+      termsUrl: string | null;
+    }[]
+  > {
+    const rows = await this.db.queryWithoutTenant<Record<string, unknown>>(
+      `SELECT o_product_id, o_insurer, o_name, o_summary, o_cover_type,
+              o_premium, o_currency, o_term_months, o_excess, o_terms_url
+         FROM insurance.public_products()
+        LIMIT 500`,
+    );
+    return rows.map((r) => ({
+      id: r['o_product_id'] as string,
+      insurer: r['o_insurer'] as string,
+      name: r['o_name'] as string,
+      summary: (r['o_summary'] as string | null) ?? null,
+      coverType: r['o_cover_type'] as string,
+      // 🔴 A STRING, NOT A NUMBER. `numeric` arrives from node-pg as a string
+      // and coercing it here would silently lose precision on a PREMIUM — the
+      // number somebody is charged. The same choice the parts catalogue makes
+      // for `price`.
+      premium: String(r['o_premium']),
+      currency: r['o_currency'] as string,
+      termMonths: Number(r['o_term_months']),
+      excess: r['o_excess'] === null || r['o_excess'] === undefined ? null : String(r['o_excess']),
+      termsUrl: (r['o_terms_url'] as string | null) ?? null,
+    }));
+  }
+
   async suppliers(): Promise<{ id: string; name: string; city: string | null; country: string | null }[]> {
     // `queryWithoutTenant`, like every other public read in this file — the
     // directory has no tenant by design, and the `public_read` policies gate it
