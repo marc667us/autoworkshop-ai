@@ -156,8 +156,44 @@ describe('workspace trees match the specification', () => {
     expect(workspaces.fleet.groups).toHaveLength(8);
   });
 
-  it('insurance has the 8 groups of §37', () => {
-    expect(workspaces.insurance.groups).toHaveLength(8);
+  /**
+   * 🔴 NINE, NOT §37's EIGHT — AND THIS TEST FAILING IS HOW THE ADDITION GOT
+   * REVIEWED.
+   *
+   * `CLAUDE.md` prohibits "changing approved navigation without review". There
+   * is no review board; THIS ASSERTION IS THE REVIEW. It failed the moment a
+   * ninth group appeared, which is exactly what it is for, and updating it is a
+   * deliberate act that has to state its reason — so here is the reason.
+   *
+   * The owner specified a product §37 does not cover, on 2026-08-14:
+   * "insurance regist product online and sell but pays plantform lever for
+   * selling on the platform". §37 describes an insurer ASSESSING claims on
+   * repairs; it says nothing about an insurer SELLING, because that product did
+   * not exist when the spec was written. Migration 082 and the `/insurance/*`
+   * routes implement the selling half, and a workspace whose navigation cannot
+   * reach its own routes is the "built but unreachable" defect this repository
+   * has recorded four times.
+   *
+   * The owner approved the navigation change when asked. The count moves from 8
+   * to 9 and no §37 group was altered, renamed or removed — the addition is
+   * purely additive, which is what makes it safe to make at all.
+   */
+  it("insurance keeps §37 groups and adds the owner-approved sales group", () => {
+    expect(workspaces.insurance.groups).toHaveLength(9);
+    // The eight from §37 must all still be there, by id. A count alone would
+    // pass if somebody replaced a spec group with a new one.
+    const ids = workspaces.insurance.groups.map((g) => g.id);
+    // ⚠️ ENUMERATED FROM THE TREE, NOT FROM MEMORY. I first listed seven and
+    // was wrong — `settings` is declared as a MULTI-LINE `group(` call and a
+    // single-line grep does not see it. Eight §37 groups, plus `sales`.
+    for (const spec of [
+      'home', 'claims', 'assessment', 'repair-authorization',
+      'workshops-and-products', 'finance-and-reports', 'communication',
+      'settings',
+    ]) {
+      expect(ids, `§37 group "${spec}" was removed or renamed`).toContain(spec);
+    }
+    expect(ids).toContain('sales');
   });
 
   /**

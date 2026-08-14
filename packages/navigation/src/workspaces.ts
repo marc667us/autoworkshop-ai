@@ -410,6 +410,30 @@ const insuranceGroups: NavGroup[] = [
     ['tasks', 'Tasks', { counterKey: 'insurance.tasks.open' }],
     ['approvals', 'Approvals', { counterKey: 'insurance.approvals.pending' }],
   ]),
+  // 🔴 THE SELLING HALF OF THE INSURANCE PACK — NEW GROUP, OWNER-APPROVED.
+  //
+  // `CLAUDE.md` prohibits *changing approved navigation without review*, so
+  // this is not a quiet addition. The owner specified the product on
+  // 2026-08-14 — "insurance regist product online and sell but pays plantform
+  // lever for selling on the platform" — and approved the navigation change
+  // when asked. Recorded here so the next reader does not re-litigate it.
+  //
+  // Every entry is backed by a route that already exists and was proven on a
+  // running server, not by a placeholder:
+  //   my-products / register-product -> GET|POST /insurance/products
+  //   policies-sold                  -> GET|POST /insurance/policies
+  //   platform-levies                -> GET      /insurance/levies
+  //
+  // ⚠️ NO 'verification' ENTRY HERE, DELIBERATELY. Verifying a product is a
+  // PLATFORM decision on /admin/insurance/*; an insurer that could reach it
+  // would defeat the gate, which is the defect Codex found in the workshop
+  // directory on 08-09.
+  group('sales', 'Products and Sales', 'tag', [
+    ['my-products', 'My Products'],
+    ['register-product', 'Register a Product'],
+    ['policies-sold', 'Policies Sold'],
+    ['platform-levies', 'Platform Levies'],
+  ]),
   group('claims', 'Claims', 'book', [
     ['new-claims', 'New Claims', { counterKey: 'insurance.claims.new' }],
     ['under-review', 'Claims Under Review'],
