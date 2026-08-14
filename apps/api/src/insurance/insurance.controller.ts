@@ -1,8 +1,20 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { TenantGuard, type AuthenticatedRequest } from '../auth/tenant.guard';
 import { validatedBody } from '../common/validation/validated-body';
 import { InsuranceService } from './insurance.service';
+import { PERMISSIONS, permissionsForContext } from '../authz/permission-matrix';
 
 /**
  * The insurer's own routes — migration 082.
@@ -43,6 +55,9 @@ const CreateProductBody = z.object({
 
 type PublicationBody = z.infer<typeof PublicationBody>;
 const PublicationBody = z.object({ isPublished: z.boolean() });
+
+type VerificationBody = z.infer<typeof VerificationBody>;
+const VerificationBody = z.object({ isVerified: z.boolean() });
 
 type RecordSaleBody = z.infer<typeof RecordSaleBody>;
 const RecordSaleBody = z
@@ -112,5 +127,58 @@ export class InsuranceController {
   @Get('levies')
   levies(@Req() req: AuthenticatedRequest) {
     return this.insurance.levySummary(req.tenantContext);
+  }
+}
+
+/**
+ * The PLATFORM's side of the insurance marketplace.
+ *
+ * 🔴 A SEPARATE CONTROLLER, ON A SEPARATE PATH, AND THAT IS THE POINT. An
+ * insurer that could verify its own product would defeat the gate entirely —
+ * the defect Codex found in the workshop directory on 2026-08-09, where a
+ * workshop could publish itself. Verification lives behind `platform.admin`
+ * and nowhere near `/insurance/*`.
+ *
+ * ⚠️ THE GATE IS `permissionsForContext`, NOT A ROLE NAME. Since migration 078
+ * `platform.admin` comes from a GRANT RECORD in
+ * `identity.platform_administrators`, not from a membership `role_name` — so
+ * revoking a grant closes this route, which was the whole point of 078. A role
+ * check here would reintroduce the hole it removed.
+ */
+@Controller('admin/insurance')
+@UseGuards(TenantGuard)
+export class AdminInsuranceController {
+  constructor(private readonly insurance: InsuranceService) {}
+
+  private assertAdmin(req: AuthenticatedRequest): void {
+    if (!permissionsForContext(req.tenantContext).includes(PERMISSIONS.platformAdmin)) {
+      throw new ForbiddenException(
+        'verifying an insurance product is a platform administrator decision',
+      );
+    }
+  }
+
+  /** Everything awaiting a decision. */
+  @Get('review-queue')
+  queue(@Req() req: AuthenticatedRequest) {
+    this.assertAdmin(req);
+    return this.insurance.reviewQueue(req.tenantContext);
+  }
+
+  /**
+   * Verify or withdraw verification.
+   *
+   * ⚠️ WITHDRAWING ALSO UNLISTS — see the service. A product left published
+   * after its verification was withdrawn would stay on sale after the platform
+   * decided it should not be.
+   */
+  @Patch('products/:id/verification')
+  setVerification(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(validatedBody(VerificationBody)) body: VerificationBody,
+  ) {
+    this.assertAdmin(req);
+    return this.insurance.setProductVerification(req.tenantContext, id, body.isVerified);
   }
 }

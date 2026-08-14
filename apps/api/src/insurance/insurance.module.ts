@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { DatabaseModule } from '../database/database.module';
 import { IdentityModule } from '../identity/identity.module';
-import { InsuranceController } from './insurance.controller';
+import { AdminInsuranceController, InsuranceController } from './insurance.controller';
 import { InsuranceService } from './insurance.service';
 
 /**
@@ -27,7 +27,7 @@ import { InsuranceService } from './insurance.service';
  */
 @Module({
   imports: [DatabaseModule, AuditModule, IdentityModule],
-  controllers: [InsuranceController],
+  controllers: [InsuranceController, AdminInsuranceController],
   providers: [InsuranceService],
   exports: [InsuranceService],
 })

@@ -307,6 +307,81 @@ export class InsuranceService {
     });
   }
 
+  /**
+   * PLATFORM ONLY — verify or un-verify a product.
+   *
+   * 🔴 WITHOUT THIS ROUTE NO INSURANCE PRODUCT COULD EVER BE LISTED. 082
+   * refuses publication while `is_verified` is false and nothing else can set
+   * it, so the entire marketplace dead-ended one step from working. That is the
+   * "capability with no way in" shape this repository has recorded repeatedly —
+   * a wall, not a rule — and it would have looked like a working feature until
+   * the first insurer tried to sell something.
+   *
+   * ⚠️ NO ROLE CHECK HERE, DELIBERATELY. The caller is gated by the controller
+   * on `PERMISSIONS.platformAdmin`, which since migration 078 comes from a
+   * GRANT RECORD and not from a membership `role_name`. Repeating a role test
+   * in the service would reintroduce exactly the name-based check 078 removed.
+   *
+   * ⚠️ IT USES `withoutTenant`-STYLE ACCESS VIA THE PLATFORM RLS ESCAPE. A
+   * platform administrator is not in the insurer's tenant, so an ordinary
+   * `withTenant` read would find nothing — `is_platform_admin()` in 082's
+   * policy is what admits them, and it is keyed on the grant, not on this code.
+   */
+  async setProductVerification(
+    ctx: TenantContext,
+    id: string,
+    isVerified: boolean,
+  ): Promise<ProductRow> {
+    return this.db.withTenant(ctx, async (client) => {
+      const res = await client.query(
+        `UPDATE insurance.products p
+            SET is_verified = $2,
+                -- 🔴 UN-VERIFYING ALSO UNLISTS. Leaving a product published
+                -- while withdrawing its verification would keep it on sale
+                -- after the platform decided it should not be — the decision
+                -- and its effect must not be separable.
+                is_published = CASE WHEN $2 THEN p.is_published ELSE false END,
+                updated_at = now(), updated_by = $3
+          WHERE p.id = $1
+      RETURNING ${PRODUCT_COLUMNS}`,
+        [id, isVerified, ctx.userId],
+      );
+      const row = res.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new NotFoundException('That product was not found.');
+
+      await this.audit.write(client, ctx, {
+        action: isVerified ? 'insurance.product.verified' : 'insurance.product.unverified',
+        resourceType: 'insurance_product',
+        resourceId: id,
+        detail: { isVerified },
+      });
+      return toProduct(row);
+    });
+  }
+
+  /**
+   * PLATFORM ONLY — every product still awaiting a decision.
+   *
+   * The insurer's own name is joined in, because "Comprehensive 12-month" tells
+   * an administrator nothing about WHOSE it is, and approving the wrong
+   * company's product is the mistake this screen exists to prevent.
+   */
+  async reviewQueue(ctx: TenantContext) {
+    return this.db.withTenant(ctx, async (client) => {
+      const res = await client.query(
+        `SELECT ${PRODUCT_COLUMNS}, o.name AS insurer_name
+           FROM insurance.products p
+           JOIN identity.organizations o ON o.id = p.organization_id
+          WHERE p.is_verified = false
+          ORDER BY p.created_at ASC LIMIT 200`,
+      );
+      return res.rows.map((r: Record<string, unknown>) => ({
+        ...toProduct(r),
+        insurerName: r.insurer_name as string,
+      }));
+    });
+  }
+
   /** What this insurer owes the platform, and what is already settled. */
   async levySummary(ctx: TenantContext) {
     assertInsuranceOperator(ctx, 'The platform levy statement');
