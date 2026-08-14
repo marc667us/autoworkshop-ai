@@ -28,33 +28,56 @@ answers 200 on production.
 
 ## ▶ WHAT IS NOT FINISHED, IN ORDER
 
-### 0. FIRST: confirm migration 083 is applied on production
+### 0. FIRST: confirm migration 084 is applied on production
 
-Dispatched at the close of 2026-08-14 and NOT confirmed before the session
-ended. Check it, and if it is pending, apply it:
+083 and 084 were both dispatched at the close of 2026-08-14. **083 is applied
+and confirmed. 084 was still running when the session ended.**
 
 ```bash
-gh run list --workflow=apply-migrations.yml --limit 3
-gh workflow run apply-migrations.yml -f confirm=APPLY     # alone, nothing else running
+gh run list --workflow=apply-migrations.yml --limit 3    # want an APPLY of 084
+gh workflow run apply-migrations.yml -f confirm=APPLY    # ALONE, nothing else running
 curl -s https://autoworkshop-api.onrender.com/api/v1/public/insurance-products
 ```
 
-**Until 083 is applied, the live insurance listing returns `200 []`** — a
-published, verified product exists on production and no shopper can see it.
+**Until 084 is applied the live listing returns `200 []`** — a published,
+verified product exists on production and no shopper can see it.
 
-🔴 **WHY, AND IT IS A LESSON ALREADY RECORDED TWICE.** 082 exposed the listing
-through a SECURITY DEFINER function. **A definer function runs as its OWNER,
-and FORCE RLS binds the owner on Render**, so it ran with no tenant context and
-matched nothing. Locally it worked because the local role is a SUPERUSER and
-bypasses RLS — which is why every local check passed. 083 adds the permissive
-`is_published AND is_verified` SELECT policy that `catalogue.parts` has always
-had. Proven locally: published visible 1, drafts hidden 0, under the app role.
+🔴 **TWO FIXES, BECAUSE MY FIRST DIAGNOSIS WAS INCOMPLETE AND THE LIVE SITE
+SAID SO.**
 
-⚠️ **RUN IT ALONE.** Pushing triggers `apply-migrations` via `workflow_run`, so
-a manual dispatch made at the same time races it on the database firewall —
-each run restores the ORIGINAL allow-list on teardown and deletes the other's
-entry. That produced repeated "SSL connection has been closed unexpectedly"
-failures today and is NOT the database.
+- **083** — `insurance.products` had no public-read policy. A SECURITY DEFINER
+  function runs as its OWNER and FORCE RLS binds the owner on Render, so the
+  listing function saw nothing. Correct, applied, and **still returned `[]`**.
+- **084** — the real remainder: `public_products()` joined
+  `identity.organizations` for the insurer's name, and that table is FORCE RLS
+  with no public-read policy. Measured under the app role:
+
+  ```
+  products only ......................................... 1
+  the function body, WITH the join to organizations ..... 0
+  organizations visible with no tenant context .......... 0
+  ```
+
+  **The products were visible all along; the join threw them away.**
+
+⚠️ **THE LESSON, AND IT IS NOT THE ONE 083 TAUGHT.** A permissive policy on the
+table you are reading is not enough — it must hold for EVERY table the query
+touches. A join silently re-imposes the strictest policy in the chain, and it
+does so by returning FEWER ROWS rather than failing, which is why this surfaced
+as an empty list behind a 200 rather than an error. **Check every table in the
+query, not just the one you fixed.**
+
+084 fixes it the way the parts marketplace already works: `catalogue.suppliers`
+carries its own name and the public listing joins THAT, never identity. The
+trading name is now on the product, set by a trigger at INSERT and re-synced if
+the organisation is renamed — kept honest by the database rather than by
+discipline.
+
+⚠️ **RUN THE APPLY ALONE.** Pushing triggers `apply-migrations` via
+`workflow_run`, which is a DRY RUN. Twice today I read that dry run's "success"
+and believed a migration had applied when it had not. **Capture the run id of
+your own dispatch and watch that id** — `gh run list ... --json databaseId,event`
+distinguishes `workflow_dispatch` from `workflow_run`.
 
 ---
 
