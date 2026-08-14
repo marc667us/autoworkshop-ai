@@ -28,76 +28,40 @@ answers 200 on production.
 
 ## ▶ WHAT IS NOT FINISHED, IN ORDER
 
-### 0. FIRST: confirm migration 084 is applied on production
+### 0. ✅ DONE — 083 and 084 are applied; the marketplace is live
 
-083 and 084 were both dispatched at the close of 2026-08-14. **083 is applied
-and confirmed. 084 was still running when the session ended.**
-
-```bash
-gh run list --workflow=apply-migrations.yml --limit 3    # want an APPLY of 084
-gh workflow run apply-migrations.yml -f confirm=APPLY    # ALONE, nothing else running
-curl -s https://autoworkshop-api.onrender.com/api/v1/public/insurance-products
-```
-
-**Until 084 is applied the live listing returns `200 []`** — a published,
-verified product exists on production and no shopper can see it.
-
-🔴 **TWO FIXES, BECAUSE MY FIRST DIAGNOSIS WAS INCOMPLETE AND THE LIVE SITE
-SAID SO.**
-
-- **083** — `insurance.products` had no public-read policy. A SECURITY DEFINER
-  function runs as its OWNER and FORCE RLS binds the owner on Render, so the
-  listing function saw nothing. Correct, applied, and **still returned `[]`**.
-- **084** — the real remainder: `public_products()` joined
-  `identity.organizations` for the insurer's name, and that table is FORCE RLS
-  with no public-read policy. Measured under the app role:
-
-  ```
-  products only ......................................... 1
-  the function body, WITH the join to organizations ..... 0
-  organizations visible with no tenant context .......... 0
-  ```
-
-  **The products were visible all along; the join threw them away.**
-
-⚠️ **THE LESSON, AND IT IS NOT THE ONE 083 TAUGHT.** A permissive policy on the
-table you are reading is not enough — it must hold for EVERY table the query
-touches. A join silently re-imposes the strictest policy in the chain, and it
-does so by returning FEWER ROWS rather than failing, which is why this surfaced
-as an empty list behind a 200 rather than an error. **Check every table in the
-query, not just the one you fixed.**
-
-084 fixes it the way the parts marketplace already works: `catalogue.suppliers`
-carries its own name and the public listing joins THAT, never identity. The
-trading name is now on the product, set by a trigger at INSERT and re-synced if
-the organisation is renamed — kept honest by the database rather than by
-discipline.
-
-🔴 **084 FAILED ONCE ON PRODUCTION AND THE FIX IS ALREADY COMMITTED.** Its own
-backfill joined `identity.organizations` and matched zero rows under FORCE RLS,
-so `SET NOT NULL` refused:
+Confirmed on production at the close of 2026-08-14:
 
 ```
-ERROR: column "insurer_name" of relation "products" contains null values
+apply 084_insurance_public_insurer_name
+==> done: 1 applied, 81 skipped
+
+GET /api/v1/public/insurance-products  ->  200
+LIVE insurance products: 1
+  -> UAT Assurance UAT-2026-08-14 | Comprehensive 12-month | GHS 1200.00 | 12 months
 ```
 
-**The migration written to fix an RLS-join bug contained the same RLS-join bug.**
-Fixed by opening the platform escape at the top of the migration
-(`set_config('app.current_role','admin',true)`), which every seed script here
-already does. The migration is transactional so the failed attempt left nothing
-behind; it re-applies cleanly locally.
+**The loop is closed end to end on live**: an insurer registered, the platform
+verified it, the insurer listed it, it sold, the levy accrued by itself, and a
+shopper can see it.
 
-**THIS IS THE THIRD TIME IN ONE DAY** that "local is superuser, Render is not"
-produced a green local result and a red production one — the backup's `pg_dump`,
-the public listing's join, and this. **Any migration or query that reads a
-FORCE-RLS table with no tenant context needs that escape, and local will never
-tell you.**
+🔴 **KEEP THE THREE LESSONS — they cost most of the day and they will recur.**
 
-⚠️ **RUN THE APPLY ALONE.** Pushing triggers `apply-migrations` via
-`workflow_run`, which is a DRY RUN. Twice today I read that dry run's "success"
-and believed a migration had applied when it had not. **Capture the run id of
-your own dispatch and watch that id** — `gh run list ... --json databaseId,event`
-distinguishes `workflow_dispatch` from `workflow_run`.
+1. **A permissive RLS policy on the table you are reading is not enough.** It
+   must hold for EVERY table the query touches. `public_products()` joined
+   `identity.organizations`, and the join returned FEWER ROWS rather than
+   failing — an empty list behind a `200`, not an error. 083 fixed the products
+   table and the listing was still empty; 084 removed the join.
+2. **LOCAL IS SUPERUSER AND RENDER IS NOT.** Three separate green-local /
+   red-production failures in one day: the backup's `pg_dump` refused by FORCE
+   RLS, the public listing's join, and **084's own backfill** — the migration
+   written to fix an RLS-join bug contained the same bug. Any migration or query
+   reading a FORCE-RLS table with no tenant context needs
+   `set_config('app.current_role','admin',true)`, and local will never tell you.
+3. **Pushing triggers `apply-migrations` as a DRY RUN** via `workflow_run`.
+   Twice I read that run's "success" and believed a migration had applied when
+   it had not. **Capture your own dispatch's run id and watch that id** —
+   `gh run list ... --json databaseId,event` distinguishes them.
 
 ---
 
