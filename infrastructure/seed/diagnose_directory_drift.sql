@@ -86,3 +86,29 @@ SELECT version, applied_at
   FROM public.schema_migrations
  ORDER BY version DESC
  LIMIT 5;
+
+\echo ''
+\echo '=== 7. The exact lines of register_workshop that mention the directory ==='
+-- 🔴 NAMES THE DRIFT INSTEAD OF ASSERTING IT. Section 5 proves production's
+-- function mentions the table and local's does not; this prints WHAT it does
+-- with it, so the difference is a quotable fact rather than an inference.
+SELECT ln AS line
+  FROM (
+    SELECT row_number() OVER () AS n, ln
+      FROM regexp_split_to_table(
+             pg_get_functiondef('identity.register_workshop(text,text,text)'::regprocedure),
+             E'
+') AS ln
+  ) t
+ WHERE ln ILIKE '%mechanic_directory%'
+    OR ln ILIKE '%is_published%'
+    OR ln ILIKE '%trading_name%';
+
+\echo ''
+\echo '=== 8. Migration ledger checksum for the migration that defines it ==='
+-- If a file changed after being applied, run.sh's checksum guard should have
+-- said so. Printing it makes the ledger's own opinion visible.
+SELECT version, applied_at, left(checksum, 16) AS checksum_head
+  FROM public.schema_migrations
+ WHERE version LIKE '036%' OR version LIKE '037%' OR version LIKE '07%'
+ ORDER BY version;
