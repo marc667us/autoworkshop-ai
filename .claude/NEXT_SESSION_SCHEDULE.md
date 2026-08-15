@@ -1,4 +1,24 @@
-# Next session — start here
+# ⛔ SUPERSEDED — do not start here
+
+> **This file is the 2026-08-14 close. It is kept for its record of that day
+> and for the three RLS lessons in section 0, which are still true.**
+>
+> # ▶ START AT `.claude/TASK_LIST_2026-08-15.md`
+>
+> That file carries these items forward as **Part A**, marks A7 and A8 ANSWERED
+> against production, adds four Phase-7 slices (Part B), the roles audit
+> (Part C) and the defects found and fixed on 08-15 (Part D).
+>
+> **Do not work from the sections below without checking Part A first** — items
+> 0, 1, 2, 3, 4, 5 and 7 are restated there with their current state, and the
+> ordering has changed: **item 7 (the firewall race) is now FIRST**, because it
+> manufactures false evidence that everything else is measured against.
+>
+> ⚠️ Its proposed fix for item 7 is **wrong** — see Part A6. "Teardown removes
+> only THIS runner's entry" is still racy: Render's API PATCHes the whole
+> allow-list and the kill actually happens at CAPTURE, not teardown.
+
+---
 
 **Written at the close of 2026-08-14. Tip is the commit after `717b830`,
 tree clean, all pushed. 24 commits.**

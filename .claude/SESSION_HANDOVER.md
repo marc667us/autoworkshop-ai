@@ -1,5 +1,104 @@
 # Session handover
 
+## ═══ 2026-08-15 — the consolidation left the pipeline behind ═══
+
+**Tip `3c8b341`. 3 commits (`1816ba7` → `3c8b341`). Tree clean, all pushed.**
+
+### ▶ NEXT SESSION STARTS AT `.claude/TASK_LIST_2026-08-15.md`
+
+That file is the work: **Part A** carried-forward items, **Part B** four Phase-7
+slices, **Part C** the roles audit, **Part D** the defects found and fixed.
+`NEXT_SESSION_SCHEDULE.md` (08-14) is superseded by it; `TASK_GAP_AND_JOB_LIST.md`
+(08-11) is older still.
+
+**▶ FIRST TASK: A6 — the database-firewall race.** It is the first executable
+item in the list and everything else depends on it, because it manufactures
+false evidence that looks exactly like a database outage. **The fix is a shared
+`concurrency:` group, NOT "remove only my entry"** — Render's API PATCHes the
+whole allow-list, so every variant of read-modify-write is still racy.
+
+### State, measured at close
+
+| | |
+|---|---|
+| Migrations | **IN REPO 82 / APPLIED 82 / PENDING 0 — on PRODUCTION** |
+| Live suite | **70 passed / 0 failed / 1 skipped** (66 anon + 4 signed-in) |
+| Release | **GREEN** — first success since 08-14 20:57Z, after eight failures |
+| Screen coverage | **272 of 384 (71%)**, 110 with no page |
+| Local restore drill | PASS 8/8, RTO 62s, RPO 0 |
+
+### What this session found, in order of how much it cost
+
+1. 🔴 **ADR-021 UPDATED THE CODE AND LEFT THE PIPELINE POINTING AT THE OLD
+   WORLD.** `_deploy-render.yml` probed `${BASE}/home/dashboard` → **seven red
+   Releases on deploys that had already succeeded.** Then three more instances:
+   `render-resume-production.yml` (would report a **recovered** site as dead —
+   and it runs precisely when production is down) and two provisioning
+   workflows setting a `healthCheckPath` Render could never mark healthy.
+   **`release.yml`'s own container check had already been fixed for exactly
+   this, with a comment explaining exactly this.** Two literals in two files.
+2. 🔴 **I FIXED A FALSE RED BY CREATING A FALSE GREEN.** My first fix probed `/`
+   alone — which passes while deleting the only assertion that any pack mounts.
+   Codex refused it. The Supervisor then showed that even seven pack roots prove
+   nothing: they are three-line `redirect()` stubs, so **the exact 08-13 defect
+   would still have passed.** Now `/` + seven roots + `-L` + retries.
+3. 🔴 **THE WORKSHOP AND SUPPLIER ACQUISITION FUNNEL RENDERED FOR NOBODY.** The
+   "Run a workshop, or sell parts?" band is gated on two props **no caller
+   anywhere passed**; production's apex served neither button nor the heading,
+   and its only outbound links were customer sign-in callbacks. Fixed, deployed,
+   and **verified in production's served HTML**.
+4. 🔴 **A FIFTH ROLE WITH NO PRODUCTION WRITE PATH: `platform_administrator`.**
+   Every API reference to `identity.platform_administrators` is a READ; the only
+   writer is 077's one-time backfill. **There is no way to appoint a second
+   administrator or replace the first.** Provisioning gap, not an access hole.
+5. 🔴 **THREE STATUS ARTIFACTS WERE LYING, AND ONE HAD PROPAGATED.**
+   `RELATIONSHIPS.md §8` said fourteen keys were open; 079 closed them on 08-11.
+   `CURRENT_PHASE.md` inherited it as gap #3, **so the next session would have
+   rebuilt migration 079** — which Directive §3 forbids. All corrected, verified
+   against a database (two-column FKs: 2, three-column: 71).
+
+### Decisions taken (the owner delegated them)
+
+- **Phase 7 proceeds**, but **Release 0.5 may NOT be claimed complete** while
+  Phase 6's product-validation engine and supplier badges are absent.
+- **Insurance = insurer-recorded + a customer enquiry**, not self-service
+  checkout — the levy is proven that way on production, and checkout would make
+  the platform a payment intermediary, which D7 forbids.
+- **The 16 spec roles absent from code split 8/8** — trades become
+  **competencies** on a technician; Claims Approver, Fleet Approver, Supplier
+  Staff, Towing Driver, Platform Support, Security Analyst, MCP Administrator
+  and Workshop Administrator become **real roles**. Five left open, not guessed.
+
+### 🔴 My errors
+
+- **Piped Codex through `tail -200` and destroyed the head of the review** — a
+  recorded defect, reintroduced. Redirect to a file.
+- **Claimed `point-web-at-keycloak.yml` "could never" set `SUPPLIER_WEB_URL`** —
+  false, it accepts 3xx. And counted six Release failures while listing seven.
+- **Nearly reported `live-suite.yml` as broken on Codex's say-so.** It is
+  correct: its base URLs carry the prefix (`FLEET: …/fleet`). Verify first.
+- **Left an unguarded `$(curl)` under `set -euo pipefail`** in the file I was
+  editing — the Supervisor caught it. It defeated a ten-attempt wait loop.
+
+### 🛠 Commands
+
+```bash
+bash scripts/start-session.sh                 # ALWAYS first
+node scripts/audit-menu-coverage.mjs --all    # re-measure coverage, never quote it
+
+gh workflow run apply-migrations.yml          # no confirm = inspect only
+gh workflow run live-suite.yml                # READ BOTH JOBS
+gh api repos/marc667us/autoworkshop-ai/actions/jobs/<job_id>/logs   # `run view --log` returns 0 BYTES
+
+# Codex: prompt on STDIN from a FILE, output REDIRECTED (never | tail)
+C:/Users/USER/nodejs/codex.cmd exec --skip-git-repo-check -s read-only - < prompt.txt > review.txt 2>&1
+```
+
+⚠️ **Do not run two firewall-opening workflows at once until A6 is fixed** — and
+a push triggers `apply-migrations` as a dry run, which counts as one.
+
+---
+
 ## ═══ 2026-08-13 — ten Render services became one artifact ═══
 
 **Tip `062876c`. Tree clean, all pushed. Live suite 70/0/1.**
