@@ -128,6 +128,24 @@ export function siblingAppBaseFrom(
  * the button is then not rendered at all. A missing button is recoverable; a
  * button that lands somebody signed-out on a foreign host is the bug above.
  */
+/*
+ * ⚠️ NO CALLER SINCE 2026-08-15, AND KEPT DELIBERATELY.
+ *
+ * The apex landing now passes a same-origin `/onboarding` directly, so nothing
+ * invokes this. It is NOT deleted: it is exported from `index.ts`, and §0.3
+ * makes a published import path a contract that may only be removed behind a
+ * deprecation alias.
+ *
+ * It is also NOT broken, contrary to a review note that read the
+ * `/home/dashboard` literal below and stopped there — the callback is built
+ * from `prefix`, which is derived from the base's own path, so a correctly
+ * prefixed `SUPPLIER_WEB_URL=https://host/supplier` still yields
+ * `/supplier/home/dashboard`. It only produces a stale URL if given an
+ * UNPREFIXED base, which post-ADR-021 would itself be the misconfiguration.
+ *
+ * If the consolidated app ever needs this funnel again, prefer a same-origin
+ * path over an env var: there is no sibling host left to point at.
+ */
 export function supplierRegisterHrefFrom(
   env: Record<string, string | undefined>,
 ): string | undefined {

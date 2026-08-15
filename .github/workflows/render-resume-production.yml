@@ -118,9 +118,19 @@ jobs:
           # ALREADY RECOVERED. This workflow runs precisely when production is
           # down, which is the moment a false negative is most expensive and
           # least likely to be questioned.
+          # 🔴 `|| code=""` IS LOAD-BEARING AND ITS ABSENCE DEFEATED THIS LOOP
+          # ENTIRELY. The step runs under `set -euo pipefail`, and `curl -s`
+          # exits non-zero on connection refused (7), DNS failure (6) and
+          # timeout (28) — which is the EXPECTED state of a service that has
+          # just been resumed and has not finished waking. So `set -e` aborted
+          # the step on attempt 1 and the ten-attempt loop that exists precisely
+          # to tolerate a ~50s wake never ran past the first request.
+          # Pre-existing, not introduced here — but this is the line, so it is
+          # fixed here. Assign-on-failure, never `|| echo`, which concatenates.
           for i in $(seq 1 10); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$PUBLIC_URL/")"
-            echo "attempt $i: $code"
+            code=""
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$PUBLIC_URL/")" || code=""
+            echo "attempt $i: ${code:-transport-failure}"
             if [ "$code" = "200" ]; then
               echo "PRODUCTION IS SERVING AGAIN"
               exit 0

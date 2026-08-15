@@ -36,7 +36,15 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # ⚠️ RAISED FROM 30. This job's budget is SHARED between the deploy poll,
+    # which bounds itself at 20 minutes, and the verification below, whose
+    # worst case grew when it went from probing one path to probing `/`, two
+    # auth routes and seven pack roots. At 30 the runner could kill the job
+    # mid-verification and produce a failure with NO error annotation at all —
+    # the least diagnosable outcome available. Per-request `--max-time` was
+    # also cut from 120s to 45-60s, since a cold instance is already handled by
+    # the wake loop that runs before any of these.
+    timeout-minutes: 45
     environment: ${{ inputs.environment }}
     steps:
       - name: Refuse to deploy without a configured service
@@ -137,11 +145,20 @@ jobs:
           # instead: `code="$(curl ...)" || code=""`.
           check() { # path, label
             local code=""
-            code="$(curl -s -o /tmp/body -w '%{http_code}' --max-time 120 "${BASE}$1")" || code=""
+            # ⚠️ THE BODY FILE IS TRUNCATED FIRST, AND `head` IS GUARDED.
+            # On a transport failure curl does not rewrite `/tmp/body`, so the
+            # diagnostic printed under this error would be the PREVIOUS check's
+            # body — a 200 landing page shown beneath "returned
+            # transport-failure", which is worse than printing nothing. And on
+            # the first call the file may not exist at all, where under
+            # `set -euo pipefail` a failing `head` aborts the step and silently
+            # skips the pack probes and the token-leak assertion below it.
+            : > /tmp/body
+            code="$(curl -s -o /tmp/body -w '%{http_code}' --max-time 60 "${BASE}$1")" || code=""
             case "$code" in
               200) echo "ok   $1 → $code" ;;
               *)   echo "::error::${BASE}$1 returned ${code:-transport-failure} ($2)"
-                   head -c 300 /tmp/body; echo; fail=1 ;;
+                   head -c 300 /tmp/body 2>/dev/null || true; echo; fail=1 ;;
             esac
           }
 
@@ -156,17 +173,38 @@ jobs:
           # 🔴 EVERY PACK, because the whole point of ADR-021 is that ONE image
           # carries all seven. A pack that failed to mount returns 404 here and
           # nothing else in the pipeline would notice: the image builds, the
-          # server starts, `/` renders, and six of seven work. The roots
-          # redirect into their own trees, so 200/307/308 pass, and 401/403 pass
-          # because refusing an anonymous viewer is CORRECT for a gated pack —
-          # what must never happen is 404 or 5xx. Same accepted set as
-          # `deploy-web.yml`, deliberately, so the two cannot drift apart.
+          # server starts, `/` renders, and six of seven work.
+          #
+          # 🔴 `-L`, AND THAT IS THE WHOLE POINT OF THIS CHECK. Every pack root
+          # is a THREE-LINE `redirect()` stub (`app/<pack>/page.tsx` →
+          # `/<pack>/home/dashboard`). Accepting a bare 307 would prove only
+          # that the stub file shipped and would never request the target — so
+          # THE EXACT DEFECT THIS PROJECT SHIPPED ON 08-13 (a pack root
+          # dispatching to a dashboard that pack does not serve, which 404'd the
+          # owner on their own admin screen) would sail straight through.
+          # Following the redirect asserts the destination actually renders.
+          # 401/403 still pass: refusing an anonymous viewer is CORRECT for a
+          # gated pack. 404 and 5xx are the failures.
+          #
+          # 🔴 RETRIES, BECAUSE RENDER'S EDGE 404s WHEN IT HAS NO INSTANCE.
+          # A free-pool service with no instance answers a fast 404 carrying
+          # `x-render-routing: no-server` — indistinguishable here from a pack
+          # that failed to mount, and these are eight sequential requests, which
+          # is long enough for the instance to be recycled mid-loop. An earlier
+          # version of this comment claimed it used `deploy-web.yml`'s logic "so
+          # the two cannot drift apart" while copying only the accepted-status
+          # half and not the retry half. Both halves now.
           for pack in customer workshop supplier fleet insurance towing admin; do
             code=""
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "${BASE}/${pack}")" || code=""
+            for attempt in 1 2 3; do
+              code="$(curl -sL -o /dev/null -w '%{http_code}' --max-time 45 "${BASE}/${pack}")" || code=""
+              case "$code" in 200|401|403) break ;; esac
+              echo "  /${pack}: ${code:-transport-failure} — retrying (${attempt})"
+              sleep 10
+            done
             case "$code" in
-              200|307|308|401|403) printf '  ok   /%-10s -> %s\n' "$pack" "$code" ;;
-              *) echo "::error::/${pack} returned ${code:-transport-failure} — that pack did not mount"
+              200|401|403) printf '  ok   /%-10s -> %s (followed)\n' "$pack" "$code" ;;
+              *) echo "::error::/${pack} resolved to ${code:-transport-failure} — that pack did not mount, or its root redirects somewhere that does not serve"
                  fail=1 ;;
             esac
           done

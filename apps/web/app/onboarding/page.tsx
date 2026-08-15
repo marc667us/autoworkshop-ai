@@ -116,10 +116,30 @@ export default async function OnboardingPage() {
         {/* Names what happened, because the most common worry here is that
             sign-up failed — a working account with an empty application looks
             exactly like a broken one. The same reasoning as
-            `CreateWorkshopScreen`'s opening paragraph. */}
-        Your sign-in works. It is not attached to an organisation yet, which is
-        why the application looks empty — signing up creates the account, and
-        this page is where you say what it is for.
+            `CreateWorkshopScreen`'s opening paragraph.
+
+            🔴 BRANCHED ON `signedIn` SINCE 2026-08-15, WHEN THIS PAGE STOPPED
+            BEING REACHABLE ONLY BY SIGNED-IN VIEWERS. It used to be linked
+            solely from the `needsSetup` banner, so "Your sign-in works" was
+            always true. The public landing now offers "Set up your workshop"
+            and "Register as parts supplier" to ANONYMOUS visitors, and telling
+            a stranger their sign-in works — thirty lines above the "Sign in
+            first" they actually need — is the kind of confidently wrong copy
+            that reads as a broken product. `signedIn` is resolved on line 71
+            and cost nothing to consult. */}
+        {signedIn ? (
+          <>
+            Your sign-in works. It is not attached to an organisation yet, which
+            is why the application looks empty — signing up creates the account,
+            and this page is where you say what it is for.
+          </>
+        ) : (
+          <>
+            Choose what you are here to do. Each option below explains what it
+            creates and what happens next — you will be asked to sign in when
+            you pick one, and the account is created after that.
+          </>
+        )}
       </p>
 
       {/* ── the already-a-member case: a LINK, never a redirect ───────────── */}
