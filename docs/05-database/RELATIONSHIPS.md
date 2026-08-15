@@ -208,13 +208,60 @@ Everything it returns should appear in §5 or be a new gap.
 
 ---
 
-## 8. 🔴 STILL OPEN — fourteen tenant-only keys
+## 8. ✅ CLOSED by migration 079 — the fourteen tenant-only keys
 
-073 declared eighteen relationships that did not exist. It did **not** convert
-the keys that already existed, and sixteen of those are two-column
-`(x, tenant_id)`. Fourteen carry the same cross-organisation hole this page is
-about: **organisation A can attach a row to organisation B's parent inside the
-same tenant**, and no policy is consulted, because RI bypasses RLS.
+> **Status changed 2026-08-15.** This section was headed *"🔴 STILL OPEN"* from
+> the day it was written until today, and it was **stale from 2026-08-11**, when
+> `079_organisation_scoped_keys.sql` converted all fourteen. The staleness was
+> not harmless: `.claude/CURRENT_PHASE.md` cited this section as outstanding
+> work, so **the next session to trust the phase file would have rebuilt
+> migration 079.** Directive §3 forbids restarting completed work, and a status
+> heading that lags is how that rule gets broken. Re-measure before trusting any
+> status line on this page.
+
+**What was wrong.** 073 declared eighteen relationships that did not exist. It
+did **not** convert the keys that already existed, and sixteen of those were
+two-column `(x, tenant_id)`. Fourteen carried a cross-organisation hole:
+**organisation A could attach a row to organisation B's parent inside the same
+tenant**, and no policy was consulted, because RI bypasses RLS — even under
+FORCE.
+
+**What closed it.** `infrastructure/migrations/079_organisation_scoped_keys.sql`
+(applied 2026-08-11) rebuilt all fourteen as three-column
+`(x, tenant_id, organization_id)`. It also fixed a second defect found while
+measuring: three of them were `ON DELETE SET NULL` on a composite key, which
+nulls **every** key column including the NOT NULL `tenant_id`, so those deletes
+RAISED instead of nulling. See §3 — a composite `SET NULL` must name its column.
+`verify/079_organisation_scoped_keys.sql` passes 6/6, and its check 3 is a real
+cross-organisation WRITE that must be refused, not a catalogue inspection.
+
+### Verified, not assumed
+
+A migration file proves intent, not state — 2026-08-14 produced a live case
+where production's `register_workshop` differed from the repository's with
+identical checksums. So §8's own diagnostic below was **run against a database**
+on 2026-08-15:
+
+```
+two-column   FKs in these ten schemas ->  2
+three-column FKs in these ten schemas -> 71
+```
+
+and the two that remain are named individually:
+
+| Child | Constraint |
+|---|---|
+| `core.organization_profile` | `fk_profile_org_scope` |
+| `repair.organization_pricing` | `fk_pricing_org_scope` |
+
+which are exactly the pair recorded below as **correctly** two-column.
+
+⚠️ **That reading is the LOCAL cluster.** Re-run the query against production
+before treating "closed" as true everywhere — and run it inside another task's
+database-firewall window, never as its own concurrent workflow.
+
+<details>
+<summary>The fourteen, as they were — kept for history</summary>
 
 ```sql
 SELECT c.relnamespace::regnamespace||'.'||c.relname, k.conname,
@@ -243,17 +290,29 @@ ORDER BY 1;
 | `warranty.claim_events` | `fk_event_claim_scope` | `warranty.claims` |
 | `warranty.claims` | `fk_claim_policy_scope` | `warranty.policies` |
 
+</details>
+
 **Two of the sixteen are correctly two-column and must not be "fixed":**
 `core.organization_profile.fk_profile_org_scope` and
 `repair.organization_pricing.fk_pricing_org_scope` reference
 `identity.organizations(id, tenant_id)` — the parent *is* the organisation, so
 there is no third column to add.
 
-Upgrading the fourteen needs, per parent: a `(id, tenant_id, organization_id)`
+Upgrading the fourteen needed, per parent: a `(id, tenant_id, organization_id)`
 unique index (`finance.invoices` and `parts.purchase_orders` already gained one
 in 073), an orphan pre-check with the platform-admin escape from §7, and the
-same delete-action review §3 and §4 describe. That is the next migration.
+same delete-action review §3 and §4 describe. **079 did all three.**
+
+⚠️ **The orphan pre-check is the part that repays re-reading.** A migration's own
+orphan check was once inert under FORCE RLS — it saw 6 rows as the owner and 0
+as the Render role, so it "passed" by reading nothing. Any such check needs
+`set_config('app.current_role','admin',true)` **and** an assertion that the
+escape is actually live. Local is superuser; Render is not, and local will never
+tell you.
 
 ⚠️ Do not let the *existence* of this section stand in for the work. It was
 written because 073's header claimed the job was finished when it was not, and
-a reviewer caught it.
+a reviewer caught it. It then spent four days claiming the opposite — that the
+job was unfinished when it was done. **A status heading on this page has now
+been wrong in both directions; verify against a database, not against the
+heading.**

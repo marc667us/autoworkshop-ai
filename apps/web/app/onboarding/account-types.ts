@@ -284,14 +284,25 @@ export const ACCOUNT_TYPES: readonly AccountType[] = [
  * owner adds you" — turns a dead end into an instruction, which is this
  * repository's standing rule about refusals.
  *
- * ⚠️ THE INSURANCE AND TOWING LINES ARE NOT "COMING SOON" COPY. Measured: no
- * migration writes `insurance_assessor` or `towing_operator`, and
- * `POST /organizations` (`organization.service.ts:16`) can only create an
- * `insurance_company` or `towing_company` INSIDE the caller's existing tenant.
- * There is therefore no path that creates an independent insurer or towing
- * firm at all — the packs are deployed and their navigation is transcribed,
- * but nobody can become one. That is a real gap in the product, recorded in
- * `docs/01-product/IDENTITY_GAPS.md`, not a flaw in this screen.
+ * ⚠️ THIS COMMENT USED TO SAY THE OPPOSITE, AND IT WAS STALE FOR A DAY.
+ * Corrected 2026-08-15. It read: "Measured: no migration writes
+ * `insurance_assessor` or `towing_operator` ... nobody can become one", and
+ * cited `docs/01-product/IDENTITY_GAPS.md`. Both statements are now false:
+ * migration 080 built the insurance and towing registration functions on
+ * 2026-08-14, an insurer was registered through this door on PRODUCTION during
+ * the UAT the same day, and that document does not exist in the tree.
+ *
+ * 🔴 WHY THIS MATTERED ENOUGH TO WRITE DOWN. The standing rule in this
+ * repository is "read the comment before filling the gap" — a comment that
+ * documents a deliberate absence outranks a reader's instinct to close it. A
+ * comment that is stale in THIS direction turns that rule into a weapon: the
+ * next reader would have believed insurance registration was impossible and
+ * might have "restored" these two entries to `NOT_SELF_SERVICE`, breaking a
+ * door that works. The file also contradicted itself, because the note below
+ * `NOT_SELF_SERVICE` recorded the move correctly the whole time.
+ *
+ * WHAT IS TRUE NOW: all four doors above are live and self-service. The list
+ * below is only for roles that genuinely have no self-service path.
  */
 export interface UnofferedRole {
   id: string;
