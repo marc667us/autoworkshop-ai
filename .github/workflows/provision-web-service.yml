@@ -115,7 +115,7 @@ jobs:
         run: |
           echo "image        : ${IMAGE}:${IMAGE_TAG}"
           echo "new service  : ${SERVICE_NAME} (free / oregon / image runtime)"
-          echo "health check : /home/dashboard"
+          echo "health check : /"
           echo "domain move  : ${{ inputs.move_domain }}  (${CUSTOM_DOMAIN}: ${OLD_SERVICE_ID} -> ${SERVICE_NAME})"
           if [ "$CONFIRM" != "APPLY" ]; then
             echo "=============================================="
@@ -153,7 +153,15 @@ jobs:
               # Must be a path the app really serves. Render marks a deploy live
               # only when this returns 2xx, so a wrong path here reads as a
               # broken app forever.
-              "healthCheckPath": "/home/dashboard",
+              #
+              # 🔴 AND IT WAS WRONG — this said `/home/dashboard`, which ADR-021
+              # moved. The packs are mounted under prefixes now and the bare
+              # path 307s, which is not 2xx, so a service provisioned from this
+              # file would NEVER have gone live and the comment above would have
+              # been its own epitaph. `render.yaml:64` already health-checks `/`;
+              # this file disagreed with it. Latent rather than observed, because
+              # the consolidated service was created before the path moved.
+              "healthCheckPath": "/",
             },
             "envVars": [
               {"key": "NODE_ENV", "value": "production"},

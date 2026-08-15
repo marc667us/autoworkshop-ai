@@ -197,12 +197,23 @@ export interface MarketplaceLandingProps {
    * a sixth button to the hero does not push "Request repair service" onto a
    * second line on a phone.
    *
-   * 🔴 EACH IS OMITTED RATHER THAN GUESSED. `setupWorkshopHref` is same-origin
-   * on the apex and has no sensible default anywhere else;
-   * `registerSupplierHref` points at ANOTHER HOST and is `undefined` unless
-   * `SUPPLIER_WEB_URL` is configured. A button that lands somebody signed-out on
+   * 🔴 EACH IS OMITTED RATHER THAN GUESSED, AND THE OMISSION IS THE MOUNT'S
+   * DECISION, NOT THIS COMPONENT'S. A button that lands somebody signed-out on
    * a foreign origin is the exact defect that took four reports to find
-   * (`c586e38`), so an absent button is the correct degraded state.
+   * (`c586e38`), so an absent button is the correct DEGRADED state.
+   *
+   * ⚠️ BUT DEGRADED IS NOT A DEFAULT. This docstring used to say
+   * `registerSupplierHref` "points at ANOTHER HOST and is `undefined` unless
+   * `SUPPLIER_WEB_URL` is configured", and that was true while supplier-web was
+   * its own Render service. **ADR-021 merged the seven packs into one
+   * application on one origin**, so on the consolidated app both of these are
+   * ordinary same-origin paths and the cross-host hazard cannot occur.
+   *
+   * Between those two facts, NO CALLER PASSED EITHER PROP AND THIS ENTIRE BAND
+   * RENDERED FOR NOBODY — measured against production on 2026-08-15, where the
+   * served apex carried neither button nor the band's own heading. The guard
+   * was right; being permanently in its degraded state was not. If you mount
+   * this component and the trade funnel matters, PASS THE HREFS.
    */
   setupWorkshopHref?: string;
   registerSupplierHref?: string;
@@ -427,14 +438,20 @@ export function MarketplaceLanding({
             minority want to trade on the platform. Both are served, in that
             order of prominence.
 
-            🔴 EACH BUTTON IS RENDERED ONLY IF ITS DESTINATION EXISTS. The
-            supplier one points at ANOTHER HOST and is undefined unless
-            `SUPPLIER_WEB_URL` is set — see `supplierRegisterHrefFrom`. This
+            🔴 EACH BUTTON IS RENDERED ONLY IF ITS DESTINATION EXISTS. This
             repository has shipped a button gated on an env var that was set
             nowhere (invisible, while every gate reported success) AND a button
             whose cross-host callback signed people in on the wrong origin. The
             first is recoverable; the second took four reports to find. So an
             unconfigured funnel shows nothing rather than something broken.
+
+            ⚠️ AND THEN THIS BAND BECAME THE FIRST DEFECT ITSELF. No mount
+            passed either href, so it was invisible to every visitor from the
+            day it was written until 2026-08-15 — the same failure it was
+            commented to prevent, one level up. The pre-ADR-021 note that the
+            supplier link "points at another host … unless `SUPPLIER_WEB_URL` is
+            set" is gone because the consolidation put every pack on this
+            origin; `/onboarding` is now what the apex passes.
 
             ⚠️ AND THE WHOLE BAND DISAPPEARS WHEN NEITHER IS CONFIGURED, rather
             than leaving a heading over an empty row — a section title with no

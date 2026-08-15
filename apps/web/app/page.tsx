@@ -285,6 +285,42 @@ export default async function Index({ searchParams }: { searchParams?: Promise<S
       // break this mount silently while the apex kept working, because only one
       // of the two spellings would have been updated.
       requestServiceHref={REQUEST_SERVICE_PATH}
+      // 🔴 THESE TWO WERE NEVER PASSED BY ANY CALLER, SO THE WHOLE
+      // "Run a workshop, or sell parts?" BAND HAS NEVER RENDERED FOR ANYONE.
+      //
+      // Measured on production 2026-08-15: the served apex HTML contained
+      // neither "Set up your workshop", nor "Register as parts supplier", nor
+      // even the band's own heading — and its ONLY outbound links were customer
+      // sign-in callbacks. The platform's two revenue-side audiences had no
+      // route in from the front door at all. `grep -rn setupWorkshopHref` across
+      // apps/ and packages/ returned the component and nothing else.
+      //
+      // WHY IT WAS OMITTED, AND WHY THAT REASON NO LONGER HOLDS. The prop
+      // docstring says the supplier link "points at ANOTHER HOST and is
+      // undefined unless SUPPLIER_WEB_URL is configured", because a cross-host
+      // callbackUrl once signed people in on the wrong origin and took four
+      // reports to find. That was correct when supplier-web was its own Render
+      // service. **ADR-021 merged all seven packs into this one application on
+      // one origin** — `/supplier/home/dashboard` answers 200 here — so there is
+      // no foreign origin left to land on, and no env var to gate on. The guard
+      // outlived its hazard.
+      //
+      // ⚠️ A FIRST DRAFT OF THIS COMMENT SAID `point-web-at-keycloak.yml`
+      // "could never set SUPPLIER_WEB_URL again". THAT IS FALSE and Codex
+      // caught it: that workflow probes `${CANON}/home/dashboard` and ACCEPTS
+      // 3xx (`point-web-at-keycloak.yml:246`), so the apex redirecting the
+      // legacy path satisfies it and the variable would be written. The
+      // accurate statement is narrower and enough on its own — nothing sets it
+      // today, and the band was therefore invisible to every visitor.
+      //
+      // BOTH POINT AT `/onboarding` — same-origin, and the chooser shipped
+      // 2026-08-14 that presents the workshop, supplier, fleet, insurance and
+      // towing doors with each one's verification caveat. Deep-linking a single
+      // door would be better and is not possible today: the page takes no
+      // `searchParams` and its cards carry no anchor ids. Two buttons naming
+      // their own audience beats one generic link, and both beat nothing.
+      setupWorkshopHref="/onboarding"
+      registerSupplierHref="/onboarding"
       basketHref="/customer/parts-and-warranty/parts-orders"
       renderAddToBasket={(part) => (
         <AddToBasket partId={part.id} partName={part.name} hasPrice={part.price !== null} />

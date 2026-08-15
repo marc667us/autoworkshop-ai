@@ -117,7 +117,20 @@ jobs:
               "env": "node",
               "plan": "free",
               "region": "oregon",
-              "healthCheckPath": "/home/dashboard",
+              # ⚠️ SUPERSEDED BY ADR-021 — THIS WORKFLOW PROVISIONS A TOPOLOGY
+              # THAT NO LONGER EXISTS. It creates ONE Render service per Next
+              # app ("which Next app to serve: workshop, customer, admin …"),
+              # which was right until 2026-08-13 merged all seven packs into a
+              # single artifact. The per-pack directories were `git mv`'d under
+              # `app/<pack>/`, so a standalone pack build is no longer possible
+              # and this workflow would fail well before its health check.
+              #
+              # `/` rather than the old `/home/dashboard` because Render marks a
+              # deploy live only on 2xx and the bare path now 307s — so if
+              # anyone does run this, it fails for the real reason rather than
+              # sitting "unhealthy" forever and sending them after a phantom.
+              # Use `provision-web-service.yml` for the consolidated service.
+              "healthCheckPath": "/",
               "envSpecificDetails": {
                 "buildCommand": os.environ['BUILD_CMD'],
                 "startCommand": os.environ['START_CMD'],

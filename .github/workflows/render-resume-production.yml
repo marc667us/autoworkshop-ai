@@ -58,7 +58,10 @@ jobs:
           if name != os.environ['EXPECT_NAME']:
               print(f"::error::refusing to touch '{name}'"); sys.exit(1)
           PY
-          echo "public URL now: $(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$PUBLIC_URL/home/dashboard")"
+          # `/` — NOT `/home/dashboard`. ADR-021 moved the packs under prefixes
+          # and the bare path 307s, so the old probe reported a redirect for a
+          # perfectly healthy site. See the wait loop below for why that matters.
+          echo "public URL now: $(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$PUBLIC_URL/")"
 
       - name: Dry run
         if: ${{ inputs.confirm != 'APPLY' }}
@@ -106,8 +109,17 @@ jobs:
 
           # A free service takes ~50s to wake, so this waits rather than judging
           # on one request. 503 throughout means it did not come back.
+          #
+          # 🔴 THE PATH IS `/`, AND GETTING THIS WRONG WAS WORSE HERE THAN
+          # ANYWHERE ELSE. This probed `$PUBLIC_URL/home/dashboard`, which
+          # ADR-021 turned into a 307. Only `= "200"` exits success, so this
+          # loop would have run all ten attempts and printed "production did not
+          # return 200 — still suspended or still waking" about a site that had
+          # ALREADY RECOVERED. This workflow runs precisely when production is
+          # down, which is the moment a false negative is most expensive and
+          # least likely to be questioned.
           for i in $(seq 1 10); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$PUBLIC_URL/home/dashboard")"
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$PUBLIC_URL/")"
             echo "attempt $i: $code"
             if [ "$code" = "200" ]; then
               echo "PRODUCTION IS SERVING AGAIN"

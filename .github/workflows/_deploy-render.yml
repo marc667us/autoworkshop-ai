@@ -91,23 +91,84 @@ jobs:
           # seconds to wake. The first request after a quiet period is therefore
           # slow BY DESIGN, and failing on it would make the pipeline flaky for a
           # property of the tier rather than a fault in the build.
+          # 🔴 ADR-021 MOVED THIS PATH AND THIS STEP FAILED EVERY RELEASE FOR
+          # TWO DAYS. `/home/dashboard` was workshop-web's dashboard when
+          # workshop-web WAS the artifact. Since the consolidation the packs are
+          # mounted under a prefix — `/workshop/home/dashboard`,
+          # `/customer/home/dashboard` — and the bare path 307s to `/`. So this
+          # step reported `returned 307` and went red on six consecutive
+          # perfectly good deploys (2026-08-14 20:57Z → 2026-08-15 13:31Z), all
+          # of which had ALREADY DEPLOYED SUCCESSFULLY: the failure is in the
+          # verification, after `promote`.
+          #
+          # ⚠️ `release.yml`'s own container smoke test had already been
+          # corrected for exactly this, with exactly this reasoning, and THIS
+          # FILE WAS MISSED. Two literals in two files cannot be type-checked
+          # into agreement — the recorded bug class in this repository. When a
+          # URL contract changes, grep every workflow, not the one that failed.
+          #
+          # `/` is what `render.yaml` health-checks, it is the only route that
+          # renders with neither the API nor Keycloak reachable, and it is
+          # prefix-independent, so it cannot rot the same way again.
+          #
+          # 🔴 BUT `/` ALONE IS A WEAKER GATE THAN WHAT IT REPLACED, so it is not
+          # alone. `middleware.ts` exempts `/` from authentication, and `/` is
+          # the public landing — so a deploy in which EVERY `/workshop/*` and
+          # `/customer/*` route 404s would sail through a `/`-only check. The
+          # old path at least exercised an app route. Coverage is restored below
+          # by probing all seven pack roots, which is the assertion that
+          # actually matters for a single artifact carrying seven packs: a pack
+          # that failed to mount returns 404 and nothing else would notice.
           for i in $(seq 1 5); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "${BASE}/home/dashboard" || echo 000)"
+            code=""
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "${BASE}/")" || code=""
             [ "$code" = "200" ] && break
-            echo "wake attempt ${i}: ${code}"
+            echo "wake attempt ${i}: ${code:-transport-failure}"
             sleep 15
           done
 
           fail=0
-          for path in /home/dashboard /api/auth/providers /api/auth/session; do
-            code="$(curl -s -o /tmp/body -w '%{http_code}' --max-time 120 "${BASE}${path}" || echo 000)"
-            if [ "$code" = "200" ]; then
-              echo "ok   ${path} → ${code}"
-            else
-              echo "::error::${BASE}${path} returned ${code}"
-              head -c 300 /tmp/body; echo
-              fail=1
-            fi
+
+          # ⚠️ `code="$(curl ... || echo 000)"` YIELDS `000000`, NOT `000`.
+          # curl PRINTS 000 and THEN exits non-zero, so both sides of the `||`
+          # run and their output concatenates. It is a recorded defect in this
+          # repository and this file had two live instances of it. The correct
+          # idiom — already used by `deploy-web.yml` — assigns on failure
+          # instead: `code="$(curl ...)" || code=""`.
+          check() { # path, label
+            local code=""
+            code="$(curl -s -o /tmp/body -w '%{http_code}' --max-time 120 "${BASE}$1")" || code=""
+            case "$code" in
+              200) echo "ok   $1 → $code" ;;
+              *)   echo "::error::${BASE}$1 returned ${code:-transport-failure} ($2)"
+                   head -c 300 /tmp/body; echo; fail=1 ;;
+            esac
+          }
+
+          # Must be exactly 200: the landing renders for anyone, and these two
+          # 500 while ordinary pages return 200 when AUTH_TRUST_HOST or the
+          # provider issuer is wrong — the asymmetry that twice reached a green
+          # build.
+          check /                    "public landing / Render health path"
+          check /api/auth/providers  "auth providers — 500 here means no issuer"
+          check /api/auth/session    "auth session — 500 here means UntrustedHost"
+
+          # 🔴 EVERY PACK, because the whole point of ADR-021 is that ONE image
+          # carries all seven. A pack that failed to mount returns 404 here and
+          # nothing else in the pipeline would notice: the image builds, the
+          # server starts, `/` renders, and six of seven work. The roots
+          # redirect into their own trees, so 200/307/308 pass, and 401/403 pass
+          # because refusing an anonymous viewer is CORRECT for a gated pack —
+          # what must never happen is 404 or 5xx. Same accepted set as
+          # `deploy-web.yml`, deliberately, so the two cannot drift apart.
+          for pack in customer workshop supplier fleet insurance towing admin; do
+            code=""
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "${BASE}/${pack}")" || code=""
+            case "$code" in
+              200|307|308|401|403) printf '  ok   /%-10s -> %s\n' "$pack" "$code" ;;
+              *) echo "::error::/${pack} returned ${code:-transport-failure} — that pack did not mount"
+                 fail=1 ;;
+            esac
           done
 
           # The session document is served to the browser as JSON. Re-asserted
