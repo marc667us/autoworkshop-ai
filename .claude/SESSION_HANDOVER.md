@@ -25,24 +25,34 @@ A4 diagnostics, backup work, migration verification and production seeds may
 proceed. **Next executable item: slice 18, then 17, then 19, then 20.** That
 order is load-bearing; the reasons are in Part B of the task list.
 
-### 🔴 STILL OPEN AFTER THIS SESSION — an operator action only you can do
+### ✅ CLOSED — the twelve dead redirect URIs are GONE from the live realm
 
-**Twelve dead redirect URIs / web origins are still registered in the LIVE
-Keycloak realm.** `realm-autoworkshop.json` no longer declares them, so the
-sync workflow will not re-add them — but `sync-keycloak-client-uris.yml` is
-**add-only by design** (it merges and PUTs, never deletes), so re-running it
-even with `confirm=APPLY` will NOT remove them. They must be removed via
-`kcadm` or the Keycloak Admin Console, then verified.
+**Measured, removed and verified on 2026-08-16.** New workflow
+`prune-keycloak-dead-redirects.yml` (the missing half:
+`sync-keycloak-client-uris.yml` is add-only by design and merges-then-PUTs, so
+it can never delete anything).
 
-They point at `autoworkshop-{customer,supplier,towing,fleet,insurance,admin}.onrender.com`,
-services ADR-021 deleted. Whether that is exploitable depends on Render letting
-another tenant reclaim a deleted service name, **for which this repo holds no
-evidence** — so treat it as allow-list hygiene at an origin we no longer
-control, not a proven takeover.
+| | |
+|---|---|
+| Dry run (run `31952738394`) | **measured 12 dead entries across 6 clients, live** — until then this was inferred, not measured |
+| APPLY (run `31952822707`) | 6 clients UPDATED · re-read confirms **no dead per-pack redirect remains** · `autoworkshop-customer-web` **still allows the apex callback** |
+| Sign-in re-proven (run `31952883691`) | **70 passed · 0 failed · 1 skipped** — incl. `PASS signing in at the apex` and `PASS signing out ends the session` |
 
-Also still open, deliberately: the realm declares **five pack web clients**
+No client was left empty: each retained a real URI (customer-web the apex, the
+other five their `<pack>.autoworkshop.aiappinvent.com` address).
+
+⚠️ **The APPLY run emits a warning naming `admin-cli`, `autoworkshop-api`,
+`broker`, `realm-management` as "clients with NO redirect URI".** That is a
+FALSE POSITIVE of my own check — those are Keycloak built-ins and the
+bearer-only API client, none of which uses a browser redirect flow, and none was
+touched. The check warns across the whole realm rather than only the clients it
+edited. Harmless; narrow it if it ever causes a misread.
+
+⚠️ **Still open, deliberately:** the realm declares five pack web clients
 (supplier/fleet/insurance/towing/admin) that no deployed app can sign in through
-any more, plus `autoworkshop-mobile`. Deleting realm clients is an identity
+any more, plus `autoworkshop-mobile`. Their remaining
+`<pack>.autoworkshop.aiappinvent.com` addresses are subdomains **we own**, so
+this is tidiness rather than exposure. Deleting realm clients is an identity
 change needing its own ADR — not a hostname tidy-up.
 
 ### What shipped
