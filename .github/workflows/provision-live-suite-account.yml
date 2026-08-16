@@ -69,6 +69,52 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A6 — ALL of these open the production database firewall by PATCHing the
+  # WHOLE ipAllowList, so they must never overlap. Render has no atomic
+  # per-entry operation, so every capture/add/restore is a read-modify-write on
+  # one shared resource. It races at least THREE ways:
+  #   1. FILTERED CAPTURE (apply-migrations, backup-production-db,
+  #      rehearse-migration) drops every entry containing 'ephemeral:' when
+  #      building its snapshot. It cannot tell a dead run's entry from a LIVE
+  #      one's, so it deletes a running job's entry the moment it starts.
+  #   2. UNFILTERED RESTORE (the other twelve) restores a snapshot taken before
+  #      another run added its entry, deleting it on the way out.
+  #   3. CONCURRENT ADD (any two unfiltered runs) — both GET the same original
+  #      list, then both PATCH 'original + mine'. The second add deletes the
+  #      first run's entry before either restore happens.
+  #   (and mixed order can RESURRECT a stale entry: an unfiltered run snapshots
+  #    a foreign ephemeral entry and restores it after its owner removed it.)
+  # The victim fails with 'SSL connection has been closed unexpectedly', which
+  # is a LIE about the cause and reads as a database outage. At least six failed
+  # runs on 2026-08-14 were this.
+  #
+  # ⚠️ A RETRY IS NOT A FIX — five retries failed identically, because the entry
+  # stays deleted. And "remove only MY entry" is still racy: the API takes the
+  # whole list.
+  #
+  # 🔴 THE COST OF THIS MUTEX, STATED PLAINLY — GITHUB'S WAITING ROOM HOLDS ONE.
+  # A concurrency group is NOT a fifteen-deep FIFO queue. GitHub keeps at most
+  # ONE pending run per group and REPLACES it when a newer one arrives, with no
+  # ordering guarantee. So a pending deploy-api, migration APPLY, seed or backup
+  # can be silently discarded by a newer arrival — and apply-migrations runs
+  # automatically after EVERY Release, so automatic inspections compete with
+  # deliberate operator requests. A cancelled PENDING run is firewall-safe (it
+  # never opened anything) but the REQUEST IS LOST, not merely delayed.
+  # ▶ THEREFORE: after dispatching any of these, capture the run id and confirm
+  #   it actually STARTED. `gh run list --workflow=<wf> -L 3 --json databaseId,status`
+  #   A 'cancelled' run you did not cancel is an evicted request — re-dispatch it.
+  #
+  # ⚠️ cancel-in-progress MUST stay false: cancelling a run mid-window would
+  # leave its ephemeral entry live on the production firewall. But it does NOT
+  # close every such path — a job timeout, a manual/API cancellation or runner
+  # loss can still kill a run between its add PATCH and its restore step, and an
+  # `if: always()` restore is not a reliable finally block against those. The
+  # filtered-capture workflows clean up a stale entry on their next run; until
+  # then the exposure is real.
+  group: production-db-firewall
+  cancel-in-progress: false
+
 jobs:
   provision:
     runs-on: ubuntu-latest
