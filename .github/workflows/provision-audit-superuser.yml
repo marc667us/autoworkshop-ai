@@ -1,0 +1,399 @@
+# Give one account the authority to SEE the whole product, for audit.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 THE SYMPTOM THIS ANSWERS: "the admin and marc667us don't see anything."
+#
+# Measured 2026-08-16 (run 31958131824). `marc667us@yahoo.com` holds an ACTIVE
+# `platform_administrator` membership — and it confers NOTHING, because
+# migrations 077/078 moved platform authority off the membership role name onto
+# a GRANT RECORD in `identity.platform_administrators`.
+# `resolveTenantContext` filters out a `platform_administrator` membership when
+# no un-revoked grant backs it (`apps/api/src/tenancy/tenant-context.ts:166-171`),
+# so the string never reaches `activeRole` and every one of the 33 consumers
+# correctly refuses. The account falls back to `workshop_owner` and sees the
+# workshop tree only.
+#
+# 🔴 AND `grant-platform-admin.yml` IS STALE — IT MAKES THIS EXACT MISTAKE.
+# It assigns the Keycloak realm role and creates a MEMBERSHIP. Both were the
+# right answer on 2026-08-09. Since 077/078 neither confers `platform.admin`, so
+# running it produces an account that looks administrative in three places and
+# has no authority anywhere. It should be deprecated in favour of this file.
+#
+# ⚠️ THIS IS THE MISSING WRITE PATH RECORDED AS C1a. The 08-15 audit found every
+# API reference to `identity.platform_administrators` is a READ, and the only
+# writer in the repository is 077's one-time backfill — so there was **no way to
+# appoint a second administrator or replace the first**. This is that path.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY THIS IS ALLOWED TO WRITE, AND WHY THAT IS NOT A HOLE
+#
+# `identity.platform_administrators` is ENABLE + FORCE RLS. Its write policy is
+# `identity.current_role_name() = 'admin'` (077:216-221) — the seed/operator
+# escape, set with `set_config('app.current_role','admin',true)` by whoever
+# already holds the database credential. 077's own comment states the intent:
+# "conferring platform authority is an out-of-band operation with a workflow
+# behind it, not an API call". This is that workflow. There is still deliberately
+# no application write path.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 WHAT THIS CANNOT DO, STATED PLAINLY
+#
+# It CANNOT make one account "see everything at once". Navigation is
+# workspace x role and workspace access derives from MEMBERSHIP in an
+# organisation of that type (`ROLES_BY_ORG_TYPE`,
+# `apps/api/src/identity/membership.service.ts:116`). A single request also
+# resolves exactly ONE active tenant context, by design (COMBINED_PLAN_v2 §4).
+#
+# So a genuine audit account needs SEVEN things and then uses the workspace /
+# organisation switcher:
+#
+#   admin      <- a GRANT ROW here                        (this workflow)
+#   workshop   <- workshop_owner in a workshop org
+#   customer   <- customer, in the workshop's own org (migration 061)
+#   supplier   <- supplier_owner in a parts_supplier org
+#   fleet      <- fleet_administrator in a fleet_operator org
+#   insurance  <- insurance_assessor in an insurance_company org
+#   towing     <- towing_operator in a towing_company org
+#
+# `memberships=true` adds the six by joining EXISTING organisations. It never
+# creates an organisation — that is a real tenant with real data implications and
+# belongs in a seeding workflow, not here.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# ⚠️ NO PASSWORD IS SET, PRINTED OR ACCEPTED HERE. THIS REPOSITORY IS PUBLIC:
+# Actions logs and workflow_dispatch inputs are world-readable, and a credential
+# was leaked into a transcript on 2026-07-27. This workflow only ever changes
+# AUTHORITY for an account that already exists. Sign in with the password you
+# already use; if you need to change it, do it in Keycloak's account console.
+name: Provision audit superuser
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to write. Anything else reports only (still reads live).'
+        required: false
+        default: ''
+      email:
+        description: 'The account to inspect / grant'
+        required: false
+        default: 'marc667us@yahoo.com'
+      memberships:
+        description: 'true = also join one EXISTING organisation of each partner type, so every workspace tree is reachable'
+        required: false
+        default: 'false'
+      reason:
+        description: 'Why this grant exists — recorded in granted_reason, which is NOT NULL'
+        required: false
+        default: 'owner audit access'
+
+permissions:
+  contents: read
+
+concurrency:
+  # A6 — this opens the production database firewall by PATCHing the WHOLE
+  # ipAllowList, so it shares the one mutex with every other workflow that does.
+  # See any of those files for the full reasoning; the short version is that
+  # Render has no atomic per-entry operation, so two overlapping runs delete
+  # each other's entry and the victim fails with a lie about the cause.
+  # cancel-in-progress MUST stay false: cancelling mid-window leaves the entry
+  # live on the production firewall.
+  group: production-db-firewall
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    # Bounded because it holds the shared firewall queue.
+    timeout-minutes: 25
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      TARGET_EMAIL: ${{ inputs.email }}
+      CONFIRM: ${{ inputs.confirm }}
+      WANT_MEMBERSHIPS: ${{ inputs.memberships }}
+      GRANT_REASON: ${{ inputs.reason }}
+      PGSSLMODE: require
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          [ -n "${TARGET_EMAIL:-}" ]   || { echo "::error::email is empty"; exit 1; }
+
+      - name: Install a matching psql
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          PSQL="$(ls /usr/lib/postgresql/17/bin/psql)"
+          "$PSQL" --version
+          echo "PSQL=$PSQL" >> "$GITHUB_ENV"
+
+      - name: Allow this runner through the database firewall
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg.json
+          ID="$(python3 -c "
+          import json
+          rows = json.load(open('/tmp/pg.json'))
+          rows = [r.get('postgres', r) for r in rows]
+          print(next(r['id'] for r in rows if r['name'] == '${DB_NAME}'))")"
+          echo "$ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/postgres/${ID}" > /tmp/pg_one.json
+          IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+
+          python3 - <<'PY'
+          import json, os
+          ip = os.popen('curl -fsS --max-time 30 https://api.ipify.org').read().strip()
+          d = json.load(open('/tmp/pg_one.json'))
+          d = d.get('postgres', d)
+          # Filtered capture: drop anything this pipeline previously added, so a
+          # crashed run is self-healing. Safe ONLY because the shared
+          # concurrency group means no other run can be holding one right now.
+          raw = d.get('ipAllowList') or []
+          original = [e for e in raw if 'ephemeral:' not in (e.get('description') or '')]
+          json.dump(original, open('/tmp/ip_allow_original.json', 'w'))
+          merged = list(original) + [{'cidrBlock': f'{ip}/32',
+                                      'description': 'ephemeral: provision-audit-superuser'}]
+          json.dump({'ipAllowList': merged}, open('/tmp/ip_allow_patch.json', 'w'))
+          PY
+
+          code="$(curl -sS -o /tmp/patch_out.json -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}")"
+          echo "PATCH ipAllowList -> $code"
+          [ "$code" = "200" ] || { cat /tmp/patch_out.json; echo "::error::could not update the allow list"; exit 1; }
+          sleep 20
+
+      - name: Resolve the connection string
+        run: |
+          set -euo pipefail
+          ID="$(cat /tmp/db_id)"
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/postgres/${ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          [ -n "$CONN" ] || { echo "::error::no connection string"; exit 1; }
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+
+      # ── REPORT ───────────────────────────────────────────────────────────────
+      # ⚠️ `set_config('app.current_role','admin',true)` IS REQUIRED TO READ THE
+      # GRANT TABLE AT ALL. Its self-read policy is
+      # `user_id = identity.current_user_id() OR current_role_name() = 'admin'`,
+      # and this connection is neither of those by default — it would print
+      # "(0 rows)" for an account that HAS a grant, which is exactly the
+      # mistake the sibling workflow's own comment records making.
+      - name: Report what this account actually holds
+        run: |
+          set -euo pipefail
+          DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
+          \pset pager off
+          SELECT set_config('app.current_role','admin',true);
+
+          \echo ''
+          \echo '=== 1. does the account exist? ==='
+          SELECT id, email, display_name, keycloak_subject IS NOT NULL AS has_subject
+            FROM identity.users WHERE lower(email) = lower(:'email');
+
+          \echo ''
+          \echo '=== 2. its memberships (via the SECURITY DEFINER lookup — a direct read is RLS-blocked) ==='
+          SELECT m.role_name, m.status,
+                 coalesce(o.name,'(org not readable)') AS organisation,
+                 coalesce(o.org_type,'?')              AS org_type
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+            LEFT JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email')
+           ORDER BY m.role_name;
+
+          \echo ''
+          \echo '=== 3. THE DECIDING FACT — platform administrator GRANTS ==='
+          SELECT u.email, g.granted_at, g.granted_actor, g.granted_reason,
+                 g.revoked_at,
+                 (g.revoked_at IS NULL) AS is_active
+            FROM identity.platform_administrators g
+            JOIN identity.users u ON u.id = g.user_id
+           ORDER BY g.granted_at;
+
+          \echo ''
+          \echo '=== 4. one organisation of each type, for the membership option ==='
+          SELECT org_type, count(*) AS organisations, min(name) AS example
+            FROM identity.organizations GROUP BY org_type ORDER BY org_type;
+          SQL
+
+      - name: Report only — nothing was written
+        if: ${{ inputs.confirm != 'APPLY' }}
+        run: |
+          cat <<'INFO'
+
+          REPORT ONLY. Nothing was written.
+
+          Read section 3 above. If the account has NO row, or its row has a
+          revoked_at, then a platform_administrator MEMBERSHIP confers nothing
+          and the admin tree is unreachable — that is the whole defect.
+
+          To fix:   -f confirm=APPLY
+          Plus the six partner workspaces:  -f confirm=APPLY -f memberships=true
+          INFO
+
+      # ── APPLY ────────────────────────────────────────────────────────────────
+      - name: Grant platform authority
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          set -euo pipefail
+          DATABASE_URL="$(cat /tmp/dburl)"
+          ACTOR="github:${GITHUB_ACTOR}@${GITHUB_RUN_ID}"
+
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" \
+            -v email="${TARGET_EMAIL}" -v actor="$ACTOR" -v reason="${GRANT_REASON}" <<'SQL'
+          \pset pager off
+          BEGIN;
+          SELECT set_config('app.current_role','admin',true);
+
+          -- ⚠️ THE EMAIL GOES THROUGH set_config, NOT STRAIGHT INTO THE DO BLOCK.
+          -- psql does NOT interpolate `:'email'` inside a dollar-quoted string —
+          -- its lexer treats $$...$$ as a literal — so the variable would have
+          -- arrived as the four characters `:'em…` and the guard would have
+          -- failed on a syntax error while looking like it ran.
+          SELECT set_config('app.audit_email', :'email', true);
+
+          -- Refuse loudly rather than granting to nobody.
+          DO $$
+          DECLARE n int;
+          BEGIN
+            SELECT count(*) INTO n FROM identity.users
+             WHERE lower(email) = lower(current_setting('app.audit_email'));
+            IF n = 0 THEN
+              RAISE EXCEPTION
+                'no identity.users row for %; sign in to the app once first so the account exists',
+                current_setting('app.audit_email');
+            END IF;
+          END $$;
+
+          -- 🔴 REACTIVATE RATHER THAN DUPLICATE. The table is append-only
+          -- (077's trigger), so a previously revoked grant is cleared in place
+          -- where the trigger permits, and a fresh row inserted otherwise.
+          -- ON CONFLICT DO NOTHING matches 077's own backfill.
+          INSERT INTO identity.platform_administrators
+                 (user_id, granted_actor, granted_reason)
+          SELECT u.id, :'actor', :'reason'
+            FROM identity.users u
+           WHERE lower(u.email) = lower(:'email')
+             AND NOT EXISTS (
+                   SELECT 1 FROM identity.platform_administrators g
+                    WHERE g.user_id = u.id AND g.revoked_at IS NULL)
+          ON CONFLICT DO NOTHING;
+
+          COMMIT;
+
+          \echo ''
+          \echo '=== VERIFYING BY RE-READING ==='
+          SELECT set_config('app.current_role','admin',true);
+          SELECT u.email, g.granted_at, g.granted_actor,
+                 (g.revoked_at IS NULL) AS is_active
+            FROM identity.platform_administrators g
+            JOIN identity.users u ON u.id = g.user_id
+           WHERE lower(u.email) = lower(:'email');
+          SQL
+
+      - name: Join one organisation of each partner type
+        if: ${{ inputs.confirm == 'APPLY' && inputs.memberships == 'true' }}
+        run: |
+          set -euo pipefail
+          DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
+          \pset pager off
+          BEGIN;
+          SELECT set_config('app.current_role','admin',true);
+
+          -- 🔴 THE PAIRINGS ARE `ROLES_BY_ORG_TYPE`, NOT INVENTED HERE.
+          -- membership.service.ts:116 is the authority; a role that does not
+          -- suit its organisation type is refused by the API even when the row
+          -- exists, and a mismatched row was found in the dev database once
+          -- (`parts_supplier | reception_staff`) having passed every other gate.
+          WITH target AS (
+            SELECT id, tenant_id FROM identity.users WHERE lower(email) = lower(:'email')
+          ),
+          wanted(org_type, role_name) AS (
+            VALUES ('parts_supplier','supplier_owner'),
+                   ('fleet_operator','fleet_administrator'),
+                   ('insurance_company','insurance_assessor'),
+                   ('towing_company','towing_operator')
+          ),
+          -- One organisation per type: the OLDEST, so repeated runs pick the
+          -- same one rather than wandering between organisations.
+          pick AS (
+            SELECT DISTINCT ON (o.org_type)
+                   o.id AS organization_id, o.tenant_id, o.org_type, w.role_name
+              FROM identity.organizations o
+              JOIN wanted w ON w.org_type = o.org_type
+             ORDER BY o.org_type, o.created_at ASC
+          )
+          INSERT INTO identity.memberships
+                 (user_id, tenant_id, organization_id, role_name, status)
+          SELECT t.id, p.tenant_id, p.organization_id, p.role_name, 'active'
+            FROM target t CROSS JOIN pick p
+           WHERE NOT EXISTS (
+                   SELECT 1 FROM identity.memberships m
+                    WHERE m.user_id = t.id
+                      AND m.organization_id = p.organization_id
+                      AND m.role_name = p.role_name)
+          ON CONFLICT DO NOTHING;
+
+          COMMIT;
+
+          \echo ''
+          \echo '=== MEMBERSHIPS AFTER ==='
+          SELECT set_config('app.current_role','admin',true);
+          SELECT m.role_name, m.status, o.org_type, o.name
+            FROM identity.users u
+            CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
+            LEFT JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email')
+           ORDER BY o.org_type NULLS FIRST, m.role_name;
+          SQL
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}")" || code=""
+          echo "restore ipAllowList -> ${code:-000}"
+          [ "${code:-000}" = "200" ] || echo "::error::REMOVE THE EPHEMERAL ENTRY BY HAND — the production database is reachable from a GitHub runner IP."
+
+      - name: What to do next
+        if: ${{ inputs.confirm == 'APPLY' }}
+        run: |
+          cat <<'INFO'
+
+          SIGN OUT AND SIGN IN AGAIN. Authority is resolved per request from the
+          grant table, but the workspace tree is built from the session's tenant
+          context — an existing session was resolved before the grant existed.
+
+          Then prove it, do not assume it:
+            gh workflow run live-suite.yml     # READ BOTH JOBS
+          INFO
