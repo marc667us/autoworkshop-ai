@@ -51,7 +51,12 @@ declare -A HOST=(
 # that happened on 2026-08-07 and cost an hour.
 echo "warming ${#HOST[@]} hosts..."
 for h in "${!HOST[@]}"; do
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 240 "${HOST[$h]}/" || echo 000)
+  # 🔴 NOT `$(curl … || echo 000)`. On a transport failure curl PRINTS 000 and
+  # exits non-zero, so the fallback fires too and the value becomes "000000".
+  # Capture first, default after — same family as the `grep -c … || echo 0`
+  # defect, and now enforced by rule 4 of guardrails/lint-shell-idioms.sh.
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 240 "${HOST[$h]}/")" || code=""
+  code="${code:-000}"
   echo "  $h -> $code"
 done
 

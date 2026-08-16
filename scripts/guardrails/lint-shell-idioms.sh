@@ -82,6 +82,32 @@ else
   report OK "no heredoc \`docker exec\` missing -i"
 fi
 
+# --- Rule 4: `curl ... || echo 000` ---------------------------------------
+# 🔴 THIS RULE EXISTS BECAUSE THE LINTER WALKED THROUGH ITS OWN GAP. Rule 1
+# catches `grep -c … || echo 0`, and the repository's notes record the curl
+# variant as the SAME recorded defect — but no rule enforced it, so
+# `live-screen-audit.sh:54` still carried a live instance on 2026-08-16, long
+# after the class was "known". A check that catches one member of a defect
+# family and not its sibling reads as coverage and is not.
+#
+# The mechanism is identical: on a transport failure curl PRINTS its code (000)
+# to stdout AND exits non-zero, so the `||` fallback fires as well and the
+# captured value becomes the concatenation "000000". Every later comparison
+# against "000" then takes the wrong branch.
+#
+# As with rule 1, require the command-substitution context — the bare pattern
+# matches this file's own explanatory text and the comments in the scripts that
+# document the fix.
+HITS="$(scan '\$\([^)]*curl[^|)]*\|\| *echo')"
+if [ -n "$HITS" ]; then
+  report FAIL "\`curl ... || echo 000\` produces \"000000\" on transport failure:"
+  printf '%s\n' "$HITS" | show
+  echo "           fix: code=\"\$(curl ...)\" || code=\"\"  then  \"\${code:-000}\""
+  FAILED=1
+else
+  report OK "no \`curl ... || echo\` fallbacks"
+fi
+
 echo
 if [ "$FAILED" -ne 0 ]; then
   echo "RESULT: FAIL"
