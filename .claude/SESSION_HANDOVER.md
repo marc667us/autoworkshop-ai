@@ -2,13 +2,13 @@
 
 ## ═══ 2026-08-16 — the firewall mutex, and three instruments that lied ═══
 
-**Tip `4b95f9e`. Tree clean, all pushed.**
+**Tip `b9d5e9d`. Tree clean, all pushed.**
 
 ### State, measured after the deploy — not quoted
 
 | | |
 |---|---|
-| Release / CI / Security CI on `4b95f9e` | **all three GREEN** (Release's 2nd success in a row) |
+| Release / CI / Security CI on `b9d5e9d` | **all three GREEN** (Release's 4th success in a row) |
 | **Live suite — anonymous** | **66 passed · 0 failed · 1 skipped** |
 | **Live suite — signed-in** | **4 passed · 0 failed · 0 skipped** |
 | **Live suite — total** | **70 passed · 0 failed · 1 skipped** — the 08-15 baseline, held |
@@ -25,8 +25,39 @@ A4 diagnostics, backup work, migration verification and production seeds may
 proceed. **Next executable item: slice 18, then 17, then 19, then 20.** That
 order is load-bearing; the reasons are in Part B of the task list.
 
+### 🔴 STILL OPEN AFTER THIS SESSION — an operator action only you can do
+
+**Twelve dead redirect URIs / web origins are still registered in the LIVE
+Keycloak realm.** `realm-autoworkshop.json` no longer declares them, so the
+sync workflow will not re-add them — but `sync-keycloak-client-uris.yml` is
+**add-only by design** (it merges and PUTs, never deletes), so re-running it
+even with `confirm=APPLY` will NOT remove them. They must be removed via
+`kcadm` or the Keycloak Admin Console, then verified.
+
+They point at `autoworkshop-{customer,supplier,towing,fleet,insurance,admin}.onrender.com`,
+services ADR-021 deleted. Whether that is exploitable depends on Render letting
+another tenant reclaim a deleted service name, **for which this repo holds no
+evidence** — so treat it as allow-list hygiene at an origin we no longer
+control, not a proven takeover.
+
+Also still open, deliberately: the realm declares **five pack web clients**
+(supplier/fleet/insurance/towing/admin) that no deployed app can sign in through
+any more, plus `autoworkshop-mobile`. Deleting realm clients is an identity
+change needing its own ADR — not a hostname tidy-up.
+
 ### What shipped
 
+0. **The stale-host sweep** (`b9d5e9d`) — `live-screen-audit.sh` and
+   `live-soak.sh` both aimed every probe at six deleted hosts, so both reported
+   a healthy site as broken; `point-web-at-keycloak.yml` defaulted to two of
+   them; `sync-keycloak-client-uris.yml` checked a callback that could only ever
+   be REFUSED and would abort `confirm=APPLY`; and six realm clients registered
+   redirect URIs at hosts we no longer control.
+   🔴 **Codex caught a regression I introduced in that very sweep** — dropping
+   the customer-host check left only `autoworkshop-workshop-web`, but
+   `apps/web/auth.ts:73` sets `ARTIFACT_WORKSPACE='customer'`, so production
+   authenticates as **customer-web**. The gate would have passed while real
+   sign-in was refused. Both are checked now, customer-web first.
 1. **A6 — the database-firewall race. It was FIFTEEN workflows, not six, with
    at least THREE race mechanisms, not one.** One shared
    `concurrency: production-db-firewall` + `cancel-in-progress: false` across
