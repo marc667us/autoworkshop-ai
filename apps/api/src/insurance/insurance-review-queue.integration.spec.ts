@@ -138,8 +138,10 @@ beforeAll(async () => {
     pool = new Pool({ connectionString: ADMIN_URL, connectionTimeoutMillis: 4000 });
     client = await pool.connect();
     connected = true;
-  } catch (err) {
-    // No database: a legitimate skip. CI has no Postgres.
+  } catch {
+    // No database: a legitimate skip. CI has no Postgres. The reason is not
+    // captured because there is only one — the connection could not be made —
+    // and `connected` already carries it.
     connected = false;
     return;
   }
