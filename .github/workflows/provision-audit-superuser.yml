@@ -203,7 +203,23 @@ jobs:
           DATABASE_URL="$(cat /tmp/dburl)"
           "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
           \pset pager off
-          SELECT set_config('app.current_role','admin',true);
+          SELECT set_config('app.current_role','admin',false);
+
+          \echo ''
+          \echo '=== 0. IS THE ADMIN READ CONTEXT ACTUALLY ACTIVE? ==='
+          -- 🔴 THIS SECTION EXISTS BECAUSE THE FIRST RUN LIED TO ME.
+          -- The GUC was set with is_local=TRUE, which is transaction-local —
+          -- and every psql statement outside an explicit transaction is its own
+          -- transaction, so it was discarded before the next query ran. Sections
+          -- 2, 3 and 4 all returned "(0 rows)" / "(org not readable)" and I
+          -- nearly reported "this account has no grant" when the truth was that
+          -- the connection could not SEE the table. It is the exact RLS false
+          -- negative the sibling workflow records making, reproduced one comment
+          -- below my own warning about it.
+          -- If the next line is not 'admin', EVERY count below is meaningless.
+          SELECT current_setting('app.current_role', true) AS effective_role,
+                 (current_setting('app.current_role', true) = 'admin')
+                   AS reads_below_are_trustworthy;
 
           \echo ''
           \echo '=== 1. does the account exist? ==='
@@ -263,7 +279,7 @@ jobs:
             -v email="${TARGET_EMAIL}" -v actor="$ACTOR" -v reason="${GRANT_REASON}" <<'SQL'
           \pset pager off
           BEGIN;
-          SELECT set_config('app.current_role','admin',true);
+          SELECT set_config('app.current_role','admin',false);
 
           -- ⚠️ THE EMAIL GOES THROUGH set_config, NOT STRAIGHT INTO THE DO BLOCK.
           -- psql does NOT interpolate `:'email'` inside a dollar-quoted string —
@@ -303,7 +319,7 @@ jobs:
 
           \echo ''
           \echo '=== VERIFYING BY RE-READING ==='
-          SELECT set_config('app.current_role','admin',true);
+          SELECT set_config('app.current_role','admin',false);
           SELECT u.email, g.granted_at, g.granted_actor,
                  (g.revoked_at IS NULL) AS is_active
             FROM identity.platform_administrators g
@@ -319,7 +335,7 @@ jobs:
           "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
           \pset pager off
           BEGIN;
-          SELECT set_config('app.current_role','admin',true);
+          SELECT set_config('app.current_role','admin',false);
 
           -- 🔴 THE PAIRINGS ARE `ROLES_BY_ORG_TYPE`, NOT INVENTED HERE.
           -- membership.service.ts:116 is the authority; a role that does not
@@ -359,7 +375,7 @@ jobs:
 
           \echo ''
           \echo '=== MEMBERSHIPS AFTER ==='
-          SELECT set_config('app.current_role','admin',true);
+          SELECT set_config('app.current_role','admin',false);
           SELECT m.role_name, m.status, o.org_type, o.name
             FROM identity.users u
             CROSS JOIN LATERAL identity.memberships_for_subject(u.keycloak_subject) m
