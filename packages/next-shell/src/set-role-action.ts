@@ -1,8 +1,10 @@
 'use server';
 
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { ACTIVE_ROLE_COOKIE } from './active-role';
+import { homeWorkspaceFor } from './viewer-contract';
 
 /**
  * Store which role the viewer is acting as.
@@ -46,6 +48,36 @@ export async function setActiveRoleAction(roleName: string): Promise<void> {
   // the new role's content — the nav/router divergence this codebase works hard
   // to prevent.
   revalidatePath('/', 'layout');
+
+  // 🔴 AND THEN GO WHERE THAT ROLE LIVES. Revalidating in place was correct
+  // until ADR-021 and is wrong now.
+  //
+  // OWNER REPORT 2026-08-16: "it only sees admin which was nothing meaningful."
+  // Measured cause: this action set the cookie and re-rendered THE SAME URL.
+  // Switching from `platform_administrator` to `workshop_owner` while standing
+  // on `/admin/...` therefore left the viewer on `/admin/...` — a pack they no
+  // longer hold `platform.admin` for — so the admin layout correctly refused
+  // them and the switch appeared to do nothing except break the page. The only
+  // escape was to know to edit the URL by hand.
+  //
+  // ⚠️ THIS IS THE ADR-021 PATTERN AGAIN, AND IT IS THE THIRD INSTANCE FOUND
+  // TODAY. When each pack was its own deployed host, switching role inside one
+  // host was the whole interaction and there was nowhere to send anyone. One
+  // artifact with seven path-prefixed packs means a role change is usually a
+  // PACK change. `homeWorkspaceFor` already encodes which pack a role belongs
+  // to — `/`'s own dispatch uses it (viewer-contract.ts:225) — and this was the
+  // other caller that needed it and never got it. The consolidation updated the
+  // application and left the operational scaffolding behind, exactly as it did
+  // for `_deploy-render.yml`, `render-resume-production.yml` and the Keycloak
+  // redirect URIs.
+  //
+  // Clearing the role sends the viewer to `/`, which re-dispatches on the API's
+  // own deterministic default rather than pinning them anywhere.
+  //
+  // ⚠️ `redirect()` THROWS by design (NEXT_REDIRECT). It must stay the LAST
+  // statement and must never be wrapped in a try/catch, or the navigation is
+  // swallowed and this regresses to the in-place behaviour it is fixing.
+  redirect(value === '' ? '/' : `/${homeWorkspaceFor(value)}`);
 }
 
 /**
