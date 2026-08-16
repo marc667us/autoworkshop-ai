@@ -1,5 +1,116 @@
 # Session handover
 
+## ═══ 2026-08-16 — the firewall mutex, and three instruments that lied ═══
+
+**Tip `4b95f9e`. Tree clean, all pushed.**
+
+### State, measured after the deploy — not quoted
+
+| | |
+|---|---|
+| Release / CI / Security CI on `4b95f9e` | **all three GREEN** (Release's 2nd success in a row) |
+| **Live suite — anonymous** | **66 passed · 0 failed · 1 skipped** |
+| **Live suite — signed-in** | **4 passed · 0 failed · 0 skipped** |
+| **Live suite — total** | **70 passed · 0 failed · 1 skipped** — the 08-15 baseline, held |
+| Migrations on PRODUCTION | **IN REPO 82 · APPLIED 82 · PENDING 0** |
+| The one skip | *"served forms carry a submit control — no form on this page to check"* — the same benign skip as 08-15. **A skip is not a pass.** |
+
+Read from `gh api …/actions/jobs/<id>/logs` — `gh run view --log` still returns
+0 bytes. Both live-suite jobs read, per the recorded rule.
+
+### ▶ NEXT SESSION STARTS AT `.claude/TASK_LIST_2026-08-15.md`
+
+Still the work. **A6 is now CLOSED**, so the blockade it imposed is lifted —
+A4 diagnostics, backup work, migration verification and production seeds may
+proceed. **Next executable item: slice 18, then 17, then 19, then 20.** That
+order is load-bearing; the reasons are in Part B of the task list.
+
+### What shipped
+
+1. **A6 — the database-firewall race. It was FIFTEEN workflows, not six, with
+   at least THREE race mechanisms, not one.** One shared
+   `concurrency: production-db-firewall` + `cancel-in-progress: false` across
+   all fifteen, plus `timeout-minutes` on the three that had none.
+2. **Three instruments that lied**, all in `record-live-state.sh`: two deleted
+   per-pack hostnames reported as failures, `curl … || echo 000` → `000000`,
+   and `grep -c … || echo 0` → `"0\n0"`. Plus a live `curl … || echo 000` in
+   `live-screen-audit.sh`.
+3. **`lint-shell-idioms.sh` rule 4**, closing the gap that let #2 survive.
+4. **ADR-022 — n8n evaluated for agent creation and REJECTED** by the owner on
+   cost grounds. Nothing installed; nothing left behind.
+
+### 🔴 The findings that cost the most to get right
+
+1. **THE SCOPE IN THE TASK LIST WAS 2.5× TOO SMALL.** It named six workflows.
+   `grep -l ipAllowList .github/workflows/` returns fifteen. The recorded
+   under-scoping pattern, again — a job sized off the previous session's
+   question shape.
+2. **FIVE OF THE FIFTEEN ALREADY HAD A `concurrency:` BLOCK — each with its own
+   per-workflow group.** That reads as protection and is none: a per-workflow
+   group cannot prevent a race *between* workflows. Two literals in two files,
+   in a new costume.
+3. **CODEX FOUND A THIRD RACE MECHANISM I HAD MISSED.** Two unfiltered runs both
+   GET the same original list, then both PATCH `original + mine`; the second add
+   deletes the first's entry *before* either restore. (Plus mixed-order
+   *resurrection* of a stale entry.)
+4. **THE FIX INTRODUCES A REGRESSION AND IT MUST NOT BE FORGOTTEN.** A GitHub
+   concurrency group is a mutex with a **one-element replacement waiting room**,
+   not a fifteen-deep queue: one pending run per group, older discarded when a
+   newer arrives, no ordering guarantee. So a pending deploy, migration APPLY,
+   seed or backup **can be silently dropped** — and `apply-migrations` fires
+   after every Release, so automatic inspections compete with deliberate
+   requests. **▶ After dispatching any of the fifteen, capture the run id and
+   confirm it STARTED. A `cancelled` run you did not cancel is an evicted
+   request — re-dispatch it.**
+5. **A CHECK THAT WALKED THROUGH ITS OWN GAP.** `lint-shell-idioms.sh` had a
+   rule for `grep -c … || echo` and none for the curl sibling, though this repo
+   records both as the same defect — so a live instance sat in
+   `live-screen-audit.sh` long after the class was "known".
+6. **HEAD-OF-LINE BLOCKING IS REAL, NOT THEORETICAL.**
+   `rehearse-migration` run `31126439386` ran for **205 MINUTES**. Under a
+   shared group with no timeout that would have blocked everything for 3.5h.
+   Bounds sized from *measured* durations, not guesses.
+
+### 🔴 My errors
+
+- **I claimed "the ADK/MCP agent tier does not exist in this repo" from an
+  `apps/` directory listing alone. Wrong twice over.** `services/agent-host/`
+  exists; `apps/api/src/agents/` holds seven files plus migration 064; and
+  `CURRENT_PHASE.md` records Phase 8 as **"Started, and off-plan"** with the
+  warning *"J16 must reconcile, never rebuild"*. **A directory listing is not a
+  measurement of whether a capability exists.** Caught by Codex.
+- **I treated a §0.1 ADK exception as unprecedented.** It is the third —
+  ADR-018 and ADR-019 both took it, and ADR-019 answers a near-identical owner
+  instruction from 08-08.
+- **My first proof of the new lint rule was invalid** — the probe was untracked
+  and `TARGETS` is `git ls-files`, so the rule never read it and "passed" a file
+  it had not seen. *A test that cannot see its subject is not a passing test.*
+- **I reproduced the `grep -c … || echo 0` defect in my own diagnostic** while
+  measuring it. Instrument, not product — but it is a persistent reflex.
+
+### Pre-existing defects found, NOT introduced, NOT fixed
+
+- **Two ADRs are both numbered 018** (`EXPO-SDK-52`, `REPAIR-ORCHESTRATOR-NO-ADK`).
+  Fix deliberately; do not renumber one that is already referenced.
+- **`CLAUDE.md` contradicts itself on agent frameworks** — §0.1 forbids
+  LangGraph and CrewAI; the FOSS Stack Rule table recommends them. The table is
+  the line that should change.
+
+### 🛠 Commands
+
+```bash
+bash scripts/start-session.sh                 # ALWAYS first
+bash scripts/record-live-state.sh             # FIXED — it now tells the truth
+bash scripts/guardrails/lint-shell-idioms.sh  # rule 4 is new
+
+# Codex: prompt on STDIN from a FILE, output REDIRECTED (never | tail)
+C:/Users/USER/nodejs/codex.cmd exec --skip-git-repo-check -s read-only - < prompt.txt > review.txt 2>&1
+```
+
+⚠️ **Codex is now v0.147.0** (the notes said 0.137.0). ChatGPT auth, $0/call.
+
+---
+
 ## ═══ 2026-08-15 — the consolidation left the pipeline behind ═══
 
 **Tip `3c8b341`. 3 commits (`1816ba7` → `3c8b341`). Tree clean, all pushed.**
