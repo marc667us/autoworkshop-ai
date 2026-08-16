@@ -1,14 +1,14 @@
 # Session handover
 
-## ═══ 2026-08-16 — the firewall mutex, and three instruments that lied ═══
+## ═══ 2026-08-16 — the firewall mutex, the switchers that stranded the owner, and slice 18 part 1 ═══
 
-**Tip `ee38cf9`. Tree clean, all pushed.**
+**Tip `4f03cfa`. 19 commits (`757c41b` -> `4f03cfa`). Tree clean, all pushed.**
 
 ### State, measured after the deploy — not quoted
 
 | | |
 |---|---|
-| Release / CI / Security CI on `ee38cf9` | **GREEN** — after one RED caught by lint, see below |
+| Release / CI / Security CI on `4f03cfa` | **GREEN** — after one RED for a lint error I had not run, see My errors |
 | **Live suite — anonymous** | **66 passed · 0 failed · 1 skipped** |
 | **Live suite — signed-in** | **4 passed · 0 failed · 0 skipped** |
 | **Live suite — total** | **70 passed · 0 failed · 1 skipped** — the 08-15 baseline, held |
@@ -210,18 +210,59 @@ change needing its own ADR — not a hostname tidy-up.
   LangGraph and CrewAI; the FOSS Stack Rule table recommends them. The table is
   the line that should change.
 
-### 🛠 Commands
+### 🛠 Commands — including everything BUILT this session
 
 ```bash
 bash scripts/start-session.sh                 # ALWAYS first
 bash scripts/record-live-state.sh             # FIXED — it now tells the truth
-bash scripts/guardrails/lint-shell-idioms.sh  # rule 4 is new
+bash scripts/live-screen-audit.sh             # FIXED — was aimed at 6 deleted hosts
+bash scripts/live-soak.sh                     # FIXED — same 6 deleted hosts
+node scripts/audit-menu-coverage.mjs --all    # re-measure coverage, never quote it
+
+# 🔴 RUN LINT BEFORE CLAIMING ANYTHING IS DEPLOYABLE. Skipping it turned
+# Release RED this session and `image`/`promote` were SKIPPED, so the work did
+# not deploy at all. tsc + tests + next build were all green at the time.
+./node_modules/.bin/turbo run lint
+bash scripts/guardrails/lint-shell-idioms.sh  # rule 4 (curl || echo 000) is NEW
 
 # Codex: prompt on STDIN from a FILE, output REDIRECTED (never | tail)
 C:/Users/USER/nodejs/codex.cmd exec --skip-git-repo-check -s read-only - < prompt.txt > review.txt 2>&1
 ```
 
-⚠️ **Codex is now v0.147.0** (the notes said 0.137.0). ChatGPT auth, $0/call.
+**Workflows written this session — all dry-run by default:**
+
+```bash
+# Appoint a platform administrator. THE MISSING WRITE PATH (C1a).
+# grant-platform-admin.yml is STALE — it writes the membership 077/078 made
+# inert. Use this instead.
+gh workflow run provision-audit-superuser.yml -f email=<addr>                      # report
+gh workflow run provision-audit-superuser.yml -f email=<addr> -f confirm=APPLY \
+                                              -f audit_orgs=true                   # + all 7 trees
+
+# Remove Keycloak redirect URIs at hosts ADR-021 deleted.
+# sync-keycloak-client-uris.yml is ADD-ONLY and can NEVER delete — that is why
+# this exists. Ran 2026-08-16: 12 removed, sign-in re-proven.
+gh workflow run prune-keycloak-dead-redirects.yml                                  # report
+gh workflow run prune-keycloak-dead-redirects.yml -f confirm=APPLY
+
+# Set a password WITHOUT it appearing anywhere public. Written, NEVER RUN.
+# Needs the owner to set the secret first — they choose it, nobody else sees it:
+#   gh secret set AUDIT_SUPERUSER_PASSWORD --repo marc667us/autoworkshop-ai
+# ⚠️ Do NOT pipe the value from PowerShell — it injects a BOM.
+gh workflow run set-audit-superuser-password.yml -f confirm=APPLY
+```
+
+⚠️ **Reading run logs:** `gh run view --log` returns 0 BYTES. Use
+`gh api repos/marc667us/autoworkshop-ai/actions/jobs/<job_id>/logs`, and strip
+ANSI (`sed 's/\x1b\[[0-9;]*m//g'`) — the log echoes the script before its
+output, so take the LAST occurrence of your marker, not the first.
+
+⚠️ **Codex is v0.147.0** (the notes said 0.137.0). ChatGPT auth, $0/call.
+
+⚠️ **A6 is fixed, so the fifteen firewall workflows QUEUE rather than race** —
+but GitHub holds only ONE pending run per group and discards the older. After
+dispatching any of them, confirm your run actually STARTED; a `cancelled` run
+you did not cancel is an evicted request.
 
 ---
 
