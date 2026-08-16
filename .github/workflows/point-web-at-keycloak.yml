@@ -40,14 +40,24 @@ on:
         description: 'Public base URL of the deployed API (server-side calls from Next)'
         required: false
         default: 'https://autoworkshop-api.onrender.com'
+      # 🔴 ADR-021 DELETED THE PER-PACK SERVICES. These defaulted to
+      # https://autoworkshop-{customer,supplier}.onrender.com, which no longer
+      # exist — so this workflow probed dead hosts and, on 2026-08-15, was
+      # recorded as "probing a service the consolidation deleted". The packs are
+      # PATH PREFIXES on the one deployed application now.
+      #
+      # ⚠️ The cross-host hazard these variables were guarded against is GONE
+      # for the same reason: a callback that once signed a visitor in on the
+      # wrong origin cannot happen when every pack shares one origin. That is
+      # why the apex landing was able to link both funnels on 2026-08-15.
       customer_web_url:
-        description: 'Public base URL of the customer app (the Request for Service form lives there)'
+        description: 'Public base URL of the customer pack (the Request for Service form lives there)'
         required: false
-        default: 'https://autoworkshop-customer.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/customer'
       supplier_web_url:
-        description: 'Public base URL of the supplier app (the Register as parts supplier funnel lands there)'
+        description: 'Public base URL of the supplier pack (the Register as parts supplier funnel lands there)'
         required: false
-        default: 'https://autoworkshop-supplier.onrender.com'
+        default: 'https://autoworkshop.aiappinvent.com/supplier'
 
 permissions:
   contents: read

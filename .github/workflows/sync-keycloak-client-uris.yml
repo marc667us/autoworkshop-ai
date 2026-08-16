@@ -255,8 +255,31 @@ jobs:
               echo "  REFUSED  $client  $uri  (HTTP $code)"; fail=1
             fi
           }
+          # 🔴 ADR-021: ONE Auth.js INSTANCE, ONE `/api/auth/*`, ONE CALLBACK —
+          # AND IT AUTHENTICATES AS `autoworkshop-customer-web`, NOT
+          # `autoworkshop-workshop-web`.
+          #
+          # `apps/web/auth.ts:73` sets `ARTIFACT_WORKSPACE = 'customer'`, so the
+          # single deployed artifact presents the CUSTOMER client. The name is
+          # counter-intuitive — the apex serves the workshop product — which is
+          # exactly why it is asserted here rather than assumed. `auth.ts:57-72`
+          # records the live incident that proved it: sign-out sent an
+          # `id_token_hint` issued to `autoworkshop-customer-web` together with
+          # `client_id=autoworkshop-workshop-web`, and Keycloak refused the
+          # post-logout redirect because it did not belong to the presenting
+          # client.
+          #
+          # ⚠️ CUSTOMER-WEB IS THE LOAD-BEARING CHECK. An earlier edit in this
+          # sweep removed the customer line (it pointed at the DELETED host
+          # https://autoworkshop-customer.onrender.com) and left only
+          # workshop-web. That verified a client production does not use, so the
+          # gate could pass while real sign-in was refused — the precise failure
+          # this gate exists to prevent. Codex caught it.
+          #
+          # workshop-web is kept as a second, legacy assertion. It must never be
+          # the ONLY one.
+          check autoworkshop-customer-web https://autoworkshop.aiappinvent.com/api/auth/callback/keycloak
           check autoworkshop-workshop-web https://autoworkshop.aiappinvent.com/api/auth/callback/keycloak
-          check autoworkshop-customer-web https://autoworkshop-customer.onrender.com/api/auth/callback/keycloak
           echo
           if [ "$CONFIRM" = "APPLY" ] && [ "$fail" -ne 0 ]; then
             echo "::error::a callback the deployed apps actually use is still refused"

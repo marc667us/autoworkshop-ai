@@ -43,14 +43,23 @@ LOG="${LOG:-tmp/live-soak.log}"
 MAXTIME="${MAXTIME:-150}"
 mkdir -p "$(dirname "$LOG")"
 
+# 🔴 ADR-021 DELETED THE PER-PACK SERVICES. CUSTOMER/SUPPLIER/TOWING/ADMIN/
+# FLEET/INSURANCE were six separate `autoworkshop-<pack>.onrender.com` hosts.
+# They no longer exist, so every probe below aimed at one of them got Render's
+# edge 404 — a soak test that reported six failures per round against a
+# perfectly healthy site. The packs are PATH PREFIXES on the one deployed
+# application now. `API` is untouched: it is still its own service.
+#
+# ⚠️ Each pack variable carries its prefix, so `${FLEET}/home/dashboard`
+# resolves — the same shape `live-suite.yml` uses. Keep them consistent.
 APEX=https://autoworkshop.aiappinvent.com
 API=https://autoworkshop-api.onrender.com
-CUSTOMER=https://autoworkshop-customer.onrender.com
-SUPPLIER=https://autoworkshop-supplier.onrender.com
-TOWING=https://autoworkshop-towing.onrender.com
-ADMIN=https://autoworkshop-admin.onrender.com
-FLEET=https://autoworkshop-fleet.onrender.com
-INSURANCE=https://autoworkshop-insurance.onrender.com
+CUSTOMER=$APEX/customer
+SUPPLIER=$APEX/supplier
+TOWING=$APEX/towing
+ADMIN=$APEX/admin
+FLEET=$APEX/fleet
+INSURANCE=$APEX/insurance
 
 # ⚠️ curl's exit status, never `|| echo 000`. That idiom appends a second 000 to
 # curl's own and yields `000000`, so every comparison against "000" is false —

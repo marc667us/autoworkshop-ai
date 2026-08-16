@@ -166,12 +166,10 @@
       },
       "redirectUris": [
         "http://localhost:3000/*",
-        "https://autoworkshop-customer.onrender.com/*",
         "https://autoworkshop.aiappinvent.com/*"
       ],
       "webOrigins": [
         "http://localhost:3000",
-        "https://autoworkshop-customer.onrender.com",
         "https://autoworkshop.aiappinvent.com"
       ],
       "protocolMappers": [
@@ -239,12 +237,10 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3002/*",
-        "https://autoworkshop-supplier.onrender.com/*"
+        "http://localhost:3002/*"
       ],
       "webOrigins": [
-        "http://localhost:3002",
-        "https://autoworkshop-supplier.onrender.com"
+        "http://localhost:3002"
       ],
       "protocolMappers": [
         {
@@ -274,12 +270,10 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3003/*",
-        "https://autoworkshop-fleet.onrender.com/*"
+        "http://localhost:3003/*"
       ],
       "webOrigins": [
-        "http://localhost:3003",
-        "https://autoworkshop-fleet.onrender.com"
+        "http://localhost:3003"
       ],
       "protocolMappers": [
         {
@@ -309,12 +303,10 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3004/*",
-        "https://autoworkshop-insurance.onrender.com/*"
+        "http://localhost:3004/*"
       ],
       "webOrigins": [
-        "http://localhost:3004",
-        "https://autoworkshop-insurance.onrender.com"
+        "http://localhost:3004"
       ],
       "protocolMappers": [
         {
@@ -344,12 +336,10 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3005/*",
-        "https://autoworkshop-towing.onrender.com/*"
+        "http://localhost:3005/*"
       ],
       "webOrigins": [
-        "http://localhost:3005",
-        "https://autoworkshop-towing.onrender.com"
+        "http://localhost:3005"
       ],
       "protocolMappers": [
         {
@@ -379,12 +369,10 @@
         "post.logout.redirect.uris": "+"
       },
       "redirectUris": [
-        "http://localhost:3006/*",
-        "https://autoworkshop-admin.onrender.com/*"
+        "http://localhost:3006/*"
       ],
       "webOrigins": [
-        "http://localhost:3006",
-        "https://autoworkshop-admin.onrender.com"
+        "http://localhost:3006"
       ],
       "protocolMappers": [
         {

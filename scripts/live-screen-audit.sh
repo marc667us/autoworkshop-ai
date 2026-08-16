@@ -35,14 +35,31 @@ ROUTES="${1:-/tmp/routes.txt}"
 OUT="${2:-tmp/live-screen-audit.tsv}"
 mkdir -p "$(dirname "$OUT")"
 
+# 🔴 ADR-021 DELETED THE PER-PACK SERVICES. These were six separate
+# `autoworkshop-<pack>.onrender.com` hosts. They no longer exist, so every
+# route this script measured on them returned Render's edge 404 and was sorted
+# into UNREACHABLE — i.e. the audit reported the entire product as unreachable
+# and that reading was an artefact of the script, not a fact about the site.
+# The packs are PATH PREFIXES on the one deployed application now.
+#
+# ⚠️ `apex` is deliberately the bare origin and the others carry their prefix,
+# because the caller composes `${HOST[$h]}${route}` — the same shape
+# `live-suite.yml` uses, where `FLEET` is `…/fleet` and `${FLEET}/home/dashboard`
+# resolves correctly. Keep them consistent or the two drift apart, which is this
+# repository's most-repeated bug class.
+# ⚠️ Strip a trailing slash. `BASE=https://host/` would compose `//customer` in
+# the map and then a second slash at the call site. The defaults are fine; an
+# operator-supplied BASE is what this guards.
+BASE="${BASE:-https://autoworkshop.aiappinvent.com}"
+BASE="${BASE%/}"
 declare -A HOST=(
-  [apex]=https://autoworkshop.aiappinvent.com
-  [customer]=https://autoworkshop-customer.onrender.com
-  [supplier]=https://autoworkshop-supplier.onrender.com
-  [towing]=https://autoworkshop-towing.onrender.com
-  [fleet]=https://autoworkshop-fleet.onrender.com
-  [insurance]=https://autoworkshop-insurance.onrender.com
-  [admin]=https://autoworkshop-admin.onrender.com
+  [apex]=$BASE
+  [customer]=$BASE/customer
+  [supplier]=$BASE/supplier
+  [towing]=$BASE/towing
+  [fleet]=$BASE/fleet
+  [insurance]=$BASE/insurance
+  [admin]=$BASE/admin
 )
 
 # 🔴 WARM FIRST, MEASURE SECOND. A free instance answers its first request with
@@ -64,7 +81,12 @@ printf 'app\troute\tlabel\tstate\tcode\n' > "$OUT"
 
 while IFS='|' read -r app _var route label; do
   [ -n "${HOST[$app]:-}" ] || continue
-  url="${HOST[$app]}${route}"
+  # ⚠️ NORMALISE THE JOIN. The routes file is an arbitrary external input
+  # (argument 1), so a route may arrive with no leading slash or with several.
+  # `${HOST}${route}` then silently produces `…/customerhome/dashboard` or
+  # `…/customer//home`, and the audit records a 404 as a product fact. Exactly
+  # one slash, always.
+  url="${HOST[$app]}/${route#"${route%%[!/]*}"}"
 
   state=""; code=""
   for attempt in 1 2 3; do
