@@ -49,35 +49,11 @@ export async function setActiveRoleAction(roleName: string): Promise<void> {
   // to prevent.
   revalidatePath('/', 'layout');
 
-  // 🔴 AND THEN GO WHERE THAT ROLE LIVES. Revalidating in place was correct
-  // until ADR-021 and is wrong now.
-  //
-  // OWNER REPORT 2026-08-16: "it only sees admin which was nothing meaningful."
-  // Measured cause: this action set the cookie and re-rendered THE SAME URL.
-  // Switching from `platform_administrator` to `workshop_owner` while standing
-  // on `/admin/...` therefore left the viewer on `/admin/...` — a pack they no
-  // longer hold `platform.admin` for — so the admin layout correctly refused
-  // them and the switch appeared to do nothing except break the page. The only
-  // escape was to know to edit the URL by hand.
-  //
-  // ⚠️ THIS IS THE ADR-021 PATTERN AGAIN, AND IT IS THE THIRD INSTANCE FOUND
-  // TODAY. When each pack was its own deployed host, switching role inside one
-  // host was the whole interaction and there was nowhere to send anyone. One
-  // artifact with seven path-prefixed packs means a role change is usually a
-  // PACK change. `homeWorkspaceFor` already encodes which pack a role belongs
-  // to — `/`'s own dispatch uses it (viewer-contract.ts:225) — and this was the
-  // other caller that needed it and never got it. The consolidation updated the
-  // application and left the operational scaffolding behind, exactly as it did
-  // for `_deploy-render.yml`, `render-resume-production.yml` and the Keycloak
-  // redirect URIs.
-  //
-  // Clearing the role sends the viewer to `/`, which re-dispatches on the API's
-  // own deterministic default rather than pinning them anywhere.
-  //
-  // ⚠️ `redirect()` THROWS by design (NEXT_REDIRECT). It must stay the LAST
-  // statement and must never be wrapped in a try/catch, or the navigation is
-  // swallowed and this regresses to the in-place behaviour it is fixing.
-  redirect(value === '' ? '/' : `/${homeWorkspaceFor(value)}`);
+  // ⚠️ THIS SETTER MUTATES AND REVALIDATES. IT DELIBERATELY DOES NOT NAVIGATE.
+  // It is re-exported from `index.ts` as the reusable string-shaped helper, and
+  // a mutation primitive that always throws NEXT_REDIRECT is an API trap for the
+  // next caller. The navigation belongs to the SWITCHER, and lives in the form
+  // action below. (Codex, this diff.)
 }
 
 /**
@@ -95,5 +71,35 @@ export async function setActiveRoleAction(roleName: string): Promise<void> {
  * take a plain exported action and the app layouts declare no actions at all.
  */
 export async function setActiveRoleFromFormAction(formData: FormData): Promise<void> {
-  await setActiveRoleAction(String(formData.get('roleName') ?? ''));
+  const roleName = String(formData.get('roleName') ?? '');
+  await setActiveRoleAction(roleName);
+
+  // 🔴 THEN GO WHERE THAT ROLE LIVES. Revalidating in place was right until
+  // ADR-021 and is wrong now.
+  //
+  // OWNER REPORT 2026-08-16: "it only sees admin which was nothing meaningful",
+  // then "do not have access error message". Switching from
+  // `platform_administrator` to `workshop_owner` while on `/admin/...` left the
+  // viewer there — a pack they no longer hold `platform.admin` for — so the
+  // layout refused them and the switch looked like it only broke the page.
+  //
+  // When each pack was its own deployed host there was nowhere to send anyone.
+  // One artifact with seven path-prefixed packs makes a role change usually a
+  // PACK change, and `homeWorkspaceFor` already encodes which pack a role
+  // belongs to — `/` dispatches with it (viewer-contract.ts:225). This was the
+  // other caller that needed it and never got it.
+  //
+  // The pack ROOT, not a manufactured `/home/dashboard`: each root already
+  // knows its own real landing route. Clearing the role goes to `/`, which
+  // re-dispatches on the API's deterministic default.
+  //
+  // ⚠️ NOT AN OPEN REDIRECT even though `roleName` is user-controlled: it is
+  // never interpolated. `homeWorkspaceFor` is a fixed lookup returning one of
+  // seven literals, so `//evil.com` or `../admin` simply miss the map and
+  // become `workshop`.
+  //
+  // ⚠️ `redirect()` THROWS by design (NEXT_REDIRECT). It stays LAST and must
+  // never be wrapped in try/catch, or the navigation is swallowed and this
+  // regresses to the in-place behaviour it fixes.
+  redirect(roleName.trim() === '' ? '/' : `/${homeWorkspaceFor(roleName.trim())}`);
 }

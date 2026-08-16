@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { ACTIVE_ORG_COOKIE } from './active-organization';
 import { ACTIVE_ROLE_COOKIE } from './active-role';
 
@@ -67,4 +68,24 @@ export async function setActiveOrganizationAction(formData: FormData): Promise<v
 
   // Every screen is scoped by organization, so all of them are now stale.
   revalidatePath('/', 'layout');
+
+  // 🔴 AND NAVIGATE, FOR THE SAME REASON THE ROLE SWITCHER DOES.
+  //
+  // Found by Codex reviewing the role-switch fix: fixing that one alone left
+  // this one broken in exactly the same way, which is why it is in the same
+  // change. Changing organisation clears the role above, so the API then picks
+  // the STRONGEST role held in the NEW organisation — and that role may belong
+  // to a different pack. Switching organisation while on `/admin/...` into an
+  // organisation whose default is `workshop_owner` strands the viewer on a pack
+  // they can no longer enter: the identical ADR-021 failure.
+  //
+  // `/` RATHER THAN A COMPUTED PACK, deliberately. The new role is not known
+  // here — it was just cleared, and only the API can resolve it. The front door
+  // already does exactly this dispatch (`apps/web/app/page.tsx`), so sending
+  // the viewer there resolves the new context once, in the one place that owns
+  // the decision, instead of guessing it twice.
+  //
+  // ⚠️ `redirect()` THROWS by design (NEXT_REDIRECT). Keep it LAST and never
+  // inside a try/catch.
+  redirect('/');
 }
