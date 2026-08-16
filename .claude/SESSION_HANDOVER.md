@@ -2,13 +2,13 @@
 
 ## ═══ 2026-08-16 — the firewall mutex, and three instruments that lied ═══
 
-**Tip `9d28ccd`. Tree clean, all pushed.**
+**Tip `ee38cf9`. Tree clean, all pushed.**
 
 ### State, measured after the deploy — not quoted
 
 | | |
 |---|---|
-| Release / CI / Security CI on `b9d5e9d` | **all three GREEN** (Release's 4th success in a row) |
+| Release / CI / Security CI on `ee38cf9` | **GREEN** — after one RED caught by lint, see below |
 | **Live suite — anonymous** | **66 passed · 0 failed · 1 skipped** |
 | **Live suite — signed-in** | **4 passed · 0 failed · 0 skipped** |
 | **Live suite — total** | **70 passed · 0 failed · 1 skipped** — the 08-15 baseline, held |
@@ -24,6 +24,37 @@ Still the work. **A6 is now CLOSED**, so the blockade it imposed is lifted —
 A4 diagnostics, backup work, migration verification and production seeds may
 proceed. **Next executable item: slice 18, then 17, then 19, then 20.** That
 order is load-bearing; the reasons are in Part B of the task list.
+
+### ▶ NEXT SESSION: SLICE 18 PART 2 IS BLOCKED — READ THIS BEFORE PICKING IT UP
+
+**Slice 18 part 1 SHIPPED** — the admin insurance verification screen, live at
+`admin/catalogue-and-content/insurance-products`. It also gave WITHDRAWAL its
+first caller (`reviewQueue` returned only unverified products, so a verified one
+vanished from the only list that existed and could never be reversed).
+
+🔴 **PART 2 — Claims Approver — MUST NOT BE BUILT AS THE TASK LIST WRITES IT.**
+Asking the list's own question first is what caught it:
+
+```
+CAN_GRANT_MEMBERSHIP = { platform_administrator, workshop_owner,
+                         supplier_owner, fleet_administrator }
+```
+
+`insurance_assessor` is NOT in it. Measured three ways: that set is the only
+gate, `membership.service.ts:345` is the ONLY `INSERT INTO identity.memberships`
+in the whole API, and migration 080 writes just the founder. **An insurance
+company cannot appoint anyone.** Adding `claims_approver` would be the SIXTH
+role with no production write path — created by the slice that names the
+question.
+
+🔴 **`towing_operator` is missing from that set too — TWO of the six
+self-service organisation types can never build a team.** Recorded nowhere else.
+
+**Real shape: insurers (and towing firms) need an org-admin role the way
+supplier and fleet have one.** Splitting the assessor in two does not help while
+neither half can appoint the other. Full options and the recommendation are in
+`.claude/TASK_LIST_2026-08-15.md` under slice 18. **Do not start by adding
+strings to allow-lists.**
 
 ### 🔴 THE OWNER COULD NOT SEE THE PRODUCT — two real defects, both now fixed
 
