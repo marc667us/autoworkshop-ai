@@ -79,7 +79,11 @@ on:
         required: false
         default: 'marc667us@yahoo.com'
       memberships:
-        description: 'true = also join one EXISTING organisation of each partner type, so every workspace tree is reachable'
+        description: 'true = join one EXISTING organisation of each partner type. ⚠️ MOSTLY USELESS — those are OTHER TENANTS and /me will not list them. Prefer audit_orgs.'
+        required: false
+        default: 'false'
+      audit_orgs:
+        description: 'true = create one audit organisation of each partner type INSIDE the account own tenant, so every tree appears in the switcher'
         required: false
         default: 'false'
       reason:
@@ -390,6 +394,150 @@ jobs:
             LEFT JOIN identity.organizations o ON o.id = m.organization_id
            WHERE lower(u.email) = lower(:'email')
            ORDER BY o.org_type NULLS FIRST, m.role_name;
+          SQL
+
+      # ══════════════════════════════════════════════════════════════════════
+      # 🔴 THE ONE THAT ACTUALLY WORKS.
+      #
+      # `memberships=true` above joins EXISTING partner organisations — and
+      # those are OTHER TENANTS, so `/me` will never list them:
+      # `me.service.ts` filters `AND m.tenant_id = $2` and says why —
+      # "a user's memberships in other tenants are deliberately not listed
+      # here, because switching tenant is a re-authentication concern, not a
+      # dropdown". I wrote those rows before reading that, and they are
+      # invisible. This step cleans them up and does it properly.
+      #
+      # Properly means: put an organisation of each partner type INSIDE the
+      # account's OWN tenant. Then `/me` lists them, the organisation switcher
+      # offers them, and the role switcher offers that org's role — which is the
+      # whole journey the owner asked for.
+      #
+      # ⚠️ WHAT THIS DOES NOT DO. It creates the ORGANISATION, not its business
+      # data. A `parts_supplier` org with no `catalogue.suppliers` row gives a
+      # supplier tree whose screens render EMPTY. That is the honest outcome:
+      # the tree becomes reachable and auditable; the data is a seeding
+      # question, not an identity one. Do not report empty screens as broken.
+      - name: Create audit organisations inside the account's own tenant
+        if: ${{ inputs.confirm == 'APPLY' && inputs.audit_orgs == 'true' }}
+        run: |
+          set -euo pipefail
+          DATABASE_URL="$(cat /tmp/dburl)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" -v email="${TARGET_EMAIL}" <<'SQL'
+          \pset pager off
+          BEGIN;
+          SELECT set_config('app.current_role','admin',false);
+
+          -- 🔴 REMOVE THE CROSS-TENANT ROWS FIRST. They can never be selected —
+          -- /me does not list them — so they are dead rows that make the
+          -- account look more provisioned than it is. Scoped narrowly: this
+          -- account, partner roles only, and only OUTSIDE its own tenant, so a
+          -- legitimate membership cannot be caught by it.
+          WITH me AS (SELECT id FROM identity.users WHERE lower(email) = lower(:'email')),
+               home AS (
+                 SELECT o.tenant_id
+                   FROM identity.memberships m
+                   JOIN identity.organizations o ON o.id = m.organization_id
+                   JOIN me ON me.id = m.user_id
+                  WHERE m.role_name = 'workshop_owner' AND m.status = 'active'
+                  LIMIT 1)
+          DELETE FROM identity.memberships m
+           USING me, home
+           WHERE m.user_id = me.id
+             AND m.tenant_id <> home.tenant_id
+             AND m.role_name IN ('supplier_owner','fleet_administrator',
+                                 'insurance_assessor','towing_operator');
+
+          COMMIT;
+
+          BEGIN;
+          SELECT set_config('app.current_role','admin',false);
+
+          -- The account's own tenant, taken from its workshop membership.
+          -- ⚠️ `identity.users` has no tenant_id — users are platform-global
+          -- (074_towing.sql:105). The tenant must come from a membership.
+          CREATE TEMP TABLE audit_ctx AS
+          SELECT u.id AS user_id, o.tenant_id, o.id AS workshop_org_id
+            FROM identity.users u
+            JOIN identity.memberships m ON m.user_id = u.id
+                                       AND m.role_name = 'workshop_owner'
+                                       AND m.status = 'active'
+            JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email')
+           LIMIT 1;
+
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM audit_ctx) THEN
+              RAISE EXCEPTION
+                'no active workshop_owner membership found — cannot determine which tenant to build audit organisations in';
+            END IF;
+          END $$;
+
+          -- One organisation per partner type, named so they are obvious and
+          -- removable. Idempotent on (tenant_id, name): the table has no unique
+          -- constraint on either, so re-running must not duplicate.
+          INSERT INTO identity.organizations (tenant_id, name, org_type, created_by)
+          SELECT c.tenant_id, w.name, w.org_type, c.user_id
+            FROM audit_ctx c
+            CROSS JOIN (VALUES
+              ('[AUDIT] Parts Supplier',    'parts_supplier'),
+              ('[AUDIT] Fleet Operator',    'fleet_operator'),
+              ('[AUDIT] Insurance Company', 'insurance_company'),
+              ('[AUDIT] Towing Company',    'towing_company')
+            ) AS w(name, org_type)
+           WHERE NOT EXISTS (
+             SELECT 1 FROM identity.organizations o
+              WHERE o.tenant_id = c.tenant_id AND o.name = w.name);
+
+          -- The matching role in each. The pairings are ROLES_BY_ORG_TYPE
+          -- (membership.service.ts:116), not invented here — a role that does
+          -- not suit its organisation type is refused by the API even when the
+          -- row exists.
+          INSERT INTO identity.memberships
+                 (user_id, tenant_id, organization_id, role_name, status)
+          SELECT c.user_id, c.tenant_id, o.id, r.role_name, 'active'
+            FROM audit_ctx c
+            JOIN identity.organizations o ON o.tenant_id = c.tenant_id
+            JOIN (VALUES
+              ('parts_supplier',    'supplier_owner'),
+              ('fleet_operator',    'fleet_administrator'),
+              ('insurance_company', 'insurance_assessor'),
+              ('towing_company',    'towing_operator')
+            ) AS r(org_type, role_name) ON r.org_type = o.org_type
+           WHERE o.name LIKE '[AUDIT]%'
+          ON CONFLICT (organization_id, user_id, role_name) DO NOTHING;
+
+          -- And `customer`, which lives in the WORKSHOP's own organisation —
+          -- migration 061 enrols a vehicle owner there, so that pairing is what
+          -- the product actually produces (ROLES_BY_ORG_TYPE lists `customer`
+          -- among the workshop roles for exactly this reason).
+          INSERT INTO identity.memberships
+                 (user_id, tenant_id, organization_id, role_name, status)
+          SELECT c.user_id, c.tenant_id, c.workshop_org_id, 'customer', 'active'
+            FROM audit_ctx c
+          ON CONFLICT (organization_id, user_id, role_name) DO NOTHING;
+
+          COMMIT;
+
+          \echo ''
+          \echo '=== WHAT /me WILL NOW LIST (same tenant only — this is the test) ==='
+          SELECT set_config('app.current_role','admin',false);
+          SELECT m.role_name, m.status, o.org_type, o.name
+            FROM identity.users u
+            JOIN identity.memberships m ON m.user_id = u.id AND m.status = 'active'
+            JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email')
+             AND m.tenant_id = (SELECT tenant_id FROM audit_ctx)
+           ORDER BY o.org_type, m.role_name;
+
+          \echo ''
+          \echo '=== any rows left in OTHER tenants? (should be none) ==='
+          SELECT coalesce(o.org_type,'?') AS org_type, m.role_name
+            FROM identity.users u
+            JOIN identity.memberships m ON m.user_id = u.id
+            LEFT JOIN identity.organizations o ON o.id = m.organization_id
+           WHERE lower(u.email) = lower(:'email')
+             AND m.tenant_id <> (SELECT tenant_id FROM audit_ctx);
           SQL
 
       - name: Always restore the database firewall
