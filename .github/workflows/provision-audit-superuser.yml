@@ -342,8 +342,16 @@ jobs:
           -- suit its organisation type is refused by the API even when the row
           -- exists, and a mismatched row was found in the dev database once
           -- (`parts_supplier | reception_staff`) having passed every other gate.
+          -- ⚠️ NO `tenant_id` HERE. `identity.users` is PLATFORM-GLOBAL and has
+          -- no tenant column — that is the same fact `074_towing.sql:105`
+          -- records when it explains why a foreign key to a user is ONE column
+          -- while an application parent takes three. Selecting it failed the
+          -- first APPLY run with `column "tenant_id" does not exist`.
+          -- The membership's tenant comes from the ORGANISATION being joined,
+          -- which is the only correct source anyway: a user in two tenants has
+          -- no single tenant of their own.
           WITH target AS (
-            SELECT id, tenant_id FROM identity.users WHERE lower(email) = lower(:'email')
+            SELECT id FROM identity.users WHERE lower(email) = lower(:'email')
           ),
           wanted(org_type, role_name) AS (
             VALUES ('parts_supplier','supplier_owner'),
