@@ -1,0 +1,261 @@
+# Remove redirect URIs and web origins pointing at services ADR-021 DELETED.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 WHY THIS EXISTS, AND WHY `sync-keycloak-client-uris.yml` CANNOT DO IT.
+#
+# That workflow is ADD-ONLY BY DESIGN — it merges the committed realm into the
+# live one and PUTs the union, so it never deletes anything. Removing the
+# committed declaration (commit `b9d5e9d`) therefore stops the dead URIs being
+# re-added and removes NOTHING already live. Re-running the sync with
+# `confirm=APPLY` will not help. This is the missing half.
+#
+# WHAT IS BEING REMOVED. ADR-021 collapsed ten Render services into four; the
+# per-pack front ends became PATH PREFIXES on one origin. The six
+# `autoworkshop-<pack>.onrender.com` services were DELETED, but their callback
+# URLs stayed registered in the realm.
+#
+# ⚠️ THE RISK, STATED HONESTLY AND NOT INFLATED. An OIDC authorization-code flow
+# sends a CODE, not a token, to the registered URI. To exploit this an attacker
+# must start the authorization request themselves, get an authenticated victim to
+# open it, receive the code at a host they control, and redeem it with their own
+# PKCE verifier. That last step is possible precisely because the attacker chose
+# the verifier. BUT it all depends on another tenant being able to RECLAIM a
+# deleted Render service name, and this repository holds NO evidence either way.
+# So: this is allow-list hygiene at an origin we no longer control — a real
+# thing to fix, not a proven takeover. Do not report it as one.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT MAKES THIS SAFE
+#
+# 1. DRY RUN BY DEFAULT, and the dry run READS LIVE. It reports exactly which
+#    entries it would delete, per client, before anything is written.
+# 2. AN ALLOW-LIST OF ONE PATTERN. It only ever removes values whose host
+#    matches `autoworkshop-<pack>.onrender.com` for the six DELETED packs.
+#    `autoworkshop-api.onrender.com` is STILL LIVE and is not in the pattern.
+#    Anything it does not recognise is left exactly as it is.
+# 3. 🔴 IT REFUSES TO LEAVE A CLIENT WITH NO REDIRECT URI. A client with an
+#    empty `redirectUris` cannot complete a login at all. If a removal would
+#    empty a client, the run FAILS and writes nothing, rather than half-applying.
+# 4. IT RE-READS AND VERIFIES. After writing it fetches the clients again and
+#    asserts the dead entries are gone AND that the apex callback survives on
+#    `autoworkshop-customer-web` — which is the client the deployed artifact
+#    actually presents (`apps/web/auth.ts:73` sets ARTIFACT_WORKSPACE='customer').
+#    A PUT returning 200 is not proof; reading it back is.
+name: Prune dead Keycloak redirects
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to delete the dead entries. Anything else = dry run (still reads live).'
+        required: false
+        default: ''
+      keycloak_url:
+        description: 'Public Keycloak base URL'
+        required: false
+        default: 'https://autoworkshop-keycloak.onrender.com'
+
+permissions:
+  contents: read
+
+# Not in the `production-db-firewall` group: this touches Keycloak's admin API,
+# never the Postgres allow-list. Its own group stops two prunes overlapping.
+concurrency:
+  group: prune-keycloak-dead-redirects
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      KC_URL: ${{ inputs.keycloak_url }}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: ${{ secrets.KC_BOOTSTRAP_ADMIN_PASSWORD }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — the admin password must be present
+        run: |
+          if [ -z "$KC_ADMIN_PASSWORD" ]; then
+            echo "::error::KC_BOOTSTRAP_ADMIN_PASSWORD is not set on this repo."
+            exit 1
+          fi
+
+      # Keycloak on the free tier takes 115-147s to wake. Measured, repeatedly.
+      # A check that ran against a cold instance would report a broken realm.
+      - name: Warm Keycloak
+        run: |
+          echo "waking Keycloak (cold start is 115-147s on the free tier)"
+          curl -sS -o /dev/null -w 'discovery %{http_code} in %{time_total}s\n' \
+            --max-time 300 \
+            "$KC_URL/realms/autoworkshop/.well-known/openid-configuration"
+
+      - name: Get an admin token
+        run: |
+          # Sent with -d @- so the password never appears in the process table.
+          TOKEN="$(printf '%s' \
+            "client_id=admin-cli&grant_type=password&username=${KC_ADMIN_USER}&password=${KC_ADMIN_PASSWORD}" \
+            | curl -sS --max-time 120 -d @- \
+                "$KC_URL/realms/master/protocol/openid-connect/token" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::could not obtain an admin token"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "KC_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "admin token acquired"
+
+      - name: Prune dead redirect URIs and web origins
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, subprocess, sys, urllib.parse
+
+          KC = os.environ['KC_URL'].rstrip('/')
+          TOKEN = os.environ['KC_TOKEN']
+          REALM = 'autoworkshop'
+          APPLY = os.environ.get('CONFIRM', '') == 'APPLY'
+
+          # 🔴 THE ONLY THING THIS WORKFLOW MAY DELETE.
+          # Six packs, all DELETED by ADR-021. `autoworkshop-api.onrender.com`
+          # is deliberately ABSENT from this alternation — that service is LIVE.
+          DEAD = re.compile(
+              r'^https://autoworkshop-'
+              r'(customer|supplier|towing|fleet|insurance|admin)'
+              r'\.onrender\.com(/|$)'
+          )
+
+          def api(method, path, body=None):
+              cmd = ['curl', '-sS', '--max-time', '120', '-X', method,
+                     '-H', f'Authorization: Bearer {TOKEN}',
+                     '-H', 'Content-Type: application/json',
+                     '-w', '\n%{http_code}',
+                     f'{KC}/admin/realms/{REALM}{path}']
+              if body is not None:
+                  out = subprocess.run(cmd + ['-d', '@-'], input=json.dumps(body),
+                                       capture_output=True, text=True, check=True).stdout
+              else:
+                  out = subprocess.run(cmd, capture_output=True, text=True,
+                                       check=True).stdout
+              raw, _, code = out.rpartition('\n')
+              return int(code), raw
+
+          code, raw = api('GET', '/clients')
+          if code != 200:
+              print(f'::error::listing clients returned HTTP {code}: {raw[:400]}')
+              sys.exit(1)
+          clients = json.loads(raw)
+          print(f'live realm has {len(clients)} clients\n')
+
+          plan = []          # (client, {field: kept_values}, [removed strings])
+          would_empty = []
+
+          for c in sorted(clients, key=lambda x: x.get('clientId', '')):
+              cid = c.get('clientId', '?')
+              removed, kept_fields = [], {}
+              for field in ('redirectUris', 'webOrigins'):
+                  vals = c.get(field)
+                  if not isinstance(vals, list):
+                      continue
+                  keep = [v for v in vals if not DEAD.match(str(v))]
+                  if len(keep) != len(vals):
+                      removed += [f'{field}: {v}' for v in vals if DEAD.match(str(v))]
+                      kept_fields[field] = keep
+              if not removed:
+                  continue
+
+              # 🔴 REFUSE TO DISARM A CLIENT. An empty redirectUris means that
+              # client cannot complete a login at all.
+              if 'redirectUris' in kept_fields and not kept_fields['redirectUris']:
+                  would_empty.append(cid)
+              plan.append((c, kept_fields, removed))
+
+          if not plan:
+              print('nothing to prune — the live realm carries no dead per-pack redirect')
+              sys.exit(0)
+
+          print('=== WHAT IS LIVE AND WOULD BE REMOVED ===')
+          total = 0
+          for c, kept, removed in plan:
+              print(f"\n  {c.get('clientId')}")
+              for r in removed:
+                  print(f'      - {r}')
+                  total += 1
+              print(f"      remaining redirectUris: "
+                    f"{kept.get('redirectUris', c.get('redirectUris'))}")
+          print(f'\n  {total} dead entr{"y" if total == 1 else "ies"} '
+                f'across {len(plan)} client(s)')
+
+          if would_empty:
+              print()
+              print('::error::REFUSING TO WRITE — these clients would be left with NO '
+                    f'redirect URI and could never log in: {", ".join(would_empty)}')
+              sys.exit(1)
+
+          if not APPLY:
+              print('\n==> dry run. Nothing was written. Re-run with confirm=APPLY.')
+              sys.exit(0)
+
+          print('\n=== APPLYING ===')
+          for c, kept, _ in plan:
+              payload = dict(c)
+              payload.update(kept)
+              code, raw = api('PUT', f"/clients/{urllib.parse.quote(c['id'])}", payload)
+              if code not in (200, 204):
+                  print(f"::error::updating {c.get('clientId')} returned HTTP {code}: {raw[:400]}")
+                  sys.exit(1)
+              print(f"  {c.get('clientId'):32} UPDATED")
+
+          # 🔴 READ IT BACK. A 204 says the request was accepted, not that the
+          # realm now looks the way we intended.
+          print('\n=== VERIFYING BY RE-READING ===')
+          code, raw = api('GET', '/clients')
+          if code != 200:
+              print(f'::error::re-reading clients returned HTTP {code}')
+              sys.exit(1)
+          after = json.loads(raw)
+
+          survivors = []
+          for c in after:
+              for field in ('redirectUris', 'webOrigins'):
+                  for v in (c.get(field) or []):
+                      if DEAD.match(str(v)):
+                          survivors.append(f"{c.get('clientId')}.{field}: {v}")
+          if survivors:
+              print('::error::dead entries SURVIVED the prune:')
+              for s in survivors:
+                  print(f'  {s}')
+              sys.exit(1)
+          print('  no dead per-pack redirect remains')
+
+          # The load-bearing assertion. `apps/web/auth.ts:73` sets
+          # ARTIFACT_WORKSPACE='customer', so the deployed artifact presents
+          # `autoworkshop-customer-web`. If its apex callback did not survive,
+          # production sign-in is broken and this run caused it.
+          APEX = 'https://autoworkshop.aiappinvent.com/*'
+          cw = next((c for c in after if c.get('clientId') == 'autoworkshop-customer-web'), None)
+          if cw is None:
+              print('::error::autoworkshop-customer-web is missing from the realm')
+              sys.exit(1)
+          if APEX not in (cw.get('redirectUris') or []):
+              print(f"::error::autoworkshop-customer-web LOST its apex callback — "
+                    f"production sign-in is broken. redirectUris={cw.get('redirectUris')}")
+              sys.exit(1)
+          print(f'  autoworkshop-customer-web still allows {APEX}')
+
+          empties = [c.get('clientId') for c in after if not (c.get('redirectUris') or [])]
+          if empties:
+              print(f'::warning::clients with NO redirect URI (cannot log in): {empties}')
+
+          print(f'\n==> pruned {total} dead entr'
+                f'{"y" if total == 1 else "ies"} across {len(plan)} client(s)')
+          PY
+
+      - name: What to do next
+        if: always()
+        run: |
+          echo "Sign-in must be re-proven after any realm change:"
+          echo "  gh workflow run live-suite.yml   # READ BOTH JOBS — the signed-in one is the proof"
