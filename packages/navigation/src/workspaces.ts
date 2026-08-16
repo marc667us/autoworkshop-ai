@@ -556,6 +556,25 @@ const adminGroups: NavGroup[] = [
     'box',
     [
       ['products', 'Products'],
+      // 🔴 THE ONLY PLACE AN INSURANCE PRODUCT CAN BE VERIFIED — slice 18.
+      //
+      // `082_insurance_marketplace.sql:166`'s
+      // `reject_unverified_product_publication()` is a DATABASE TRIGGER that
+      // refuses to publish an unverified product. Until this screen existed the
+      // endpoints were reachable only by calling the API by hand — which the
+      // 08-14 UAT did — so there was no acceptable production operating
+      // procedure for verification, and therefore no reliable supply of
+      // verified products. That is why slice 18 ships BEFORE slice 17's shopper
+      // screen: without it the marketplace would render exactly one product,
+      // the UAT row, for ever.
+      //
+      // ⚠️ IT IS IN THE ADMIN TREE, NOT THE INSURANCE ONE, AND THAT IS THE
+      // WHOLE POINT. The insurance workspace deliberately carries no
+      // `verification` entry (see the comment on its `sales` group) because an
+      // insurer who could reach it would be verifying their own products —
+      // the defect Codex found in the workshop directory on 08-09. Verification
+      // is a PLATFORM decision on `/admin/insurance/*`.
+      ['insurance-products', 'Insurance Products'],
       ['content-moderation', 'Content Moderation'],
     ],
     'platform.admin',

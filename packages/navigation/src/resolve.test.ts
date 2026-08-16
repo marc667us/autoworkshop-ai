@@ -216,19 +216,28 @@ describe('workspace trees match the specification', () => {
    * not exist when `02.txt` §58 was written — migrations 068/069 created it —
    * so the spec has no entry for the queue it produces.
    *
+   * `Insurance Products` was added on 2026-08-16 as slice 18, for the same
+   * shape of reason: the insurance marketplace is migrations 080/082/083/084,
+   * long after §58, and `082_insurance_marketplace.sql:166` installs a trigger
+   * that REFUSES to publish an unverified product — so the spec has no entry
+   * for the verification queue its own trigger makes mandatory. It sits in the
+   * ADMIN tree rather than the insurance one because an insurer who could reach
+   * it would be verifying their own products.
+   *
    * 🔴 THE ASSERTION IS KEPT EXACT, and that is the point of it. Its job is to
    * notice when the admin tree changes, so every future change has to arrive
    * with a reason written down beside it. Loosening it to
    * `toBeGreaterThanOrEqual(25)` would turn a guard into a formality and let
    * the next entry appear with no explanation at all.
    */
-  it('platform administration covers §58’s 25 entries plus the registration queue', () => {
+  it('platform administration covers §58’s 25 entries plus two later additions', () => {
     const items = workspaces.admin.groups.flatMap((g) => g.items);
-    expect(items).toHaveLength(26);
-    // The addition is asserted by NAME too, so a future change that removes
-    // Registrations and adds something else still fails on the count being
-    // right for the wrong reason.
+    expect(items).toHaveLength(27);
+    // Each addition is asserted by NAME too, so a change that removes one and
+    // adds another still fails rather than passing on a count that is right for
+    // the wrong reason.
     expect(items.map((i) => i.id)).toContain('registrations');
+    expect(items.map((i) => i.id)).toContain('insurance-products');
   });
 
   /**

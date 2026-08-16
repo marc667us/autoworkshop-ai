@@ -368,17 +368,59 @@ export class InsuranceService {
    */
   async reviewQueue(ctx: TenantContext) {
     return this.db.withTenant(ctx, async (client) => {
+      // 🔴 BOTH HALVES, BECAUSE WITHDRAWAL NEEDS A CALLER TOO.
+      //
+      // This returned only the UNVERIFIED products. But
+      // `setProductVerification` also WITHDRAWS — and a verified product
+      // disappears from an unverified-only queue, so there was no screen from
+      // which withdrawal could ever be invoked. "A route with no caller is not
+      // shipped" is a recorded rule here, and an administrator who can approve
+      // but not reverse the approval is the "rule whose escape hatch is
+      // unreachable" defect wearing its other face.
+      //
+      // Composite response, mirroring `supplier-catalogue.service.ts`'s own
+      // review queue (`{ suppliers, parts }`) rather than inventing a second
+      // shape. Nothing consumed this endpoint yet — measured, no web caller and
+      // no spec — so widening it breaks nothing.
+      //
+      // ⚠️ THE JOIN IS THE RISK, NOT THE TABLE. A permissive policy on
+      // `insurance.products` is not enough: `identity.organizations` is
+      // tenant-scoped too, and a join returns FEWER ROWS rather than failing,
+      // which is an empty list behind a 200. It holds here because
+      // `is_platform_admin()` satisfies `tenant_isolation` on both — which is
+      // exactly why this endpoint requires the GRANT and not a role name.
+      // 🔴 ONE QUERY, NOT TWO — one snapshot and one RLS evaluation.
+      // `withTenant` runs READ COMMITTED, so two SELECTs get two statement
+      // snapshots: a verification committing between them could show the same
+      // product in BOTH halves or NEITHER. Codex found that; splitting in
+      // application code removes the window entirely.
+      const LIMIT = 400;
       const res = await client.query(
         `SELECT ${PRODUCT_COLUMNS}, o.name AS insurer_name
            FROM insurance.products p
            JOIN identity.organizations o ON o.id = p.organization_id
-          WHERE p.is_verified = false
-          ORDER BY p.created_at ASC LIMIT 200`,
+          ORDER BY p.created_at ASC
+          LIMIT ${LIMIT}`,
       );
-      return res.rows.map((r: Record<string, unknown>) => ({
+      const all = res.rows.map((r: Record<string, unknown>) => ({
         ...toProduct(r),
         insurerName: r.insurer_name as string,
       }));
+
+      return {
+        // Pending oldest-first — the longest wait is the most urgent decision.
+        pending: all.filter((p) => !p.isVerified),
+        // Verified newest-first: a withdrawal is nearly always of something
+        // approved recently, usually in error.
+        verified: all.filter((p) => p.isVerified).reverse(),
+        // 🔴 SAY WHEN THE LIST IS CUT. A silent cap is how withdrawal becomes
+        // unreachable for anything older than the newest N — the screen would
+        // simply not show the product and nothing would explain why. The UI
+        // renders this; a proper search/pagination is the real answer and is
+        // not built yet, so the honest move is to admit the boundary rather
+        // than hide it.
+        truncated: all.length === LIMIT,
+      };
     });
   }
 
