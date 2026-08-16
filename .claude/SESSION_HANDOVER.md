@@ -2,7 +2,7 @@
 
 ## ═══ 2026-08-16 — the firewall mutex, the switchers that stranded the owner, and slice 18 part 1 ═══
 
-**Tip `4f03cfa`. 19 commits (`757c41b` -> `4f03cfa`). Tree clean, all pushed.**
+**Tip `b12bf70`. 20 commits (`757c41b` -> `b12bf70`). Tree clean, all pushed.**
 
 ### State, measured after the deploy — not quoted
 
