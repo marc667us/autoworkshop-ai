@@ -2,7 +2,7 @@
 
 ## ═══ 2026-08-16 — the firewall mutex, and three instruments that lied ═══
 
-**Tip `b9d5e9d`. Tree clean, all pushed.**
+**Tip `9d28ccd`. Tree clean, all pushed.**
 
 ### State, measured after the deploy — not quoted
 
@@ -24,6 +24,48 @@ Still the work. **A6 is now CLOSED**, so the blockade it imposed is lifted —
 A4 diagnostics, backup work, migration verification and production seeds may
 proceed. **Next executable item: slice 18, then 17, then 19, then 20.** That
 order is load-bearing; the reasons are in Part B of the task list.
+
+### 🔴 THE OWNER COULD NOT SEE THE PRODUCT — two real defects, both now fixed
+
+**"the admin and marc667us dont see anything" → "do not have access error".**
+
+**Defect 1 — the switchers stranded you (ADR-021, third instance today).**
+`setActiveRoleAction` set the cookie, revalidated, and re-rendered THE SAME URL.
+Switching from `platform_administrator` to `workshop_owner` while on `/admin/...`
+left the viewer there — a pack they no longer hold `platform.admin` for — so the
+layout refused them. **The switch worked and then dumped them somewhere they
+were not allowed.** When each pack was its own host there was nowhere to send
+anyone; seven path-prefixed packs make a role change a PACK change.
+`homeWorkspaceFor()` already encoded it and `/` already used it — the switchers
+were the callers that never got it. **Codex found the organisation switcher had
+the identical defect**, which would have stranded them again.
+
+**Defect 2 — the audit memberships were invisible.** My first attempt joined
+EXISTING partner organisations, which are OTHER TENANTS. `me.service.ts` filters
+`AND m.tenant_id = $2` — *"memberships in other tenants are deliberately not
+listed here"*. I wrote those rows before reading that. Fixed by creating
+`[AUDIT]` organisations inside the account's OWN tenant; the dead cross-tenant
+rows were deleted.
+
+**Result — `marc667us@yahoo.com` now holds SEVEN roles in ONE tenant**, so every
+tree is switcher-reachable: `platform_administrator` · `workshop_owner` ·
+`customer` (Marc Auto Works) · `supplier_owner` · `fleet_administrator` ·
+`insurance_assessor` · `towing_operator` (`[AUDIT] …` orgs).
+Zero cross-tenant rows remain.
+
+⚠️ **The `[AUDIT]` orgs have no business data.** A `parts_supplier` org with no
+`catalogue.suppliers` row renders an EMPTY supplier tree. The tree is reachable
+and auditable; populating it is a seeding question. **Do not report empty
+screens as broken.**
+
+🔴 **I WAS WRONG TWICE ON THE DIAGNOSIS BEFORE GETTING IT RIGHT.** First I said
+the platform-admin grant was missing — it has been active since 2026-08-10; my
+own diagnostic returned `(0 rows)` because `set_config(...,true)` is
+TRANSACTION-LOCAL and each psql statement outside a transaction is its own
+transaction, so the admin read context was discarded and FORCE RLS hid the
+table. Sections 2 and 4 coming back empty is what caught it. Then I blamed
+multi-membership lockout — the resolver defaults to the STRONGEST role and
+`platform_administrator` is index 0. **Neither guess survived measurement.**
 
 ### ✅ CLOSED — the twelve dead redirect URIs are GONE from the live realm
 
