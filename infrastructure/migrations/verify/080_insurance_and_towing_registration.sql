@@ -166,21 +166,41 @@ BEGIN
     -- merely plausible name resolves to no tree and no permissions, and the
     -- registrant lands somewhere they can see nothing — failing CLOSED and
     -- silently, which is how `quality_controller` survived for months.
+    -- ⚠️ 085 SUPERSEDED THE ROLE LITERAL THESE CHECKS ORIGINALLY NAMED.
+    --
+    -- 080 wrote `insurance_assessor` / `towing_operator`. Migration 085
+    -- `CREATE OR REPLACE`s both functions to write `insurance_owner` /
+    -- `towing_owner`, because the operational roles cannot grant a membership
+    -- and an organisation founded on one could never appoint a second member.
+    --
+    -- 🔴 THIS FILE WOULD OTHERWISE BE A GUARANTEED RED RUN. `rehearse-migration.yml`
+    -- executes `verify/<migration>.sql` on request, so dispatching it with
+    -- `migration=080` — a supported, documented operation — would fail against a
+    -- perfectly correct database and name a role the product deliberately
+    -- stopped writing. Found by the Supervisor, 2026-08-17.
+    --
+    -- What 080 actually proved, and what still holds, is that the FUNCTION
+    -- writes an active founder membership at all: before 080 no production code
+    -- path could create one. That claim is preserved; only the role vocabulary
+    -- is widened to include its 085 successor. The 085-specific assertion —
+    -- that the role is precisely the org admin — lives in `verify/085`.
     SELECT count(*) INTO n FROM identity.memberships
      WHERE id = ri.o_membership_id AND user_id = v_user_i
        AND organization_id = ri.o_organization_id
-       AND role_name = 'insurance_assessor' AND status = 'active';
+       AND role_name IN ('insurance_assessor', 'insurance_owner')
+       AND status = 'active';
     IF n <> 1 THEN
-        RAISE EXCEPTION 'verify/080 #4c: no active insurance_assessor membership '
+        RAISE EXCEPTION 'verify/080 #4c: no active insurance founder membership '
                         'was written — the role still cannot exist in production';
     END IF;
 
     SELECT count(*) INTO n FROM identity.memberships
      WHERE id = rt.o_membership_id AND user_id = v_user_t
        AND organization_id = rt.o_organization_id
-       AND role_name = 'towing_operator' AND status = 'active';
+       AND role_name IN ('towing_operator', 'towing_owner')
+       AND status = 'active';
     IF n <> 1 THEN
-        RAISE EXCEPTION 'verify/080 #4d: no active towing_operator membership was '
+        RAISE EXCEPTION 'verify/080 #4d: no active towing founder membership was '
                         'written — the role still cannot exist in production';
     END IF;
     passed := passed + 1;
@@ -280,7 +300,8 @@ BEGIN
     DELETE FROM identity.users         WHERE id IN (v_user_i, v_user_t);
 
     RAISE NOTICE 'verify/080: % checks passed. Checks 4c and 4d are the evidence '
-                 '— an insurance_assessor and a towing_operator membership '
-                 'written by the PRODUCT, not by a seed script.', passed;
+                 '— an ACTIVE insurance and towing FOUNDER membership written by '
+                 'the PRODUCT, not by a seed script. (085 changed WHICH role that '
+                 'is; verify/085 asserts the exact name.)', passed;
 END
 $verify$;

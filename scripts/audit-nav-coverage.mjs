@@ -166,8 +166,19 @@ const FEATURES = [
   { cap: 'CAN_RAISE_VARIATION',  dedicated: false, frag: ['variations','variation-requests'], roles: ['technician','workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
   { cap: 'CAN_REVIEW_VARIATION', dedicated: false, frag: ['variations','variation-requests'], roles: ['workshop_supervisor','workshop_manager','workshop_owner','platform_administrator'] },
   { cap: 'CAN_CREATE_JOB',      dedicated: false, frag: ['job-cards','create-job-card','new-job-card'], roles: ['platform_administrator','workshop_owner','workshop_manager','reception_staff'] },
-  { cap: 'CAN_GRANT_MEMBERSHIP',dedicated: false, frag: ['staff','staff-and-roles','users-and-roles','roles-and-permissions'], roles: ['platform_administrator','workshop_owner'] },
-  { cap: 'CAN_CREATE_BRANCH',   dedicated: false, frag: ['branches'], roles: ['platform_administrator','workshop_owner'] },
+  // 🔴 THESE TWO MIRRORS WERE FOUR ROLES BEHIND THE API, and `towing-roles.ts:32`
+  // asserts that this script "will fail the build if the API permits a role the
+  // navigation gives no way to reach". With the mirror stale, it did not — the
+  // audit passed green over exactly the gap it exists to find. Brought level
+  // with `membership.service.ts` and `branch.service.ts` on 2026-08-17.
+  //
+  // ⚠️ AND IT IS STILL ONLY HALF A GUARD: `TREE_ROLES` covers the five WORKSHOP
+  // trees, so a partner role listed here is not yet checked against its own
+  // pack's navigation. Extending that is its own change; recorded here rather
+  // than left implied, because a mirror that looks complete and is not is what
+  // produced this defect.
+  { cap: 'CAN_GRANT_MEMBERSHIP',dedicated: false, frag: ['staff','staff-and-roles','users-and-roles','roles-and-permissions','users'], roles: ['platform_administrator','workshop_owner','supplier_owner','fleet_administrator','insurance_owner','towing_owner'] },
+  { cap: 'CAN_CREATE_BRANCH',   dedicated: false, frag: ['branches'], roles: ['platform_administrator','workshop_owner','supplier_owner','fleet_administrator','insurance_owner','towing_owner'] },
   // ── 🔴 THE AGENT LAYER IS DELIBERATELY *NOT* DECLARED HERE (2026-08-08) ───
   //
   // `apps/api/src/agents` gates every route — `/agents/proposals`,

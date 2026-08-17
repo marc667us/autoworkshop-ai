@@ -7,7 +7,11 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
-import { assertWorkshopStaff } from '../authz/workshop-roles';
+import {
+  assertWorkshopStaff,
+  isOrganisationAdmin,
+  isWorkshopStaff,
+} from '../authz/workshop-roles';
 
 export interface Membership {
   id: string;
@@ -190,7 +194,24 @@ export class MembershipService {
     // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
     // this same organisation and the controller carries only TenantGuard —
     // who you are, not what you may do. See `authz/workshop-roles.ts`.
-    assertWorkshopStaff(ctx, 'The workshop membership roster');
+    //
+    // 🔴 …OR THE ORGANISATION'S OWN ADMINISTRATOR (085, Supervisor pass).
+    // `assertWorkshopStaff` alone made the grant authority 085 created
+    // UNUSABLE BY THE ROLES IT WAS CREATED FOR: an `insurance_owner` could
+    // `POST /memberships` (201) and then `GET /memberships` (403), so they
+    // could never see who was in their own organisation — and since
+    // `withdraw()` needs an `id` that only this roster returns, every
+    // appointment they made was IRREVERSIBLE. A write half with no readable
+    // roster is the same defect as a withdrawal with no caller.
+    //
+    // ⚠️ This does NOT let a partner admin read a workshop's roster. The query
+    // below is tenant-scoped and RLS backstops it, and a partner organisation
+    // has its own tenant (076/080) — so the widening is confined to the
+    // caller's own organisation, which is exactly what "administer your own
+    // business" means.
+    if (!isWorkshopStaff(ctx) && !isOrganisationAdmin(ctx)) {
+      assertWorkshopStaff(ctx, 'The membership roster');
+    }
     return this.db.withTenant(ctx, async (client) => {
       // CLAUDE.md §6: the application filters AND RLS backstops it. Seeded
       // rather than appended, so the tenant predicate cannot go missing when

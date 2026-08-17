@@ -121,13 +121,31 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Obj
   insurance_owner: [financeRead, organizationAdmin],
   /** §37's insurance tree gates Payments and Claim Costs on finance.read. */
   insurance_assessor: [financeRead],
-  /**
-   * 085 — the towing firm's ORG ADMIN. `financeRead` because the admin sees the
-   * firm's own invoices; §52's operational tree still has no gated entry, which
-   * is why `towing_operator` below keeps its empty list.
-   */
+  /** 085 — the towing firm's ORG ADMIN, mirroring `supplier_owner`. */
   towing_owner: [financeRead, organizationAdmin],
-  /** §52's towing tree has no gated entry. */
+  /**
+   * 🔴 THE COMMENT HERE WAS FALSE AND THE EMPTY LIST IS CORRECT. Both halves
+   * matter, and I got the first one wrong twice on 2026-08-17.
+   *
+   * It used to read "§52's towing tree has no gated entry". **It has two**, and
+   * they are measured: `workspaces.ts:503` gates **Invoices** on `finance.read`
+   * and `:505` gates **Settings** on `organization.admin`. The Supervisor
+   * caught that I had re-affirmed the empty list on that false premise while
+   * adding `towing_owner` beside it — a comment asserting a fact about a
+   * NEIGHBOURING file that was never true.
+   *
+   * ⚠️ BUT THE FIX IS NOT TO GRANT `finance.read` HERE. I tried that and
+   * `permission-matrix.spec.ts` refused it: `towing_operator` is named in
+   * "withholds finance.read from every role §50 does not give financial
+   * access". A dispatcher is not a bookkeeper, and the separation is deliberate.
+   * **The reviewer's diagnosis was right and its implied remedy was wrong** —
+   * which is why every finding gets checked against source before it is applied.
+   *
+   * The REAL defect the two gated entries caused is the one 085 fixes: until
+   * 085, `towing_operator` was the ONLY role a towing firm could hold, so the
+   * FOUNDER could see neither their own Invoices nor their own Settings.
+   * `towing_owner` above holds both. The operator keeps neither, on purpose.
+   */
   towing_operator: [],
   /** §33's customer tree has no gated entry — a customer's own invoices are
    *  their own data, not the workshop's finance surface. */

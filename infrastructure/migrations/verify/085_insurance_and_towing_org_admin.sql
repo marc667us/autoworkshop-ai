@@ -174,31 +174,34 @@ BEGIN
     -- after which this file would have failed against a perfectly correct
     -- database — a verify that goes red as the product is used normally.
     --
-    -- What IS true here and stays true: the backfill must never have promoted
-    -- somebody who was not their organisation's first, self-created member. The
-    -- durable form of that is a per-organisation shape check — an organisation
-    -- whose EVERY member is an org admin is the signature of the one-word
-    -- mistake (`WHERE role_name = 'insurance_assessor'`) that would have made
-    -- every assessor an administrator.
+    -- 🔴 AND THE NARROWED VERSION WAS STILL NOT REPEATABLE. The Supervisor
+    -- caught that too: "every member is an org admin" describes a legitimate
+    -- two-person insurer — a founder plus a co-owner appointed during a
+    -- handover, before any assessor is hired. `insurance_owner` is in
+    -- `GRANTABLE_ROLES` and `ROLES_BY_ORG_TYPE.insurance_company` admits it, so
+    -- the product explicitly permits that state, and the check would have
+    -- reported "privilege escalation" about a database with nothing wrong.
+    --
+    -- I narrowed the condition twice and both times it still asserted something
+    -- only knowable AT APPLY TIME. So it does not belong in a repeatable verify
+    -- at all, and the whole-database form now lives solely in migration 085,
+    -- which runs once, before any grant is possible.
+    --
+    -- What IS durable is a statement about THIS FILE'S OWN FIXTURES, whose
+    -- history is fully known: two organisations were registered a few
+    -- statements ago and one operational member was added to each, so each must
+    -- hold exactly one org admin. That catches a backfill promoting by role
+    -- name without making a claim about rows this file did not create.
     SELECT count(*) INTO n
-      FROM (
-        SELECT o.id
-          FROM identity.organizations o
-          JOIN identity.memberships m
-            ON m.organization_id = o.id AND m.tenant_id = o.tenant_id
-         WHERE o.org_type IN ('insurance_company', 'towing_company')
-           AND m.status = 'active'
-         GROUP BY o.id
-        HAVING count(*) > 1
-           AND count(*) FILTER (
-                 WHERE m.role_name IN ('insurance_owner', 'towing_owner')
-               ) = count(*)
-      ) AS all_admins;
-    IF n > 0 THEN
-        RAISE EXCEPTION 'verify/085 #6: % multi-member organisation(s) consist '
-                        'ENTIRELY of org admins. That is the signature of a '
-                        'backfill that promoted by role name instead of by '
-                        'founder — privilege escalation, not a migration.', n;
+      FROM identity.memberships
+     WHERE organization_id IN (ri.o_organization_id, rt.o_organization_id)
+       AND status = 'active'
+       AND role_name IN ('insurance_owner', 'towing_owner');
+    IF n <> 2 THEN
+        RAISE EXCEPTION 'verify/085 #6: this file''s two fixture organisations '
+                        'hold % org admin(s) between them — expected exactly 2 '
+                        '(one each). More than that is the signature of a '
+                        'backfill promoting by role name rather than by founder.', n;
     END IF;
     passed := passed + 1;
 

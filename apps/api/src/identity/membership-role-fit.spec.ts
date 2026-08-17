@@ -122,8 +122,12 @@ describe('role ↔ organisation-type fit', () => {
     // passes while proving nothing.
     expect(canGrant.size).toBeGreaterThanOrEqual(4);
 
-    // The six organisation types a person can create for themselves through
+    // The FIVE organisation types a person can create for themselves through
     // `/onboarding` — each has a `register_*` function in the migrations.
+    // (An earlier draft said six. `customer` is the sixth onboarding DOOR but
+    // creates no organisation: migration 061 enrols a vehicle owner into an
+    // existing workshop. A reader auditing this list for completeness would
+    // have hunted for a missing entry that does not exist.)
     for (const orgType of [
       'individual_workshop',
       'parts_supplier',

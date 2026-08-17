@@ -193,10 +193,22 @@ describe('the roles the onboarding screen names', () => {
     const offered = new Set(
       ACCOUNT_TYPES.map((t) => t.roleName).filter((r): r is string => r !== null),
     );
-    // `customer` is offered as a JOURNEY rather than as a role name — its
-    // membership is written later, by the request-service funnel — so it is
-    // deliberately `null` above and excluded here.
-    const expected = new Set([...written].filter((r) => r !== 'customer'));
+    // ⚠️ NO `customer` FILTER ANY MORE, AND THAT IS A REAL NARROWING, NOT A
+    // TIDY-UP. The old reader scanned every `INSERT INTO identity.memberships`
+    // in every migration, so it saw `customer` (migration 061 enrols a vehicle
+    // owner into an existing workshop) and had to strip it. This reader only
+    // inspects `CREATE OR REPLACE FUNCTION identity.register_*` bodies, so
+    // `customer` can never appear and the filter was dead code describing a
+    // rule it no longer enforced. Removed rather than left to mislead.
+    //
+    // 🔴 THE COST, STATED: a future self-service door written as a plain
+    // `CREATE FUNCTION`, or named outside `register_*`, or writing its
+    // membership outside the function body, is INVISIBLE to a test whose name
+    // promises "exactly the roles a self-service migration writes". The
+    // `doorWrites.size >= 5` guard above is the only thing standing between
+    // that and a silent pass. Widen the pattern when such a door is added.
+    // (Supervisor, 2026-08-17.)
+    const expected = new Set(written);
     expect(offered).toEqual(expected);
   });
 

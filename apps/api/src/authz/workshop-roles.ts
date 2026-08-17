@@ -63,3 +63,56 @@ export function assertWorkshopStaff(ctx: TenantContext, what: string): void {
     );
   }
 }
+
+/**
+ * 🔴 THE ORG ADMINS OF THE NON-WORKSHOP ORGANISATION TYPES.
+ *
+ * Added 2026-08-17 by the Supervisor pass on migration 085, which found that
+ * the grant authority 085 created was **unusable by the roles it was created
+ * for**. `MembershipService.grant()` admitted `insurance_owner`; `list()` and
+ * `withdraw()` next to it were gated on `assertWorkshopStaff`, whose set
+ * contains no partner role at all. The measured consequence:
+ *
+ *     POST /memberships  -> 201   (the appointment is made)
+ *     GET  /memberships  -> 403   ("belongs to the workshop, not to a
+ *                                   customer account")
+ *
+ * So an insurer's administrator could appoint somebody and then never see who
+ * was in their own organisation — and because `withdraw()` needs a membership
+ * `id` that only the roster returns, **every grant they made was
+ * irreversible**. That is the same shape as the withdrawal-with-no-caller
+ * defect fixed on 2026-08-16: an operation whose reversal exists in code and
+ * cannot be reached in practice.
+ *
+ * ⚠️ THIS IS NOT A WIDENING OF WORKSHOP STAFF. These roles remain foreign to
+ * the workshop and to `WORKSHOP_STAFF_ROLES`; `assertOrganisationAdmin` is a
+ * SEPARATE question — "may this caller administer the organisation their own
+ * membership names?" — and tenant scoping plus RLS still confine every answer
+ * to that organisation. A partner admin gains nothing inside a workshop.
+ */
+export const ORGANISATION_ADMIN_ROLES = [
+  'workshop_owner',
+  'supplier_owner',
+  'fleet_administrator',
+  'insurance_owner',
+  'towing_owner',
+  'platform_administrator',
+] as const;
+
+export function isOrganisationAdmin(ctx: TenantContext): boolean {
+  return (ORGANISATION_ADMIN_ROLES as readonly string[]).includes(ctx.activeRole);
+}
+
+/**
+ * Refuse a caller who does not administer their own organisation.
+ *
+ * ⚠️ THE REFUSAL NAMES A REACHABLE ALTERNATIVE, like every other in this file.
+ */
+export function assertOrganisationAdmin(ctx: TenantContext, what: string): void {
+  if (!isOrganisationAdmin(ctx)) {
+    throw new ForbiddenException(
+      `${what} is administered by the owner of this organisation. ` +
+        'Ask whoever registered the business to make the change, or to grant you an administrator role.',
+    );
+  }
+}

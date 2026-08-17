@@ -2,7 +2,11 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
-import { assertWorkshopStaff } from '../authz/workshop-roles';
+import {
+  assertWorkshopStaff,
+  isOrganisationAdmin,
+  isWorkshopStaff,
+} from '../authz/workshop-roles';
 
 export interface Branch {
   id: string;
@@ -61,7 +65,14 @@ export class BranchService {
     // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
     // this same organisation and the controller carries only TenantGuard —
     // who you are, not what you may do. See `authz/workshop-roles.ts`.
-    assertWorkshopStaff(ctx, 'The workshop branch list');
+    // 🔴 …OR THE ORGANISATION'S OWN ADMINISTRATOR (085, Supervisor pass). The
+    // same write-without-read defect as the membership roster: `CAN_CREATE_BRANCH`
+    // now admits `towing_owner`, so a founder could `POST /branches` (201) for a
+    // second depot and then `GET /branches` (403) — the depot they had just
+    // created invisible to them, and every branch picker rendering empty.
+    if (!isWorkshopStaff(ctx) && !isOrganisationAdmin(ctx)) {
+      assertWorkshopStaff(ctx, 'The branch list');
+    }
     return this.db.withTenant(ctx, async (client) => {
       const res = organizationId
         ? await client.query(
@@ -86,7 +97,10 @@ export class BranchService {
     // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
     // this same organisation and the controller carries only TenantGuard —
     // who you are, not what you may do. See `authz/workshop-roles.ts`.
-    assertWorkshopStaff(ctx, 'This branch');
+    // …or the organisation's own administrator — see `list()` above.
+    if (!isWorkshopStaff(ctx) && !isOrganisationAdmin(ctx)) {
+      assertWorkshopStaff(ctx, 'This branch');
+    }
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT id, organization_id, name, location, operating_hours, status, created_at

@@ -359,6 +359,19 @@ BEGIN
             ON o.id = m.organization_id
            AND o.tenant_id = m.tenant_id
          WHERE o.org_type IN ('insurance_company', 'towing_company')
+           -- 🔴 `status = 'active'` IS PRODUCTION-BLOCKING IF OMITTED, and it was
+           -- omitted until the Supervisor pass on 2026-08-17.
+           --
+           -- Without it `ranked` includes REVOKED and SUSPENDED rows, so an
+           -- organisation whose founder has left is ranked on a dead membership:
+           -- that row gets promoted, while the guard below requires an ACTIVE
+           -- org admin — so the guard RAISES, the whole migration rolls back,
+           -- and `apply-migrations` goes red with a message blaming the founder
+           -- predicate rather than the status. Every migration after 085 is then
+           -- blocked behind it.
+           --
+           -- The two halves must ask the SAME question. They did not.
+           AND m.status = 'active'
     ),
     founders AS (
         SELECT id, org_type
