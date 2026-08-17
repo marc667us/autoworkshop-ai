@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
-import { assertWorkshopStaff } from '../authz/workshop-roles';
+import {
+  assertWorkshopStaff,
+  isOrganisationAdmin,
+  isWorkshopStaff,
+} from '../authz/workshop-roles';
 
 export interface TenantUser {
   id: string;
@@ -55,7 +59,37 @@ export class UserService {
     // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
     // this same organisation and the controller carries only TenantGuard —
     // who you are, not what you may do. See `authz/workshop-roles.ts`.
-    assertWorkshopStaff(ctx, 'The workshop staff directory');
+    // 🔴 …OR THE ORGANISATION'S OWN ADMINISTRATOR (085, Codex pass 2026-08-17).
+    //
+    // `MembershipService.list()` was widened for the partner org admins and
+    // THIS ONE WAS NOT, so the insurance and towing staff screens — which read
+    // both, `/users` for names and `/memberships` for the ids a withdrawal
+    // needs — failed on the first read and rendered `ApiFailure` above their own
+    // add form. The founder could not add anyone, on the screen built so they
+    // could. I fixed one read and wrote a comment claiming both were open.
+    //
+    // 🔴 AND A PARTNER ADMIN SEES ONLY THEIR OWN ORGANISATION, NOT THE TENANT.
+    //
+    // My first version widened this gate and left the query tenant-scoped, with
+    // a comment claiming that was fine. The Supervisor showed it is not, and the
+    // path is reachable rather than theoretical: `workshop_owner` is in
+    // `CAN_CREATE_ORG`, so a workshop can create a `parts_supplier` organisation
+    // INSIDE ITS OWN TENANT and grant `supplier_owner` into it. That partner
+    // admin would then have received every workshop staff member's email, phone
+    // and status — and every enrolled `customer`'s too, because migration 061
+    // enrols vehicle owners as `customer` memberships in the workshop's own
+    // organisation, in the same tenant.
+    //
+    // Widening a READ tenant-wide in the same change that narrowed a WRITE to
+    // one organisation is the two halves disagreeing again, in the other
+    // direction.
+    //
+    // Workshop staff keep the tenant-wide directory they have always had: it is
+    // how job assignment, specialist requests and certifications resolve names.
+    const orgScoped = !isWorkshopStaff(ctx) && isOrganisationAdmin(ctx);
+    if (!isWorkshopStaff(ctx) && !isOrganisationAdmin(ctx)) {
+      assertWorkshopStaff(ctx, 'The staff directory');
+    }
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT u.id,
@@ -69,9 +103,10 @@ export class UserService {
            JOIN identity.users u ON u.id = m.user_id
           WHERE m.status = 'active'
             AND m.tenant_id = $1
+            AND ($2::uuid IS NULL OR m.organization_id = $2::uuid)
           GROUP BY u.id, u.email, u.display_name, u.phone, u.preferred_locale, u.status
           ORDER BY u.display_name`,
-        [ctx.tenantId],
+        [ctx.tenantId, orgScoped ? ctx.organizationId : null],
       );
       return res.rows.map(this.toDomain);
     });
@@ -89,7 +124,10 @@ export class UserService {
     // 🔴 STAFF ONLY (A5). `customer` is a real membership role inside
     // this same organisation and the controller carries only TenantGuard —
     // who you are, not what you may do. See `authz/workshop-roles.ts`.
-    assertWorkshopStaff(ctx, 'This staff record');
+    // …or the organisation's own administrator — see `list()` above.
+    if (!isWorkshopStaff(ctx) && !isOrganisationAdmin(ctx)) {
+      assertWorkshopStaff(ctx, 'This staff record');
+    }
     return this.db.withTenant(ctx, async (client) => {
       const res = await client.query(
         `SELECT u.id,

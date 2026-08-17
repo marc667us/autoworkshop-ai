@@ -7,6 +7,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { DatabaseService } from '../database/database.service';
 import type { TenantContext } from '../tenancy/tenant-context';
+import { PLATFORM_ADMIN_ROLE_NAME } from '../authz/permission-matrix';
 import {
   assertWorkshopStaff,
   isOrganisationAdmin,
@@ -36,6 +37,26 @@ export interface Membership {
  * §50 gives only the owner "full workshop governance, staff ... access". The
  * manager, who has "daily operational control", is excluded on purpose.
  */
+/**
+ * Acting as a platform administrator RIGHT NOW — the grant AND the active role.
+ *
+ * 🔴 BOTH HALVES ARE REQUIRED AND EACH ONE ALONE IS A DEFECT THIS REPO HAS
+ * ALREADY PAID FOR.
+ *
+ * The ROLE NAME alone is what migration 078 made inert: between 2026-08-10 and
+ * 08-11 revoking a grant on production removed database reach and left every
+ * API gate open, because the API still derived authority from `role_name`.
+ *
+ * The GRANT alone is what `tenant-context.ts:310` forbids: the owner account
+ * holds the grant permanently, so keying on it alone means a deliberate switch
+ * to `workshop_owner` still carries platform authority — "a permission that
+ * followed the person across a deliberate downgrade would make the switcher
+ * decorative".
+ */
+function isActingAsPlatformAdmin(ctx: TenantContext): boolean {
+  return ctx.hasPlatformGrant && ctx.activeRole === PLATFORM_ADMIN_ROLE_NAME;
+}
+
 const CAN_GRANT_MEMBERSHIP = new Set([
   'platform_administrator',
   'workshop_owner',
@@ -330,8 +351,25 @@ export class MembershipService {
         // 🔴 `org_type`, NOT `1`. See the compatibility check below — the row's
         // EXISTENCE was all this asked for, and existence is not the whole
         // question on the privilege-granting operation.
-        `SELECT org_type FROM identity.organizations WHERE id = $1 AND tenant_id = $2`,
-        [input.organizationId, ctx.tenantId],
+        // 🔴 AND THE CALLER'S OWN ORGANISATION, NOT MERELY THEIR TENANT.
+        //
+        // `input.organizationId` is CLIENT-SUPPLIED — only the UI binds it to
+        // `viewer.organizationId`, and a server rule may never depend on the UI
+        // for its scope. A tenant may hold several organisations, so tenant
+        // scoping alone let an administrator appoint into a SIBLING
+        // organisation whose uuid they knew.
+        //
+        // Added 2026-08-17 alongside the same predicate on `withdraw()`. Both
+        // halves of one permission must ask the same question: scoping only the
+        // withdrawal produced memberships the granting admin could not revoke.
+        `SELECT org_type FROM identity.organizations
+          WHERE id = $1 AND tenant_id = $2
+            AND ($3::uuid IS NULL OR id = $3::uuid)`,
+        [
+          input.organizationId,
+          ctx.tenantId,
+          isActingAsPlatformAdmin(ctx) ? null : ctx.organizationId,
+        ],
       );
       if (org.rows.length === 0) throw new NotFoundException('organization not found');
 
@@ -512,19 +550,97 @@ export class MembershipService {
     }
 
     return this.db.withTenant(ctx, async (client) => {
+      // 🔴 SCOPED TO THE ORGANISATION, NOT ONLY THE TENANT. Until 2026-08-17
+      // this predicate was `id + active + tenant_id`, and `membershipId` comes
+      // from the client. A tenant may hold SEVERAL organisations, so an
+      // administrator could revoke an active membership belonging to a SIBLING
+      // organisation simply by substituting its uuid — and RLS could not stop
+      // it, because RLS is tenant-scoped and the row really is in this tenant.
+      //
+      // Every screen that calls this claims to manage "your own organisation".
+      // That claim was an operational convention, not an authorization
+      // boundary. Codex found it while reviewing the insurance and towing staff
+      // screens, whose hidden `membershipId` field is exactly the forgeable
+      // input.
+      //
+      // ⚠️ MY FIRST COMMENT HERE SAID "`grant()` has always checked the
+      // organisation". IT DOES NOT — it checks the organisation is in the
+      // TENANT (line 333). So this fix briefly made the two halves disagree in
+      // the OTHER direction: an admin could still appoint into a sibling
+      // organisation and could no longer revoke there, creating memberships
+      // they cannot undo. `grant()` is now scoped the same way; the two halves
+      // finally ask the same question. (Supervisor, 2026-08-17.)
+      //
+      // ⚠️ THE PLATFORM EXEMPTION NEEDS THE GRANT **AND** THE ACTIVE ROLE.
+      // `!ctx.hasPlatformGrant` alone was wrong and `tenant-context.ts:310`
+      // says so verbatim: "a permission that followed the person across a
+      // deliberate downgrade would make the switcher decorative". The owner
+      // account holds the grant permanently, so keying on it alone let them
+      // reach sibling organisations while acting as `workshop_owner` — exactly
+      // what this predicate was added to stop.
+      const scopeToOrg = !isActingAsPlatformAdmin(ctx);
+      // 🔴 AND NOBODY MAY WITHDRAW THEIR OWN MEMBERSHIP.
+      //
+      // The staff screen hides the button on your own row and its comment says
+      // "the API would accept it" — which was true, and made the guard a UI
+      // convention rather than a rule. `curl` was enough to defeat it.
+      //
+      // For an insurer or a towing firm the consequence is not an inconvenience
+      // but an UNRECOVERABLE LOCKOUT OF A WHOLE BUSINESS: until 085 those
+      // organisations had exactly one member, so a sole `insurance_owner`
+      // revoking themselves leaves the organisation with no member and no
+      // administrator. The next request fails in `resolveTenantContext` with
+      // "user holds no active membership", and recovery needs a
+      // `platform_administrator` — a role this repository has recorded as
+      // having no production write path.
+      //
+      // `grant()` already refuses to let a caller widen their own access. This
+      // is the symmetric refusal, and it was missing. (Supervisor, 2026-08-17.)
       const res = await client.query(
         `UPDATE identity.memberships
             SET status = $2, updated_at = now(), updated_by = $3
           WHERE id = $1
             AND status = 'active'
             AND tenant_id = $4
+            AND ($5::uuid IS NULL OR organization_id = $5::uuid)
+            AND ($6::uuid IS NULL OR user_id <> $6::uuid)
         RETURNING id, organization_id, branch_id, user_id, role_name, status, created_at`,
-        [id, status, ctx.userId, ctx.tenantId],
+        [
+          id,
+          status,
+          ctx.userId,
+          ctx.tenantId,
+          scopeToOrg ? ctx.organizationId : null,
+          // A platform administrator acting as one may still act on any row,
+          // including their own — they have somewhere to recover from.
+          isActingAsPlatformAdmin(ctx) ? null : ctx.userId,
+        ],
       );
       const row = res.rows[0];
       if (!row) {
-        // Either it is not in this tenant (RLS hid it) or it was not active.
-        // One message for both, so the response cannot be used to probe which.
+        // ⚠️ THE SELF-WITHDRAWAL CASE GETS ITS OWN MESSAGE, and that leaks
+        // nothing: you already know your own membership id. A refusal must name
+        // a reachable alternative — the most expensive defect class recorded
+        // here — and "not found" would send an administrator hunting for a row
+        // they are looking straight at.
+        if (!isActingAsPlatformAdmin(ctx)) {
+          const self = await client.query<{ id: string }>(
+            `SELECT id FROM identity.memberships
+              WHERE id = $1 AND tenant_id = $2 AND user_id = $3 AND status = 'active'`,
+            [id, ctx.tenantId, ctx.userId],
+          );
+          if (self.rows.length > 0) {
+            throw new BadRequestException(
+              'You cannot withdraw your own access. If you are leaving, appoint ' +
+                'another administrator first and ask them to remove you — an ' +
+                'organisation whose last administrator removes themselves cannot ' +
+                'be recovered without the platform team.',
+            );
+          }
+        }
+        // Otherwise: either it is not in this tenant or this organisation (RLS
+        // and the predicates hid it) or it was not active. One message for all,
+        // so the response cannot be used to probe which.
         throw new NotFoundException('active membership not found');
       }
 

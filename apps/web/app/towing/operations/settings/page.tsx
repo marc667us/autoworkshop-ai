@@ -1,5 +1,6 @@
 import { requireNavRoute } from '@autoworkshop/next-shell';
 import { SettingsScreen } from '../../_screens/settings-screen';
+import { TowingStaffSection } from '../../_screens/staff-section';
 
 /**
  * `/operations/settings` — the rates every invoice is priced from.
@@ -11,5 +12,20 @@ import { SettingsScreen } from '../../_screens/settings-screen';
  */
 export default async function Page() {
   await requireNavRoute('towing', '/operations/settings');
-  return <SettingsScreen />;
+  return (
+    <>
+      <SettingsScreen />
+      {/*
+        🔴 THE PEOPLE SECTION — the towing half of what migration 085 unblocked.
+        Until 085 a towing company had exactly one member, its founder, and no
+        way to appoint a second; the grant authority 085 created then had no
+        caller until this shipped.
+
+        Rendered here rather than at its own route because §52 defines ONE
+        settings entry for this tree, and this route already carries the
+        `organization.admin` gate that `towing_owner` newly satisfies.
+      */}
+      <TowingStaffSection />
+    </>
+  );
 }
