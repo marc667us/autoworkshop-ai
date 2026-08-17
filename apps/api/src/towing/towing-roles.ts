@@ -33,6 +33,12 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * role the navigation gives no way to reach.
  */
 export const TOWING_ROLES = [
+  // 🔴 `towing_owner` ADDED BY 085 — see the note in `insurance-roles.ts`.
+  // From 085 onward the founder of a towing company holds this role, so its
+  // absence here would refuse every towing firm's own administrator from the
+  // towing module: ten screens, and the organisation's only member unable to
+  // open any of them.
+  'towing_owner',
   'towing_operator',
   'workshop_owner',
   'workshop_manager',

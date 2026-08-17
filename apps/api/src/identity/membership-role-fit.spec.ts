@@ -68,20 +68,82 @@ describe('role ↔ organisation-type fit', () => {
     }
   });
 
-  it('the partner organisation types each admit exactly their own role', () => {
+  it('the partner organisation types each admit exactly their designed roles', () => {
     // Read as literal text rather than evaluated, so this asserts what the file
-    // SAYS. The four partner types are one-role each by design; widening one is
-    // a decision that should fail a test rather than pass unnoticed.
-    for (const [orgType, role] of [
-      ['parts_supplier', 'supplier_owner'],
-      ['fleet_operator', 'fleet_administrator'],
-      ['insurance_company', 'insurance_assessor'],
-      ['towing_company', 'towing_operator'],
+    // SAYS. Widening one of these is a decision that should fail a test rather
+    // than pass unnoticed — and on 2026-08-17 it did exactly that, which is why
+    // the expectations below changed rather than the assertion being relaxed.
+    //
+    // 🔴 THE DECISION THIS NOW ENCODES (migration 085). Insurance and towing
+    // each gained an ORG ADMIN, because neither had one: `insurance_assessor`
+    // and `towing_operator` are absent from `CAN_GRANT_MEMBERSHIP`, so those two
+    // organisation types could hold exactly one member — the founder — for ever.
+    // Supplier and fleet were never affected: `supplier_owner` and
+    // `fleet_administrator` are org admins already, which is why they remain
+    // one-role entries and are the model the other two were fitted to.
+    //
+    // ⚠️ ORDER MATTERS HERE and it is not incidental: the admin is listed first
+    // in the source, mirroring `ROLE_PRECEDENCE`, so a reader of either file
+    // sees the same authority ordering.
+    for (const [orgType, roles] of [
+      ['parts_supplier', ['supplier_owner']],
+      ['fleet_operator', ['fleet_administrator']],
+      ['insurance_company', ['insurance_owner', 'insurance_assessor']],
+      ['towing_company', ['towing_owner', 'towing_operator']],
     ] as const) {
       const line = new RegExp(`${orgType}:\\s*\\[([^\\]]*)\\]`).exec(source);
       expect(line, `${orgType} has no entry`).toBeTruthy();
-      const roles = [...(line?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
-      expect(roles, `${orgType} should admit exactly ${role}`).toEqual([role]);
+      const found = [...(line?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+      expect(found, `${orgType} should admit exactly ${roles.join(', ')}`).toEqual([...roles]);
+    }
+  });
+
+  it('every organisation type that can be REGISTERED has a role that can GRANT', () => {
+    // 🔴 THE CHECK THAT WOULD HAVE CAUGHT THIS CLASS ON 2026-08-14, when the
+    // insurance marketplace shipped, rather than on 08-16 when somebody thought
+    // to ask. It is the generalisation of the defect, not a restatement of the
+    // fix: a self-service organisation type whose roles are all ungranting can
+    // never build a team, and every screen above it is unreachable for everyone
+    // except its founder.
+    //
+    // Both lists are read as TEXT from their own source files. Importing them
+    // would make them agree by construction — the same reasoning
+    // `permission-matrix.spec.ts` gives for retyping `GRANTABLE_ROLES`.
+    const service = readFileSync(
+      join(__dirname, 'membership.service.ts'),
+      'utf8',
+    );
+    const grantBlock = /CAN_GRANT_MEMBERSHIP\s*=\s*new Set\(\[([\s\S]*?)\]\)/.exec(service);
+    expect(grantBlock, 'could not find CAN_GRANT_MEMBERSHIP').toBeTruthy();
+    const canGrant = new Set(
+      [...(grantBlock?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]),
+    );
+    // Guard: without this the assertion below runs against an empty set and
+    // passes while proving nothing.
+    expect(canGrant.size).toBeGreaterThanOrEqual(4);
+
+    // The six organisation types a person can create for themselves through
+    // `/onboarding` — each has a `register_*` function in the migrations.
+    for (const orgType of [
+      'individual_workshop',
+      'parts_supplier',
+      'fleet_operator',
+      'insurance_company',
+      'towing_company',
+    ] as const) {
+      const line = new RegExp(`${orgType}:\\s*(\\[[^\\]]*\\]|[A-Z_]+)`).exec(source);
+      expect(line, `${orgType} has no entry`).toBeTruthy();
+      const literal = line?.[1] ?? '';
+      // `individual_workshop` points at WORKSHOP_ROLE_SET rather than an inline
+      // array; it contains `workshop_owner`, which is in the grant set.
+      const roles = literal.startsWith('[')
+        ? [...literal.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!)
+        : ['workshop_owner'];
+      expect(
+        roles.some((r) => canGrant.has(r)),
+        `${orgType} admits [${roles.join(', ')}], none of which may grant a membership — ` +
+          'an organisation of this type could never appoint a second member',
+      ).toBe(true);
     }
   });
 

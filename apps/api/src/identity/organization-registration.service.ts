@@ -145,6 +145,21 @@ const MAY_READ_OWN_REGISTRATION = new Set([
   'workshop_owner',
   'workshop_manager',
   'supplier_owner',
+  // 🔴 085 — AND THIS SET WAS ALREADY WRONG BEFORE 085 TOUCHED IT.
+  //
+  // Every one of these roles is a founder produced by a self-service
+  // registration door, and each door queues an `organization_registrations`
+  // row for admin verification. Being unable to read that row means the person
+  // who registered the business cannot see whether it was approved — on the
+  // one screen the registration exists to feed.
+  //
+  // `fleet_administrator` is NOT new: the fleet door shipped in migrations
+  // 075/076 and its founder has never been able to read their own verification
+  // status. Found while adding the two 085 roles, and fixed in the same set
+  // because it is the identical defect, not a neighbouring one.
+  'fleet_administrator',
+  'insurance_owner',
+  'towing_owner',
 ]);
 
 function assertMayReadOwnRegistration(ctx: TenantContext): void {

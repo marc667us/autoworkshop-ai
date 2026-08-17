@@ -27,6 +27,12 @@ const CAN_CREATE_BRANCH = new Set([
   'workshop_owner',
   'supplier_owner',
   'fleet_administrator',
+  // 085 — the org admins for insurance and towing, for the same reason the
+  // supplier and fleet admins are here: registration creates ONE office or
+  // depot, and a real insurer or recovery firm has more than one. Without this
+  // the founder could never add a second location to their own business.
+  'insurance_owner',
+  'towing_owner',
 ]);
 
 /**

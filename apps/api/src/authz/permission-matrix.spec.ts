@@ -110,7 +110,13 @@ describe('the matrix and the grantable-role allow-list must stay in step', () =>
     'cashier',
     'supplier_owner',
     'fleet_administrator',
+    // 085 — the org admins for insurance and towing. Retyped here, not
+    // imported, for the reason stated above: importing would make the two lists
+    // agree by construction and prove nothing. Adding a role to
+    // `GRANTABLE_ROLES` without adding it here is SUPPOSED to fail this file.
+    'insurance_owner',
     'insurance_assessor',
+    'towing_owner',
     'towing_operator',
     'customer',
   ];

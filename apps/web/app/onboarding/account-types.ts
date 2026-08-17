@@ -248,7 +248,11 @@ export const ACCOUNT_TYPES: readonly AccountType[] = [
       'Review claims on vehicles being repaired, assess damage, and authorise repair work.',
     href: '/insurance/home/dashboard',
     cta: 'Register my company',
-    roleName: 'insurance_assessor',
+    // 085 — the founder is the company's ADMINISTRATOR, not one of its
+    // assessors. This field documents "the role literal the migration writes",
+    // so it must track migration 085's `register_insurer`; a stale value here
+    // tells the person signing up they will become something they will not.
+    roleName: 'insurance_owner',
     features: groupsOf('insurance'),
     // 🔴 THE TENANCY GUARANTEE, STATED WHERE THE DECISION IS MADE. Migration
     // 080 gives the company its own tenant precisely because an insurer and the
@@ -264,7 +268,9 @@ export const ACCOUNT_TYPES: readonly AccountType[] = [
       'Take recovery requests, run a dispatch board, and manage your drivers and recovery vehicles.',
     href: '/towing/operations/dashboard',
     cta: 'Register my company',
-    roleName: 'towing_operator',
+    // 085 — the founder is the firm's ADMINISTRATOR. Same reasoning as the
+    // insurance door above.
+    roleName: 'towing_owner',
     features: groupsOf('towing'),
     // ⚠️ THE ONLY DOOR WHOSE WORKSPACE IS ALREADY FINISHED. Migration 074 built
     // all ten towing screens on 2026-08-09; only the door was missing. Said

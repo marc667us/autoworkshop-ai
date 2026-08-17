@@ -37,6 +37,20 @@ const CAN_GRANT_MEMBERSHIP = new Set([
   'workshop_owner',
   'supplier_owner',
   'fleet_administrator',
+  // 🔴 ADDED BY 085. Until then this set had FOUR entries and two of the six
+  // self-service organisation types were absent from it — so an insurance
+  // company and a towing firm could create exactly ONE member, the founder,
+  // and never a second one. Ten insurance screens and ten towing screens sat
+  // above a team that could not be assembled.
+  //
+  // ⚠️ These are ORG-ADMIN roles, deliberately distinct from the operational
+  // `insurance_assessor` / `towing_operator`. Adding the OPERATIONAL roles here
+  // would have been one line shorter and wrong: it hands the person who
+  // assesses a claim the authority to appoint the person who approves it,
+  // destroying the separation of duty the insurance-governance slice exists to
+  // create. Migration 085 has the full reasoning and the two rejected options.
+  'insurance_owner',
+  'towing_owner',
 ]);
 
 /**
@@ -63,7 +77,13 @@ const GRANTABLE_ROLES = new Set([
   // other workspaces
   'supplier_owner',
   'fleet_administrator',
+  // 085 — the org admins for insurance and towing. Grantable so that a
+  // platform administrator can appoint a replacement when a founder leaves;
+  // without that an insurer whose founder departs is unadministrable for ever,
+  // which is the same dead end 085 exists to remove, one step later.
+  'insurance_owner',
   'insurance_assessor',
+  'towing_owner',
   'towing_operator',
   'customer',
 ]);
@@ -81,7 +101,9 @@ const WORKSHOP_ROLE_SET: readonly string[] = [
     (r) =>
       r !== 'supplier_owner' &&
       r !== 'fleet_administrator' &&
+      r !== 'insurance_owner' &&
       r !== 'insurance_assessor' &&
+      r !== 'towing_owner' &&
       r !== 'towing_operator',
   ),
   // Not in `GRANTABLE_ROLES` — it cannot be granted through this service at all
@@ -124,8 +146,14 @@ const ROLES_BY_ORG_TYPE: Readonly<Record<string, readonly string[]>> = Object.fr
 
   parts_supplier: ['supplier_owner'],
   fleet_operator: ['fleet_administrator'],
-  insurance_company: ['insurance_assessor'],
-  towing_company: ['towing_operator'],
+  // 085 — each of these now admits its ORG ADMIN and its OPERATIONAL role.
+  // The admin is what `CAN_GRANT_MEMBERSHIP` recognises; the operational role
+  // is what the admin appoints. Before 085 each list held only the operational
+  // role, so the only member these organisations could have was one nobody
+  // could have granted — and in fact nobody did: migration 080's registration
+  // function wrote it directly, which is why the dead end was invisible.
+  insurance_company: ['insurance_owner', 'insurance_assessor'],
+  towing_company: ['towing_owner', 'towing_operator'],
 
   // The platform's own organisation, if one is ever created. Named because
   // leaving it out would refuse the one role that obviously belongs in it.

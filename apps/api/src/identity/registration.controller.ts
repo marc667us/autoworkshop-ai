@@ -403,7 +403,11 @@ export class RegistrationController {
         parsed.insurerName,
         parsed.locationName,
       );
-      return { ...created, roleName: 'insurance_assessor', verificationStatus: 'pending' };
+      // 085 — mirrors migration 085's `register_insurer`, which now writes the
+      // ORG ADMIN. This literal is a REPORT of what the database did, so it is
+      // wrong the moment it disagrees with the function; `verify/085` asserts
+      // the function's side and `registration.controller` carries this side.
+      return { ...created, roleName: 'insurance_owner', verificationStatus: 'pending' };
     } catch (err) {
       // 🔴 THE DATABASE'S REFUSAL MUST REACH THE USER AS AN ANSWER, NOT A 500.
       // `registerWorkshop` shipped that exact defect: a double-submitted form
@@ -449,7 +453,8 @@ export class RegistrationController {
         parsed.companyName,
         parsed.locationName,
       );
-      return { ...created, roleName: 'towing_operator', verificationStatus: 'pending' };
+      // 085 — see the insurance route above; the founder is the firm's admin.
+      return { ...created, roleName: 'towing_owner', verificationStatus: 'pending' };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes('already belongs to an organisation')) {

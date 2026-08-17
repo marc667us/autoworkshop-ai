@@ -126,7 +126,15 @@ const NON_WORKSHOP_ROLES: ReadonlySet<string> = new Set([
   'customer',
   'supplier_owner',
   'fleet_administrator',
+  // 085 — the two org admins are as foreign to the workshop as the operational
+  // roles they administer. Omitting them would have had the OPPOSITE effect of
+  // the bug this set was written for: instead of refusing a role its own
+  // workspace, it would have handed an insurer's administrator the workshop's
+  // default staff tree, which is precisely what happened to
+  // `platform_administrator` and was reported by the owner on 2026-08-09.
+  'insurance_owner',
   'insurance_assessor',
+  'towing_owner',
   'towing_operator',
 ]);
 
@@ -161,7 +169,15 @@ const HOME_WORKSPACE: Readonly<Record<string, string>> = {
   customer: 'customer',
   supplier_owner: 'supplier',
   fleet_administrator: 'fleet',
+  // 085 — an org admin lands in the workspace it administers. A role in
+  // `NON_WORKSHOP_ROLES` but absent from THIS map is foreign to the workshop
+  // and at home nowhere, which is the strictly worst of the two lists to be
+  // half-listed in: `homeWorkspaceFor()` is also what the role and organisation
+  // switchers now use to decide where to send someone, so a missing entry
+  // strands the viewer exactly as the 2026-08-16 switcher defect did.
+  insurance_owner: 'insurance',
   insurance_assessor: 'insurance',
+  towing_owner: 'towing',
   towing_operator: 'towing',
   /**
    * 🔴 THE OWNER'S REPORT, 2026-08-09: "if i log in as the owner and sign out

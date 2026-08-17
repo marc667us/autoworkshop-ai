@@ -13,7 +13,19 @@ export interface Organization {
 }
 
 /** Roles permitted to create an organization. */
-const CAN_CREATE_ORG = new Set(['platform_administrator', 'workshop_owner', 'supplier_owner', 'fleet_administrator']);
+// 085 added `insurance_owner` and `towing_owner`, mirroring `supplier_owner`
+// and `fleet_administrator` exactly. The org admin of an insurer or a recovery
+// firm has the same standing inside its own tenant as the supplier and fleet
+// admins have inside theirs, and omitting them would have made "mirror the
+// existing org admins" true in the grant path and false here.
+const CAN_CREATE_ORG = new Set([
+  'platform_administrator',
+  'workshop_owner',
+  'supplier_owner',
+  'fleet_administrator',
+  'insurance_owner',
+  'towing_owner',
+]);
 
 /**
  * Organization domain service.

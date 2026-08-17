@@ -103,8 +103,30 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Obj
   supplier_owner: [financeRead, organizationAdmin],
   /** §36's fleet tree gates Invoices on finance.read. */
   fleet_administrator: [financeRead, organizationAdmin],
+  /**
+   * 085 — the insurer's ORG ADMIN.
+   *
+   * `organizationAdmin` is what makes the role meaningful: it is the permission
+   * the insurance and towing organisations had NO holder of, which is why they
+   * could never appoint a second member. Modelled on `supplier_owner` and
+   * `fleet_administrator` above, which have carried exactly this pair since
+   * they were written.
+   *
+   * ⚠️ A GRANTABLE ROLE WITH NO ENTRY IN THIS MAP SILENTLY GETS NOTHING —
+   * `permissionsForRole` returns `[]` for an unknown key rather than throwing.
+   * That is the fail-closed direction and it is also how a new role ships
+   * looking present and doing nothing, so an addition to `GRANTABLE_ROLES`
+   * without an addition here is a defect, not an omission.
+   */
+  insurance_owner: [financeRead, organizationAdmin],
   /** §37's insurance tree gates Payments and Claim Costs on finance.read. */
   insurance_assessor: [financeRead],
+  /**
+   * 085 — the towing firm's ORG ADMIN. `financeRead` because the admin sees the
+   * firm's own invoices; §52's operational tree still has no gated entry, which
+   * is why `towing_operator` below keeps its empty list.
+   */
+  towing_owner: [financeRead, organizationAdmin],
   /** §52's towing tree has no gated entry. */
   towing_operator: [],
   /** §33's customer tree has no gated entry — a customer's own invoices are
@@ -275,6 +297,19 @@ export const ROLE_PRECEDENCE: readonly string[] = Object.freeze([
   'workshop_owner',
   'supplier_owner',
   'fleet_administrator',
+  // 🔴 085 — AND THIS IS THE SITE THE ORIGINAL ELEVEN-FILE SURVEY MISSED.
+  //
+  // A role absent from this list ranks WEAKEST (`Number.MAX_SAFE_INTEGER`, see
+  // `rolePrecedence` below), so default-role selection silently prefers ANY
+  // other membership the person holds. An org admin that loses the tie-break to
+  // `customer` would sign in to the wrong workspace and read as a permissions
+  // bug rather than a missing list entry.
+  //
+  // Placed beside the other three org admins because that is what they are:
+  // each is the top authority inside one organisation type, and none outranks
+  // another. Their operational roles keep their existing, lower positions.
+  'insurance_owner',
+  'towing_owner',
   'workshop_manager',
   'workshop_supervisor',
   'quality_control_inspector',

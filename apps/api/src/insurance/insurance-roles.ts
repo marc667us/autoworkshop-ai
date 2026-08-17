@@ -30,7 +30,17 @@ import type { TenantContext } from '../tenancy/tenant-context';
  * It confers nothing extra here — the RLS policies still scope every read to
  * the caller's own organisation unless they hold the platform grant.
  */
-export const INSURANCE_ROLES = ['insurance_assessor', 'platform_administrator'] as const;
+// 🔴 `insurance_owner` ADDED BY 085, AND ITS ABSENCE WOULD HAVE BEEN SILENT.
+// From 085 onward the founder of an insurance company holds `insurance_owner`,
+// so leaving this list unchanged would have refused every insurer's OWN
+// administrator from every insurance endpoint — the organisation's only member
+// locked out of the module it exists to use. This is the same shape as the
+// defect recorded on 2026-08-09, where a role gate refused four apps' own users.
+export const INSURANCE_ROLES = [
+  'insurance_owner',
+  'insurance_assessor',
+  'platform_administrator',
+] as const;
 
 export function isInsuranceOperator(ctx: TenantContext): boolean {
   return (INSURANCE_ROLES as readonly string[]).includes(ctx.activeRole);

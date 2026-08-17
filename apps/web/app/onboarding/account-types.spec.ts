@@ -140,24 +140,55 @@ describe('the roles the onboarding screen names', () => {
     // much wider question — it is what an EXISTING owner may confer, and a
     // handover note conflated the two lists on 2026-08-13. Offering a role from
     // that wider set would put a button on this screen with no door behind it.
+    // 🔴 THE LAST DEFINITION OF EACH DOOR WINS, NOT THE UNION OF ALL OF THEM.
+    //
+    // This reader used to add every role literal it found near an
+    // `INSERT INTO identity.memberships` in ANY migration, into one flat set.
+    // That is wrong the first time a function is redefined, and migration 085
+    // is that first time: it `CREATE OR REPLACE`s `register_insurer` to write
+    // `insurance_owner` instead of `insurance_assessor`, and 080 still sits on
+    // disk containing the old literal for ever. The union therefore claimed the
+    // insurance door writes BOTH roles, when the database runs only the later
+    // body.
+    //
+    // A migration directory is an ordered ledger, not a bag of files. Keyed by
+    // FUNCTION and replayed in order, this asks the question the test name
+    // claims: what does each self-service door write TODAY?
+    //
+    // ⚠️ The role vocabulary is no longer hardcoded either. It used to be an
+    // alternation of six names, so a genuinely new role was invisible to the
+    // check — it could not fail, which is this repository's most-recorded
+    // defect class. Now any single-quoted literal in the membership INSERT is
+    // read, and it is `expected` vs `offered` that has to agree.
     const migrations = join(__dirname, '../../../../infrastructure/migrations');
-    const written = new Set<string>();
-    for (const file of readdirSync(migrations).filter((f) => f.endsWith('.sql'))) {
+    const doorWrites = new Map<string, string>();
+    for (const file of readdirSync(migrations)
+      .filter((f) => f.endsWith('.sql'))
+      .sort()) {
       const sql = readFileSync(join(migrations, file), 'utf8');
-      for (const m of sql.matchAll(/INSERT INTO identity\.memberships[\s\S]{0,600}?/g)) {
-        const window = sql.slice(m.index, m.index + 600);
-        for (const r of window.matchAll(
-          /'(workshop_owner|supplier_owner|fleet_administrator|customer|insurance_assessor|towing_operator)'/g,
-        )) {
-          if (r[1]) written.add(r[1]);
-        }
+      for (const fn of sql.matchAll(
+        /CREATE OR REPLACE FUNCTION identity\.(register_\w+)\s*\(/g,
+      )) {
+        const name = fn[1];
+        if (!name || fn.index === undefined) continue;
+        // The body ends at the function's closing `$$;`.
+        const close = sql.indexOf('$$;', fn.index);
+        const body = sql.slice(fn.index, close === -1 ? sql.length : close);
+        const ins = body.indexOf('INSERT INTO identity.memberships');
+        if (ins === -1) continue;
+        const role = /role_name[\s\S]{0,400}?'([a-z_]+)'\s*,\s*'active'/.exec(
+          body.slice(ins, ins + 700),
+        );
+        if (role?.[1]) doorWrites.set(name, role[1]);
       }
     }
 
     expect(
-      written.size,
-      'no self-service role literal found in any migration — the reader is broken, not the product',
-    ).toBeGreaterThanOrEqual(6);
+      doorWrites.size,
+      'no self-service registration function found — the reader is broken, not the product',
+    ).toBeGreaterThanOrEqual(5);
+
+    const written = new Set(doorWrites.values());
 
     const offered = new Set(
       ACCOUNT_TYPES.map((t) => t.roleName).filter((r): r is string => r !== null),
