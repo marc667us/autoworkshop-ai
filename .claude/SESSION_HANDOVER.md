@@ -1,5 +1,163 @@
 # Session handover
 
+## ═══ 2026-08-17 — the org-admin roles, and an instrument that could not fail ═══
+
+**Tip `fa0b38e`. Six commits (`1c6d591` → `fa0b38e`). Tree clean, all pushed.**
+
+### ▶ NEXT SESSION STARTS AT `.claude/TASK_LIST_2026-08-17.md`
+
+`scripts/start-session.sh` now DERIVES that pointer (newest
+`TASK_LIST_[0-9]*.md`) and prints every control file's age, so it will keep
+finding the right file without anyone editing the script.
+
+```bash
+bash scripts/start-session.sh          # ALWAYS first
+```
+
+### State, measured after the deploy — not quoted
+
+| | |
+|---|---|
+| typecheck / lint | **11/11** · **10/10** |
+| Unit tests | **972 API passed · 1 skipped** (964 at session start; +8 from the new regression net) |
+| `verify/085` · `verify/080` | **6/6** · **6/6** |
+| **Live suite — anonymous** | **66 passed · 0 failed · 1 skipped** after every one of the four deploys |
+| **Live suite — signed-in** | 🔴 **NOT RUN — 4 checks UNMEASURED.** Blocked by `gh` auth |
+| Screen coverage | **274 of 385 (71%)**, 410 menu entries, **109** dead ends (was 273 / 110) |
+| Migrations in repo | **83** (085 added). 🔴 **NOT applied to production** |
+
+### 🔴 THREE THINGS FOR THE OWNER, IN ORDER
+
+1. **`gh`'s keyring token is invalid.** `git push` still works — separate
+   credential store — which is exactly the partial failure that reads as
+   "everything is fine". Until it is fixed **no workflow can be listed or
+   dispatched**: the signed-in live suite, `apply-migrations`, every diagnostic.
+   `! gh auth login -h github.com`
+2. **Then apply migration 085.** Verified in `apply-migrations.yml`, not quoted:
+   the `workflow_run` trigger leaves `confirm` unset, and unset means
+   **inspect-only**. Until it lands, `POST /registration/insurance` **replies
+   `insurance_owner` while the database writes `insurance_assessor`** — a
+   misleading response, not a failure. Nothing else regresses.
+   `gh workflow run apply-migrations.yml -f confirm=APPLY`, then **confirm the
+   run STARTED** — the shared firewall concurrency group silently evicts a
+   pending run.
+3. **An open question I found and did not chase.**
+   `/insurance/sales/my-products` and `/insurance/home/dashboard` answer **200
+   to an anonymous visitor**. Both carry sign-in markers so it is most likely
+   the app shell, **but keyword matching cannot settle it.** If any real product
+   or policy row renders before sign-in, that is a leak.
+
+### What shipped
+
+**1. `scripts/start-session.sh` — the instrument was lying in three ways.**
+It reported `[FAIL] Docker is not responding` and `exit 1` while all five
+containers were healthy (the CLI was simply not on that shell's PATH); its
+pointer named two files **12 and 9 days stale** and printed `[OK]` on both; and
+its migration check tested **sed's** exit code, so the failure branch was
+unreachable. Now: tooling gaps and outages are separate findings, the pointer is
+derived with ages printed, and it ends with **passed / failed / SKIPPED /
+warnings** plus a non-zero exit — it previously exited 0 while printing its own
+red.
+
+**2. Migration 085 — `insurance_owner` and `towing_owner`.** Two of the six
+self-service organisation types could never appoint anybody:
+`CAN_GRANT_MEMBERSHIP` held four roles and neither operational role was among
+them, `membership.service.ts` has the only membership INSERT in the API, and 080
+writes just the founder. Ten insurance screens and ten towing screens above a
+team that could not be assembled.
+
+**3. T1a — the screens that make it usable.** One implementation in
+`app/_shared/org-staff/`; insurance gets the new route
+`/insurance/settings/users`, towing renders the section inside its existing
+`/operations/settings` (§52 defines one settings entry, and changing approved
+navigation is prohibited).
+
+### 🔴 THE LESSON OF THE DAY: THE REVIEWERS FOUND TWENTY-SEVEN THINGS, AND THE SHARPEST WERE ABOUT CLAIMS I HAD JUST MADE
+
+Codex: 9 on the script, 6 on 085, 4 on T1a. The Supervisor, run independently:
+**10 more on 085 and 8 more on T1a that Codex did not find.** Ninth consecutive
+session in which neither reviewer alone was sufficient.
+
+Three of them are worth carrying:
+
+- 🔴 **A MIGRATION THAT PASSED LOCALLY AND WOULD HAVE DONE NOTHING ON RENDER.**
+  The backfill ran before its admin context was set. Locally `autoworkshop` is
+  `rolsuper = t, rolbypassrls = t`, so RLS never applied and every check passed;
+  on Render the owner is not a superuser and the CTE would have seen **zero
+  rows**. Measured, not argued: as the owner, `identity.is_platform_admin()`
+  returns **`f` without** the context and **`t` with** it.
+- 🔴 **"THE WRITE HALF OPENED, THE READ HALF DID NOT" — FOUR TIMES IN ONE DAY.**
+  `CAN_GRANT_MEMBERSHIP` without the roster · `CAN_CREATE_BRANCH` without the
+  branch list · `MembershipService.list()` widened and `UserService.list()` not
+  · and `grant()` tenant-scoped while `withdraw()` became org-scoped, producing
+  memberships an admin could create and could not revoke.
+  **`apps/api/src/identity/org-admin-access.spec.ts` is now the net for that
+  shape**, and it is PROVEN to discriminate — reverting a gate fails it by file
+  and line.
+- 🔴 **MY OWN REGRESSION TEST HAD THE DEFECT IT WAS WRITTEN TO CATCH.** It
+  anchored on the first `UPDATE identity.memberships`, which is the reinstate
+  inside `grant()`, so it would have passed with the organisation predicate
+  deleted from `withdraw()`.
+
+⚠️ **AND ONE REVIEWER FINDING WAS RIGHT IN DIAGNOSIS AND WRONG IN REMEDY.** The
+Supervisor showed my comment "§52's towing tree has no gated entry" was false —
+it gates two. But granting `towing_operator` `finance.read` is refused by
+`permission-matrix.spec.ts`: a dispatcher is not a bookkeeper. **The empty list
+was correct; only the comment was wrong.** Check every finding against source.
+
+### 🔴 MY WORST ERROR: I SEVERED THE DOCKER STACK
+
+Widening the kill list to cover `scripts/start-local.sh`, I matched any
+`<word>:<port>` — which also matches **`localhost:8080` inside a URL**. 8080
+entered the KILL list, section 2 killed the process listening on it, and on
+Windows that is **Docker Desktop's port proxy**. It took the API pipe with it:
+every container unreachable, and the next probes reported an outage that reads
+exactly like the 2026-08-01 host-forwarding fault. Docker Desktop had to be
+restarted by hand, and `evercoat-postgres` — **another project's database** —
+went down with it.
+
+Two independent guards now, and the refusal is printed rather than silent:
+the parse is anchored on `APPS`, and `INFRA_PORTS`
+(`5432, 8080, 6379, 4222, 9000, 9001, 3478, 1025, 8025`) can never be killed
+whatever any parse says.
+
+▶ **THE RULE THAT WOULD HAVE PREVENTED IT: a widened kill list is a DESTRUCTIVE
+change and must be DRY-RUN before it is executed.** The port-scan block runs
+standalone — do that first, every time.
+
+⚠️ A second outage followed and was **not** mine: `Docker Desktop Installer` was
+running and the API version moved **v1.54 → v1.55** across the restart. Docker
+was auto-updating itself. Two causes, and conflating them would have sent the
+next session hunting the wrong one.
+
+### New in the repo this session
+
+| Path | What it is |
+|---|---|
+| `scripts/run-live-suite-locally.sh` | Runs the anonymous live suite **without `gh`**, by extracting the inline Python out of `live-suite.yml`. Warms with `-L` first — the pack roots are `redirect()` stubs, so without it the destination is never woken. Proven: 66/0/1. |
+| `scripts/proofs/prove-085-backfill.sql` | Adversarial proof of 085's founder rule, rolled back: founder promoted · later assessor **not** · admin-created first member **not** · later self-created row **not**. |
+| `scripts/proofs/prove-085-rls.sql` | Shows the backfill's visibility as `autoworkshop_app` vs the owner — the local-superuser trap in one file. |
+| `apps/api/src/identity/org-admin-access.spec.ts` | The write-half/read-half regression net. |
+| `infrastructure/migrations/085_*` + `verify/085_*` | The org-admin roles and their proof. |
+
+⚠️ **`verify/080` WAS EDITED, DELIBERATELY.** 085 replaces the functions it
+asserts, so `rehearse-migration.yml migration=080` — a supported operation —
+would have been a guaranteed red run against a correct database.
+
+### ⚠️ NOT DONE, and stated rather than implied
+
+**Nobody has signed in and LOOKED at the new screens.** The route compiles
+(`ƒ /insurance/settings/users 1.19 kB`), the coverage audit counts it, every
+gate is green — and this repository records that **a green build is not a
+working feature**. A signed-in pass as an `insurance_owner` needs 085 on a
+database plus a seeded identity. Do it before calling T1a finished.
+
+The new route returns **404 anonymously and that is CORRECT** — measured against
+its peers: `/insurance/settings/claim-rules` and `/towing/operations/settings`
+are both `organization.admin`-gated and also 404.
+
+---
+
 ## ═══ 2026-08-16 — the firewall mutex, the switchers that stranded the owner, and slice 18 part 1 ═══
 
 **Tip `b12bf70`. 20 commits (`757c41b` -> `b12bf70`). Tree clean, all pushed.**
