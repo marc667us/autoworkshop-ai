@@ -327,7 +327,7 @@ The framework above assumes a working install of the three core components. As o
 | Google ADK (Python) | `google-adk 2.2.0` | `python -c "import google.adk; print(google.adk.__version__)"` |
 | Python | 3.14.4 (Windows x64) | `python --version` |
 | Claude Code | Opus 4.7 (`claude-opus-4-7`) | this session |
-| Codex CLI | v0.137.0 (ChatGPT Plus auth, `stored auth mode: chatgpt`) | `codex --version` |
+| Codex CLI | **v0.147.0** (ChatGPT Plus auth, `stored auth mode: chatgpt`) | `codex --version`, re-measured 2026-08-19 |
 
 When this row drifts (new ADK release, new Claude Code model), update it here, NOT in the per-app `CLAUDE.md` — then re-sync.
 

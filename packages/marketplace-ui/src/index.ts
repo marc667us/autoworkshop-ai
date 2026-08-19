@@ -42,6 +42,9 @@ export {
   fetchMechanics,
   fetchStats,
   fetchVin,
+  fetchInsuranceProducts,
+  fetchInsuranceProduct,
+  submitInsuranceEnquiry,
 } from './public-api';
 export type {
   PublicPart,
@@ -50,6 +53,7 @@ export type {
   CatalogueFacets,
   CatalogueStats,
   PublicResult,
+  PublicInsuranceProduct,
 } from './public-api';
 
 // The basket. Browser state, shared by both public mounts — see
@@ -77,3 +81,15 @@ export {
   siblingAppBaseFrom,
   supplierRegisterHrefFrom,
 } from './customer-app';
+
+// The shopper's half of the insurance marketplace — slice 17. Exported from the
+// package for the same reason the landing is: one implementation, several front
+// doors (§0.3).
+export {
+  InsuranceCoverList,
+  InsuranceCoverDetail,
+  InsuranceCoverUnavailable,
+  coverTypeLabel,
+} from './insurance-cover';
+export type { InsuranceCoverListProps, InsuranceCoverDetailProps } from './insurance-cover';
+export { EnquiryForm } from './enquiry-form';

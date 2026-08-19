@@ -487,12 +487,26 @@ export class CatalogueService {
    *
    * ── WHY A FUNCTION RATHER THAN A QUERY ────────────────────────────────────
    *
-   * Every other public read here is a plain `queryWithoutTenant` gated by an
-   * `is_published` policy. `insurance.products` deliberately has no such
-   * policy: it holds an insurer's UNPUBLISHED DRAFTS, and an RLS policy wide
-   * enough for an anonymous shopper is also wide enough for every authenticated
-   * tenant's ordinary queries. So migration 082 exposes exactly the public
-   * projection through a SECURITY DEFINER function, and this calls it.
+   * 🔴 THIS COMMENT WAS STALE AND SAID THE OPPOSITE OF THE SCHEMA. Corrected
+   * 2026-08-19. It read: *"`insurance.products` deliberately has no such
+   * policy"* — a claim that was true when 082 shipped and was FALSIFIED BY 083
+   * the same week, which added `products_public_read` precisely because the
+   * definer-function-only approach returned `200 []` on production. A comment
+   * asserting a rule the database does not have is a defect in its own right
+   * here, and this one would have talked the next reader out of the fix.
+   *
+   * What is actually true now:
+   *
+   *   · `insurance.products` DOES have a permissive public-read policy (083),
+   *     `USING (is_published AND is_verified)`. Drafts stay invisible because
+   *     the predicate excludes them, not because no policy exists.
+   *   · The function is still the right call, for a DIFFERENT reason than the
+   *     original one: it is a PROJECTION. It returns only the fields a shopper
+   *     needs, so `created_by`, the owning tenant and the draft flags are
+   *     absent from the response rather than hidden in it.
+   *   · 084 then removed its join to `identity.organizations` — the join was
+   *     re-imposing that table's stricter policy and silently returning zero
+   *     rows. The insurer's name is denormalised onto the product instead.
    *
    * The function returns only products that are BOTH published and verified,
    * and only the fields a shopper needs — no draft, no `created_by`, no owning

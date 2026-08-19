@@ -13,16 +13,40 @@
 # correctly refuses. The account falls back to `workshop_owner` and sees the
 # workshop tree only.
 #
-# 🔴 AND `grant-platform-admin.yml` IS STALE — IT MAKES THIS EXACT MISTAKE.
-# It assigns the Keycloak realm role and creates a MEMBERSHIP. Both were the
-# right answer on 2026-08-09. Since 077/078 neither confers `platform.admin`, so
-# running it produces an account that looks administrative in three places and
-# has no authority anywhere. It should be deprecated in favour of this file.
+# 🔴 CORRECTION, 2026-08-19: THE PARAGRAPH THAT WAS HERE WAS WRONG, AND IT HAD
+# ALREADY PROPAGATED INTO THE TASK LIST AS ISSUE I7.
 #
-# ⚠️ THIS IS THE MISSING WRITE PATH RECORDED AS C1a. The 08-15 audit found every
-# API reference to `identity.platform_administrators` is a READ, and the only
-# writer in the repository is 077's one-time backfill — so there was **no way to
-# appoint a second administrator or replace the first**. This is that path.
+# It said `grant-platform-admin.yml` IS STALE, that it only assigns the realm
+# role and creates a membership, and that it "should be deprecated in favour of
+# this file". Measured in the repository rather than quoted:
+#
+#   · `grant-platform-admin.yml:361` INSERTs into
+#     `identity.platform_administrators` — the grant row that actually confers
+#     the authority — and its own comment beside that insert explains why the
+#     membership row is ALSO kept: the navigation, the permission matrix and the
+#     role switcher still resolve a viewer's tree from `role_name`, so a grant
+#     without a membership is an administrator with reach and no menu.
+#   · `git log -S` dates that insert to `163dcc4`, **2026-08-10** — *"A platform
+#     administrator is a grant record, not a text column"*.
+#   · This file was written on **2026-08-16**, six days LATER, and described a
+#     gap that had been closed before it was written.
+#
+# That is this repository's recorded failure mode in its second direction: a
+# comment claiming a gap that no longer exists is as costly as one claiming a
+# safety net that does not. Acting on it would have deprecated a workflow that
+# works, and left the ONLY appointment path as the one below.
+#
+# ▶ SO THE TWO ARE COMPLEMENTARY, NOT RIVALS:
+#     `grant-platform-admin.yml`   — appoint a platform administrator who also
+#                                    needs the administrative UI (both halves).
+#     THIS FILE                    — the database-side grant on its own, for the
+#                                    audit/superuser case where no membership is
+#                                    wanted.
+#
+# ⚠️ C1a ("every API reference is a READ; the only writer is 077's one-time
+# backfill") remains TRUE OF THE API and is the reason both of these are
+# workflows rather than endpoints. It was never true that the repository had no
+# appointment path at all.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 # WHY THIS IS ALLOWED TO WRITE, AND WHY THAT IS NOT A HOLE

@@ -49,6 +49,20 @@ export interface PublicMechanic {
   specialisms: string[];
 }
 
+export interface PublicInsuranceProduct {
+  id: string;
+  insurer: string;
+  name: string;
+  summary: string | null;
+  coverType: string;
+  /** A STRING. `numeric` loses precision through `number`, and this is money. */
+  premium: string;
+  currency: string;
+  termMonths: number;
+  excess: string | null;
+  termsUrl: string | null;
+}
+
 export interface CatalogueFacets {
   categories: { slug: string; name: string; partCount: number }[];
   makes: string[];
@@ -132,4 +146,104 @@ export function fetchVin(vin: string): Promise<PublicResult<PublicVin>> {
   // Encoded because it reaches a URL PATH and the value is whatever somebody
   // typed into a public form. The API validates the alphabet again on its side.
   return get(`/vin/${encodeURIComponent(vin.trim().toUpperCase())}`);
+}
+
+/**
+ * The published insurance products — slice 17, the shopper's half.
+ *
+ * The endpoint has been anonymous since 082 and NO SCREEN IN THE PRODUCT
+ * RENDERED IT until this was added: the insurer could list, the platform could
+ * levy, and the shopper could not see any of it.
+ */
+export function fetchInsuranceProducts(): Promise<PublicResult<PublicInsuranceProduct[]>> {
+  return get('/insurance-products');
+}
+
+/**
+ * One product, for the detail page.
+ *
+ * 🔴 IT DISTINGUISHES "NOT LISTED" FROM "COULD NOT ASK", and the caller must
+ * keep them apart. The detail page originally mapped BOTH to `notFound()`, so a
+ * perfectly live product would have rendered as nonexistent for the duration of
+ * an API outage — telling a shopper a real insurer's cover does not exist. That
+ * is worse than an error page, because it is a confident wrong answer. Caught by
+ * Codex, 2026-08-19.
+ *
+ * `get()` cannot make this distinction for every caller — a 404 from the parts
+ * search means something different — so it is drawn here, where the route's own
+ * semantics are known: the API answers 404 for a product that is absent,
+ * unpublished or unverified, and those are genuinely one answer by design.
+ */
+export async function fetchInsuranceProduct(
+  id: string,
+): Promise<
+  | { ok: true; data: PublicInsuranceProduct }
+  | { ok: false; missing: true }
+  | { ok: false; missing: false; reason: string }
+> {
+  try {
+    const res = await fetch(
+      `${apiBaseUrl()}/api/v1/public/insurance-products/${encodeURIComponent(id)}`,
+      { cache: 'no-store', headers: { accept: 'application/json' } },
+    );
+    if (res.status === 404) return { ok: false, missing: true };
+    if (!res.ok) {
+      return { ok: false, missing: false, reason: `The insurance service answered ${res.status}.` };
+    }
+    return { ok: true, data: (await res.json()) as PublicInsuranceProduct };
+  } catch {
+    return { ok: false, missing: false, reason: 'The insurance service is not reachable right now.' };
+  }
+}
+
+/**
+ * Lodge an enquiry with the insurer — the ONLY write on this public surface.
+ *
+ * ⚠️ THE ONE POST IN A FILE OF GETs, AND IT IS ON A DIFFERENT CONTROLLER.
+ * `PublicController` states "nothing here writes" as part of what makes it safe
+ * unguarded; the API keeps that true by serving this from
+ * `PublicInsuranceController` instead. What makes the write safe is in the
+ * database — `insurance.submit_enquiry()` derives the tenant, organisation and
+ * price from the product, and 086's INSERT policy adjudicates the row
+ * relationally rather than with `WITH CHECK (true)`.
+ *
+ * ⚠️ NOTHING HERE NAMES AN INSURER, A TENANT OR AN AMOUNT, and nothing may be
+ * added that does. Those are derived server-side precisely so a caller cannot
+ * choose them.
+ */
+export async function submitInsuranceEnquiry(input: {
+  productId: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone?: string;
+  vehicleRegistration?: string;
+  message?: string;
+}): Promise<PublicResult<{ received: true }>> {
+  try {
+    const res = await fetch(`${apiBaseUrl()}/api/v1/public/insurance-enquiries`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      // 🔴 THE REFUSAL IS READ OUT OF THE BODY WHERE THERE IS ONE. The API's
+      // 404 for an unlisted product names what the visitor can do instead
+      // ("browse the published products"), and replacing that with a status
+      // code would throw away the only actionable half of the answer — the
+      // failure this repository records as its most expensive class.
+      let reason = `The insurance service answered ${res.status}.`;
+      try {
+        const body = (await res.json()) as { message?: string | string[] };
+        const m = Array.isArray(body?.message) ? body.message.join(' ') : body?.message;
+        if (m) reason = m;
+      } catch {
+        // A non-JSON error body is not itself an error; the status stands.
+      }
+      return { ok: false, reason };
+    }
+    return { ok: true, data: (await res.json()) as { received: true } };
+  } catch {
+    return { ok: false, reason: 'The insurance service is not reachable right now.' };
+  }
 }

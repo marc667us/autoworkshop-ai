@@ -108,3 +108,43 @@ export async function setProductPublicationAction(formData: FormData): Promise<A
   revalidatePath('/insurance/sales/my-products');
   return { created: isPublished ? 'Listed on the marketplace.' : 'Removed from the marketplace.' };
 }
+
+/**
+ * Work the enquiry inbox: new -> contacted -> closed.
+ *
+ * 🔴 THIS IS THE CALLER `PATCH /insurance/enquiries/:id/status` NEEDS IN ORDER
+ * TO BE SHIPPED. The same rule this file's header states for the product
+ * routes, applied to slice 17's read half: without it the insurer can see an
+ * enquiry and can never mark it dealt with, so the inbox only ever grows and
+ * "new" stops meaning anything.
+ */
+export async function setEnquiryStatusAction(formData: FormData): Promise<ActionResult> {
+  const id = String(formData.get('enquiryId') ?? '').trim();
+  if (!id) return { error: 'Nothing was selected. Reload the page and try again.' };
+
+  const status = String(formData.get('status') ?? '').trim();
+  // Checked here as well as by the API's zod enum, because this one names the
+  // control the person actually used rather than a field in a JSON body.
+  if (status !== 'new' && status !== 'contacted' && status !== 'closed') {
+    return { error: 'Choose new, contacted or closed.' };
+  }
+
+  const result = await apiPatch('insurance', `/insurance/enquiries/${id}/status`, { status });
+
+  if (!result.ok) {
+    const error =
+      result.reason === 'invalid'
+        ? (result.message ?? 'That change was not accepted.')
+        : result.reason === 'forbidden'
+          ? (result.message ?? 'Your role may not update an enquiry.')
+          : result.reason === 'unauthenticated'
+            ? 'Your session has ended. Sign in again, then retry.'
+            : result.reason === 'notFound'
+              ? 'That enquiry no longer exists. Reload the page.'
+              : 'The service did not respond. Nothing has been changed — try again shortly.';
+    return { error };
+  }
+
+  revalidatePath('/insurance/sales/my-products');
+  return { created: `Marked as ${status}.` };
+}

@@ -50,7 +50,29 @@ const CreateProductBody = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
   termMonths: z.number().int().positive().max(60),
   excess: z.number().nonnegative().max(99999999).optional(),
-  termsUrl: z.string().url().max(2000).optional(),
+  // 🔴 `z.string().url()` IS NOT A SCHEME CHECK, AND THAT IS A REAL HOLE, NOT A
+  // TIGHTENING. Zod delegates to `new URL()`, which happily parses
+  // `javascript:alert(document.cookie)` and `data:text/html,<script>…`.
+  // Measured 2026-08-19: both are ACCEPTED by `z.string().url()`.
+  //
+  // Until slice 17 that only reached an admin screen. It now reaches
+  // `/cover/[id]`, which is ANONYMOUS — so an insurer could store a
+  // `javascript:` URL, have the product verified (verification reviews the
+  // COVER, not the URL scheme) and publish stored XSS to every visitor. React
+  // does not block `javascript:` hrefs; it warns in development and renders
+  // them in production.
+  //
+  // Refused here so it cannot be STORED, and refused again at render by
+  // `safeExternalHref` — the value is already in the database for products
+  // created before this check, so the boundary alone would not be enough.
+  termsUrl: z
+    .string()
+    .url()
+    .max(2000)
+    .refine((u) => /^https?:$/.test(new URL(u).protocol), {
+      message: 'The terms link must be an http:// or https:// address.',
+    })
+    .optional(),
 });
 
 type PublicationBody = z.infer<typeof PublicationBody>;
@@ -77,6 +99,11 @@ const RecordSaleBody = z
     message: 'Cover must end after it starts.',
     path: ['coverEndsOn'],
   });
+
+const EnquiryStatusBody = z.object({
+  status: z.enum(['new', 'contacted', 'closed']),
+});
+type EnquiryStatusBody = z.infer<typeof EnquiryStatusBody>;
 
 @Controller('insurance')
 @UseGuards(TenantGuard)
@@ -127,6 +154,29 @@ export class InsuranceController {
   @Get('levies')
   levies(@Req() req: AuthenticatedRequest) {
     return this.insurance.levySummary(req.tenantContext);
+  }
+
+  /**
+   * `GET /insurance/enquiries` — the shopper's half, arriving.
+   *
+   * 🔴 THIS ROUTE IS WHAT MAKES THE PUBLIC ENQUIRY FORM MORE THAN A CONTROL
+   * THAT DISCARDS ITS INPUT. Migration 086 was written only after asking which
+   * production path WRITES an enquiry; this is the matching question for the
+   * READ, and the repository has recorded five roles that shipped without one.
+   */
+  @Get('enquiries')
+  listEnquiries(@Req() req: AuthenticatedRequest) {
+    return this.insurance.listEnquiries(req.tenantContext);
+  }
+
+  /** Work the inbox: new -> contacted -> closed. Nothing else is editable. */
+  @Patch('enquiries/:id/status')
+  setEnquiryStatus(
+    @Req() req: AuthenticatedRequest,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(validatedBody(EnquiryStatusBody)) body: EnquiryStatusBody,
+  ) {
+    return this.insurance.setEnquiryStatus(req.tenantContext, id, body.status);
   }
 }
 

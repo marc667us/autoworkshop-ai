@@ -49,6 +49,19 @@ interface QueueProduct {
  * rounding errors enter a financial record. So format the string; never
  * `Number()` it.
  */
+/**
+ * An insurer-supplied URL, rendered only if it is http/https. See the call site
+ * for why the scheme check is load-bearing rather than tidiness.
+ */
+function httpsOnly(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    return /^https?:$/.test(new URL(raw).protocol) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
 function money(amount: string | null, currency: string): string {
   if (amount === null) return '—';
   return `${currency} ${amount}`;
@@ -190,13 +203,22 @@ function Details({ product: p }: { product: QueueProduct }) {
         {p.excess !== null ? ` · excess ${money(p.excess, p.currency)}` : ''}
       </div>
       {p.summary ? <p style={{ margin: `${primitive.space[1]} 0 0` }}>{p.summary}</p> : null}
-      {p.termsUrl ? (
+      {httpsOnly(p.termsUrl) ? (
         // The terms are the thing being verified, so they must be reachable
         // from the decision rather than looked up elsewhere. External and
         // untrusted: `noopener` so the opened page cannot reach back through
         // `window.opener`, `noreferrer` so it is not told where it came from.
+        //
+        // 🔴 AND THE SCHEME IS CHECKED. `z.string().url()` accepts
+        // `javascript:` and `data:text/html` — measured 2026-08-19 — because
+        // zod delegates to `new URL()`, which parses both. React renders a
+        // `javascript:` href in production with only a development warning, so
+        // this link was one click from executing an insurer-supplied script IN
+        // THE PLATFORM ADMINISTRATOR'S SESSION, which is the highest-privilege
+        // session there is. Found while adding the anonymous public page that
+        // renders the same field.
         <p style={{ margin: `${primitive.space[1]} 0 0`, fontSize: primitive.fontSize.sm }}>
-          <a href={p.termsUrl} target="_blank" rel="noopener noreferrer">
+          <a href={httpsOnly(p.termsUrl) as string} target="_blank" rel="noopener noreferrer">
             Read the policy terms before deciding
           </a>
         </p>

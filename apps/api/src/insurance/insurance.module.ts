@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { DatabaseModule } from '../database/database.module';
 import { IdentityModule } from '../identity/identity.module';
 import { AdminInsuranceController, InsuranceController } from './insurance.controller';
+import { PublicInsuranceController } from './public-insurance.controller';
 import { InsuranceService } from './insurance.service';
 
 /**
@@ -27,7 +28,10 @@ import { InsuranceService } from './insurance.service';
  */
 @Module({
   imports: [DatabaseModule, AuditModule, IdentityModule],
-  controllers: [InsuranceController, AdminInsuranceController],
+  // ⚠️ `PublicInsuranceController` CARRIES NO `TenantGuard`, ON PURPOSE — it
+  // is the shopper's anonymous half (086). Its own header states what makes an
+  // unguarded write safe, and all three mechanisms are in the database.
+  controllers: [InsuranceController, AdminInsuranceController, PublicInsuranceController],
   providers: [InsuranceService],
   exports: [InsuranceService],
 })

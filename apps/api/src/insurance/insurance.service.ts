@@ -43,6 +43,26 @@ const PRODUCT_COLUMNS = `
   p.id, p.name, p.summary, p.cover_type, p.premium, p.currency, p.term_months,
   p.excess, p.terms_url, p.is_published, p.is_verified, p.created_at`;
 
+export interface EnquiryRow {
+  id: string;
+  productId: string;
+  productName: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string | null;
+  vehicleRegistration: string | null;
+  message: string | null;
+  premium: string;
+  currency: string;
+  status: string;
+  createdAt: string;
+}
+
+const ENQUIRY_COLUMNS = `
+  e.id, e.product_id, e.product_name, e.contact_name, e.contact_email,
+  e.contact_phone, e.vehicle_registration, e.message, e.premium, e.currency,
+  e.status, e.created_at`;
+
 function iso(v: unknown): string {
   return (v as Date)?.toISOString?.() ?? String(v);
 }
@@ -66,6 +86,29 @@ function toProduct(r: Record<string, unknown>): ProductRow {
     termsUrl: (r.terms_url as string) ?? null,
     isPublished: Boolean(r.is_published),
     isVerified: Boolean(r.is_verified),
+    createdAt: iso(r.created_at),
+  };
+}
+
+/**
+ * ⚠️ `premium` STAYS A STRING here for the same reason it does on a product:
+ * node-pg returns `numeric` as a string and coercing it loses precision on
+ * money. This one is a SNAPSHOT of what was advertised when the shopper asked,
+ * so it must not be re-derived from the product either — see migration 086.
+ */
+function toEnquiry(r: Record<string, unknown>): EnquiryRow {
+  return {
+    id: r.id as string,
+    productId: r.product_id as string,
+    productName: r.product_name as string,
+    contactName: r.contact_name as string,
+    contactEmail: r.contact_email as string,
+    contactPhone: (r.contact_phone as string) ?? null,
+    vehicleRegistration: (r.vehicle_registration as string) ?? null,
+    message: (r.message as string) ?? null,
+    premium: String(r.premium),
+    currency: r.currency as string,
+    status: r.status as string,
     createdAt: iso(r.created_at),
   };
 }
@@ -441,6 +484,72 @@ export class InsuranceService {
         policies: Number(r.policies),
         total: String(r.total),
       }));
+    });
+  }
+
+  // ── ENQUIRIES (086) ─────────────────────────────────────────────────────
+  //
+  // The shopper's half of the marketplace lands here. The WRITE is anonymous
+  // and does NOT live in this service — it has no tenant context to run under,
+  // so it goes through `insurance.submit_enquiry()` from the public module.
+  // What belongs here is the insurer's side: reading its own inbox and working
+  // it. See migration 086's header for why the two halves are split.
+
+  /**
+   * The insurer's enquiry inbox, newest first.
+   *
+   * ⚠️ NO `organization_id` PREDICATE IN THE SQL, AND THAT IS DELIBERATE — RLS
+   * supplies it. `enquiries_org_read` scopes every row to the caller's tenant
+   * AND organisation, exactly as `listProducts` above relies on
+   * `products_tenant_isolation`. Writing the predicate here as well would read
+   * as belt-and-braces and is actually a second source of truth that can drift
+   * from the policy.
+   */
+  async listEnquiries(ctx: TenantContext): Promise<EnquiryRow[]> {
+    assertInsuranceOperator(ctx, 'The insurance enquiry inbox');
+    return this.db.withTenant(ctx, async (client) => {
+      const res = await client.query(
+        `SELECT ${ENQUIRY_COLUMNS} FROM insurance.enquiries e
+          ORDER BY e.created_at DESC LIMIT 200`,
+      );
+      return res.rows.map((r) => toEnquiry(r as Record<string, unknown>));
+    });
+  }
+
+  /**
+   * Move an enquiry through new -> contacted -> closed.
+   *
+   * 🔴 THE STATUS IS THE ONLY THING THIS MAY CHANGE. An insurer editing the
+   * contact details or the premium on an enquiry would be rewriting what the
+   * shopper actually asked for, and the price snapshot exists precisely so that
+   * record survives a re-pricing. `updated_at` is left to 086's trigger.
+   */
+  async setEnquiryStatus(
+    ctx: TenantContext,
+    id: string,
+    status: 'new' | 'contacted' | 'closed',
+  ): Promise<EnquiryRow> {
+    assertInsuranceOperator(ctx, 'Updating an insurance enquiry');
+    return this.db.withTenant(ctx, async (client) => {
+      const res = await client.query(
+        `UPDATE insurance.enquiries e
+            SET status = $2, updated_by = $3
+          WHERE e.id = $1
+      RETURNING ${ENQUIRY_COLUMNS}`,
+        [id, status, ctx.userId],
+      );
+      const row = res.rows[0] as Record<string, unknown> | undefined;
+      // Not in this organisation, or does not exist. One answer for both:
+      // telling a caller an id exists but belongs elsewhere is a disclosure.
+      if (!row) throw new NotFoundException('That enquiry was not found.');
+
+      await this.audit.write(client, ctx, {
+        action: 'insurance.enquiry.status_changed',
+        resourceType: 'insurance_enquiry',
+        resourceId: id,
+        detail: { status },
+      });
+      return toEnquiry(row);
     });
   }
 }
