@@ -1,5 +1,148 @@
 # Session handover
 
+## ═══ 2026-08-19 — slice 17, and three privilege holes the policy did not cover ═══
+
+**Tip `50e0481`. One commit. Tree clean. 🔴 NOT PUSHED — deliberately, see below.**
+
+### ▶ NEXT SESSION STARTS AT `.claude/TASK_LIST_2026-08-19.md`
+
+```bash
+bash scripts/start-session.sh          # ALWAYS first
+```
+
+### 🔴 THREE THINGS FOR THE OWNER, IN ORDER
+
+1. **`gh workflow run` IS BLOCKED IN THIS SESSION** by the harness permission
+   classifier — read-only `gh` works, dispatch does not. That is why nothing was
+   deployed. Either grant the permission or run the sequence yourself:
+   ```bash
+   git push origin master
+   gh workflow run apply-migrations.yml -f confirm=APPLY   # 085 AND 086
+   gh workflow run deploy-api.yml       -f confirm=APPLY
+   gh workflow run live-suite.yml
+   ```
+   **Confirm each run STARTED** — the shared firewall concurrency group evicts a
+   pending run silently, and a `cancelled` run nobody cancelled is an evicted
+   request.
+2. **THE PUSH WAS HELD ON PURPOSE.** Migration **085 is still not on production**
+   (carried from 08-17) and **086 is new**. Pushing triggers Release, which would
+   deploy the new `/cover` routes and `/insurance/enquiries` against a schema
+   with no `insurance.enquiries` table — the recorded "push and migrate in ONE
+   pass" hazard. Nothing existing would break; the new routes would 500. The
+   deploy is one command away once dispatch works.
+3. **`RENDER_API_KEY` still unrotated** since 2026-08-17. Unchanged, owner-only.
+
+### State, measured — not quoted
+
+| | |
+|---|---|
+| typecheck / lint | **11/11** · **10/10** |
+| Unit tests | **981 passed · 1 skipped** (972 at session start; +9 from the new integration spec) |
+| `verify/086` | **8/8** |
+| Migrations in repo | **84** (086 added). 🔴 **085 and 086 both NOT on production** |
+| Screen coverage | **274 of 385 (71%)**, 410 entries, **109** dead ends — **UNCHANGED, and correctly so** |
+| API boot | **BOOTED**, health 200, all four new routes exercised on a running server |
+| Live suite | 🔴 **NOT RUN — nothing was deployed.** Not a pass, not a fail: unmeasured |
+
+⚠️ **THE COVERAGE NUMBER DID NOT MOVE AND THAT IS NOT A FAILURE.** `/cover` and
+`/cover/[id]` are PUBLIC routes, outside all eleven nav trees, and the enquiry
+inbox is a section on an approved screen rather than a new menu entry. The audit
+counts menu entries, so it is structurally blind to this slice. Do not "fix" the
+number by inventing nav entries — that needs owner approval (see below).
+
+### What shipped — slice 17, the shopper's half of the insurance marketplace
+
+`GET /public/insurance-products` has been anonymous since 082 and **no screen in
+the product rendered it**. The insurer could list, the platform could levy, and
+the shopper could see none of it.
+
+Now: `/cover` (browse) → `/cover/[id]` (detail) → **enquiry** → the insurer's
+inbox on `/insurance/sales/my-products`.
+
+**The write-path question was asked BEFORE the form was built**, as the task list
+ordered. There was no enquiry table, so the form would have been a control that
+discards what a person types into it. Order: table → policy → function →
+endpoint → screen, with the insurer's READ half in the same commit.
+
+### 🔴 THE LESSON OF THE DAY: A POLICY AND A GRANT ARE TWO HALVES OF ONE CONTROL
+
+`enquiries_public_insert` adjudicates the three KEY columns and is **indifferent
+to every other column in the row**. Reading the policy alone, the migration's own
+header concluded the premium could not be forged. Codex asked what the GRANT
+allowed, and both halves were reproduced against the database:
+
+- `GRANT INSERT` → the app role wrote a policy-compliant enquiry with a premium,
+  currency and product name **of its own invention**. Now revoked; the only route
+  in is `submit_enquiry()`.
+- table-wide `GRANT UPDATE` → the insurer rewrote the **shopper's own e-mail and
+  the quoted premium**, defeating the entire point of the price snapshot. Now
+  `GRANT UPDATE (status, updated_by)`.
+
+**Ask of every RLS policy: what does the GRANT permit that the policy does not
+mention?**
+
+### 🔴 `INSERT ... RETURNING` IS REFUSED FOR AN ANONYMOUS WRITER
+
+RETURNING reads the row back; that read is adjudicated by the SELECT policy;
+`enquiries_org_read` demands a tenant; an anonymous shopper has none. Measured
+in one block against the same product:
+
+```
+WITHOUT RETURNING .... SUCCEEDED
+WITH RETURNING ....... FAILED  new row violates row-level security policy
+```
+
+It passed every local run — the function is SECURITY DEFINER and this
+workstation's owner is a superuser — and would have failed on Render. **The error
+message actively misleads**: it reads as a rejected INSERT and sends you to debug
+the INSERT policy, which is correct. `submit_enquiry` generates its own id.
+
+### 🔴 STORED XSS, ANONYMOUSLY REACHABLE — AND IT WAS ALREADY IN THE ADMIN SCREEN
+
+`z.string().url()` is **not a scheme check**. Zod delegates to `new URL()`.
+Measured: `javascript:alert(document.cookie)` and `data:text/html,<script>` are
+both **ACCEPTED**. Slice 17 renders `termsUrl` as an `<a href>` on a page needing
+no account, and React renders a `javascript:` href in production with only a
+development warning. The same field was already linked on
+`admin/_screens/insurance-review-screen.tsx` — one click from executing
+insurer-supplied script **in the platform administrator's session**.
+
+Refused now at the API boundary (so it cannot be stored) *and* at render (so rows
+written before the check are still safe). A boundary check alone protects only
+what has not been written yet.
+
+### 🔴 I7 IS REFUTED, NOT FIXED — AND THE WRONG CLAIM HAD ALREADY PROPAGATED
+
+The task list said `grant-platform-admin.yml` is stale and should be deprecated.
+**It is not.** It INSERTs the `identity.platform_administrators` grant row at
+line 361, and `git log -S` dates that to `163dcc4`, **2026-08-10**. The stale
+artifact was the comment in `provision-audit-superuser.yml` — written
+**2026-08-16, six days later** — describing a gap that had already been closed.
+Acting on it would have deprecated a working appointment path.
+
+**A comment claiming a gap that no longer exists costs as much as one claiming a
+safety net that does not.** Corrected in place.
+
+### Other corrections
+
+- `public/catalogue.service.ts` claimed `insurance.products` *"deliberately has
+  no"* public-read policy. 083 added one the same week. Corrected.
+- `CLAUDE.md` §0.4 recorded Codex **0.137.0**; measured **0.147.0**.
+
+### ⚠️ OPEN, AND DELIBERATELY NOT DONE
+
+- **Enquiries deserve their own nav entry** under `Products and Sales`. Adding
+  one is a *change to approved navigation*, which `CLAUDE.md` prohibits without
+  review. It is rendered as a section on `my-products` instead — the same
+  compromise T1a made for towing on 08-17. **Owner decision.**
+- **No rate limiting on the anonymous POST.** This repository has no throttler at
+  all; inventing one on a single route would be a second implementation of a
+  cross-cutting concern. Recorded rather than papered over with something that
+  looks like a control and is not.
+- **N4 from 08-17 is still unmet**: nobody has signed in as an `insurance_owner`
+  and LOOKED at the org-admin screens. A green build is not a working feature.
+
+
 ## ═══ 2026-08-17 — the org-admin roles, and an instrument that could not fail ═══
 
 **Tip `fa0b38e`. Six commits (`1c6d591` → `fa0b38e`). Tree clean, all pushed.**
