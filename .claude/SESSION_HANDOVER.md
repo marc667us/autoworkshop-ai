@@ -1,8 +1,97 @@
 # Session handover
 
-## ═══ 2026-08-19 — slice 17, and three privilege holes the policy did not cover ═══
+## ═══ 2026-08-19 — slice 17 is LIVE, after four separate things went wrong ═══
 
-**Tip `50e0481`. One commit. Tree clean. 🔴 NOT PUSHED — deliberately, see below.**
+**Tip `1b07eab`. Five commits, pushed. Tree clean. DEPLOYED AND VERIFIED.**
+
+| | |
+|---|---|
+| CI · Security CI · Release · deploy-api | **all GREEN** |
+| Migrations on PRODUCTION | **84 / 84** — 085 and 086 both applied (`2 applied, 82 skipped`) |
+| **Live suite** | **73 passed · 0 failed · 1 SKIPPED** (69 anonymous + 4 signed-in) — was 70/0/1; +3 new slice-17 checks |
+| Slice 17 end-to-end on production | `/cover` 200 renders the real product · `/cover/<id>` 200 · enquiry **201 `{"received":true}`** · unknown product **404** with a message naming what to do instead |
+
+🔴 **THE HEADLINE: FOUR THINGS WENT WRONG AFTER EVERY LOCAL GATE WAS GREEN**, and
+each was invisible to the one before it.
+
+1. **Migration 085 refused on production.** Its own guard fired — correctly. Two
+   hand-seeded `[AUDIT]` organisations had one active member each with
+   `created_by IS NULL`, so `created_by = user_id` was NULL, not false.
+2. **My fix for it was a privilege escalation, and Codex falsified it.**
+3. **The Next production build failed** — and was hiding a worse runtime bug.
+4. **The cover pages deployed, built, and could not be opened.** Middleware sent
+   `/cover` to `/` with a 307.
+
+⚠️ **`Release` DEPLOYS WEB ONLY.** The API needs `deploy-api.yml -f confirm=APPLY`
+as a separate dispatch. Both new public routes 404'd on production after a green
+Release until that ran — the recorded rule, paid for again.
+
+### 🔴 085 REFUSED, AND THE REFUSAL WAS RIGHT
+
+`apply-migrations` 32252947622:
+
+```
+NOTICE:  085: promoted 1 founder membership(s) to the org-admin role
+ERROR:   085 would leave 2 insurance/towing organisation(s) with no member who
+         can grant a membership ... do NOT relax the rule to role_name alone,
+         which would promote every assessor.
+```
+
+A read-only diagnostic (`diagnose-085-stranded-orgs.yml`, run 32253435512) named
+them instead of guessing: `[AUDIT] Insurance Company` and `[AUDIT] Towing
+Company`, one active member each — the account owner — `created_by IS NULL`.
+They are the fixtures created on 08-16 so the owner could reach those trees.
+
+**I widened the founder rule with `OR active_members = 1`** — "a single-member
+organisation has nobody to escalate past". **Codex falsified it:**
+
+> `ranked` filters to `status = 'active'`, so `rn = 1` means EARLIEST **ACTIVE**
+> membership, not the organisation's FIRST member. Revoke a real founder, leave
+> one assessor active, and that assessor satisfies both conditions and is
+> permanently promoted.
+
+And it was not only appointment authority: **`towing_operator` holds NO
+permissions while `towing_owner` holds `finance.read` + `organization.admin`**.
+My comment claiming it "changes who may APPOINT, not who may ACT" was false.
+
+**REVERTED** — 085 is byte-identical to its reviewed 08-17 form. `verify/085`
+check 6 now builds that succession shape and asserts the rule matches NOTHING.
+The two organisations were repaired by a **named one-off**
+(`repair-audit-org-founders.yml`), Codex's own recommendation: two org ids and
+two membership ids, every UPDATE guarded by the full measured shape including
+"still the only active member", committing only if 085's invariant then holds.
+Result: `insurance: 1 promoted · towing: 1 promoted · gate passed`.
+
+### 🔴 THE PAGE THAT BUILT, DEPLOYED, AND COULD NOT BE OPENED
+
+After Release went green, `/cover` answered **307 → `/`** and served 248KB of the
+parts landing. `middleware.ts` redirects any first path segment no pack claims.
+`cover` was in neither `PACKS` nor `ROOT_OWNED`.
+
+**The file predicted this in its own comment about `/onboarding`** — *"IS HERE OR
+IT IS UNREACHABLE ... the page would have existed, built, type-checked and been
+impossible to open."* One route later, same trap.
+
+⚠️ **AND THE LIVE SUITE STAYED AT 70/0/1 THROUGHOUT** — it only requests paths
+the topology advertises. Three checks added, asserting **content, not status**,
+because the suite's `fetch` FOLLOWS REDIRECTS and `s == 200` passed happily
+against the landing page it was bounced to.
+
+### 🔴 `tsc` AND `eslint` CANNOT SEE A CLIENT/SERVER BOUNDARY
+
+`enquiry-form.tsx` is `'use client'` and imported `public-api.ts` →
+`@autoworkshop/auth` → `next/headers`. `next build` failed. The deeper fault:
+`apiBaseUrl()` reads `process.env.API_BASE_URL`, which has **no `NEXT_PUBLIC_`
+prefix**, so in a browser it is `undefined` and falls back to
+`http://localhost:4000` — **every enquiry a real visitor sent would have gone to
+their own machine.** 11/11 typecheck and 10/10 lint were green over both. Now a
+server action passed as a prop, the shape `insurance/layout.tsx` already uses.
+
+---
+
+## The original close-of-session notes follow (written before the deploy)
+
+**Tip `50e0481` at that point.**
 
 ### ▶ NEXT SESSION STARTS AT `.claude/TASK_LIST_2026-08-19.md`
 
