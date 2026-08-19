@@ -203,7 +203,7 @@ export function FleetDriversScreen() {
           why an "Add new" button pointing elsewhere renders nothing. */}
       <div style={panel}>
         <FormShell action={addFleetDriverAction} successPrefix="The driver is">
-          <Field label="Full name" htmlFor="fullName">
+          <Field label="Full name" htmlFor="fullName" required>
             <input id="fullName" name="fullName" required maxLength={160} />
           </Field>
           <Field label="Licence number (optional)" htmlFor="licenceNumber">
@@ -362,7 +362,7 @@ async function RaiseRequestForm() {
   return (
     <div style={panel}>
       <FormShell action={raiseServiceRequestAction} successPrefix="The request is">
-        <Field label="Vehicle" htmlFor="vehicleId">
+        <Field label="Vehicle" htmlFor="vehicleId" required>
           <Select
             id="vehicleId"
             name="vehicleId"
@@ -372,7 +372,7 @@ async function RaiseRequestForm() {
             }))}
           />
         </Field>
-        <Field label="Workshop" htmlFor="workshopDirectoryId">
+        <Field label="Workshop" htmlFor="workshopDirectoryId" required>
           <Select
             id="workshopDirectoryId"
             name="workshopDirectoryId"
@@ -397,7 +397,7 @@ async function RaiseRequestForm() {
             ]}
           />
         </Field>
-        <Field label="Summary" htmlFor="summary">
+        <Field label="Summary" htmlFor="summary" required>
           <input id="summary" name="summary" required maxLength={300} />
         </Field>
         <Field label="Detail (optional)" htmlFor="detail">

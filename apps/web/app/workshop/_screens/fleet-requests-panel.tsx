@@ -224,7 +224,7 @@ async function Rows() {
               the moves that ARE available, which is the most useful sentence
               on this panel. */}
           <FormShell action={respondToFleetRequestAction} successPrefix="The request is">
-            <Field label="Request" htmlFor="requestId">
+            <Field label="Request" htmlFor="requestId" required>
               <Select
                 id="requestId"
                 name="requestId"
@@ -234,7 +234,7 @@ async function Rows() {
                 }))}
               />
             </Field>
-            <Field label="Decision" htmlFor="status">
+            <Field label="Decision" htmlFor="status" required>
               {/* 🔴 THE UNION OF EVERY LEGAL NEXT MOVE, not the moves for one
                   row — a static select cannot depend on the row chosen beside
                   it. The API refuses an illegal pairing and says which moves

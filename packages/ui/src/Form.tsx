@@ -51,11 +51,33 @@ export function Field({
   label,
   hint,
   htmlFor,
+  required,
   children,
 }: {
   label: string;
   hint?: string;
   htmlFor: string;
+  /**
+   * Mark the field as required, VISIBLY.
+   *
+   * 🔴 THE `required` ATTRIBUTE ON THE INPUT IS NOT ENOUGH, AND THAT IS THE
+   * WHOLE POINT. A screen reader announces it; a sighted user gets nothing, so
+   * they discover which fields were mandatory only by submitting and being
+   * refused. The two audiences were getting different information from the same
+   * form.
+   *
+   * Raised by the `ui-ux-pro-max` design database (Forms → Required Indicators,
+   * severity Medium: *"Do: use asterisk or (required) text. Don't: no
+   * indication of required fields"*), checked against this codebase before
+   * acting: four screens marked their OPTIONAL fields and exactly one had ever
+   * written "(required)", so there was no house convention to break.
+   *
+   * ⚠️ THIS DOES NOT SET THE ATTRIBUTE. The caller still puts `required` on the
+   * input, because that is what the browser and the assistive layer read. A
+   * prop that silently made a field mandatory would put the truth in the label
+   * and the enforcement nowhere.
+   */
+  required?: boolean;
   children: React.ReactNode;
 }) {
   const hintId = hint ? `${htmlFor}-hint` : undefined;
@@ -65,6 +87,23 @@ export function Field({
           announce the field, and what makes the label a click target. */}
       <label htmlFor={htmlFor} style={labelStyle}>
         {label}
+        {required ? (
+          // ⚠️ `aria-hidden`, DELIBERATELY. The input's own `required`
+          // attribute is what an assistive technology announces; repeating it
+          // here would have the field read out as required twice. This marker
+          // exists for the people the attribute does not reach.
+          //
+          // ⚠️ AND IT IS NOT COLOUR ALONE. The word "required" carries the
+          // meaning; the colour only emphasises it, so it survives both a
+          // monochrome display and every form of colour blindness.
+          <span
+            aria-hidden="true"
+            style={{ color: themeVar.textSecondary, fontWeight: 400 }}
+          >
+            {' '}
+            (required)
+          </span>
+        ) : null}
       </label>
       {hint ? (
         <p

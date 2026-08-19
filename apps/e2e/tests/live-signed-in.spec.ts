@@ -369,3 +369,152 @@ test.describe('the live site, signed in as the workshop owner', () => {
     ).toBeVisible({ timeout: 180_000 });
   });
 });
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ * A3 — "SIGN IN AS AN `insurance_owner` AND LOOK", TURNED INTO A CHECK.
+ *
+ * This has been the oldest open item since 2026-08-17. Migration 085 gave
+ * insurance and towing an org-admin role, T1a built the screens, slice 17 built
+ * the enquiry inbox, and every layer underneath is proven — by `verify/085`,
+ * `verify/086`, integration specs and a green live suite. NOBODY HAD LOOKED.
+ *
+ * 🔴 AND THIS REPOSITORY HAS SHIPPED TWO FEATURES THAT NEVER ONCE WORKED UNDER
+ * GREEN GATES. "A green build is not a working feature" is its most expensive
+ * recorded lesson. A one-off manual glance would have closed the item without
+ * closing the gap: a check nobody can re-run is not a gate, and the next
+ * regression would be found the same way — by the owner.
+ *
+ * ── WHAT THESE ASSERT, AND WHAT THEY DELIBERATELY DO NOT ─────────────────
+ *
+ * They assert that a signed-in owner can REACH these screens and that each
+ * renders its own content rather than the "not built yet" catch-all. They do
+ * NOT assert that the screens contain business data: the `[AUDIT]` insurance
+ * and towing organisations were created on 2026-08-16 so the owner could reach
+ * those trees at all, and they hold no products, policies or enquiries.
+ * Reachable is not populated, and asserting rows would fail for a reason that
+ * is not a defect.
+ * ══════════════════════════════════════════════════════════════════════════
+ */
+test.describe('the live site, signed in and acting in another role', () => {
+  test.beforeAll(() => {
+    test.skip(
+      !OWNER_EMAIL || !OWNER_PASSWORD,
+      'LIVE_OWNER_EMAIL / LIVE_OWNER_PASSWORD are not set — A3 did NOT run, so ' +
+        'whether an insurance owner can reach their own screens is still UNPROVEN.',
+    );
+  });
+
+  /**
+   * The switcher is the mechanism A3 depends on, so it is asserted first and
+   * its options are PRINTED. If a later check fails because a role is missing,
+   * this line is what says so — rather than leaving a reader to infer it from a
+   * locator timeout.
+   */
+  test('the role switcher offers the partner roles', async ({ page }) => {
+    await signIn(page);
+
+    const switcher = page.getByLabel('Acting as role');
+    await expect(switcher).toBeVisible({ timeout: 60_000 });
+
+    const roles = await switcher.locator('option').allTextContents();
+    // Printed, not just asserted — the run log is where the next reader learns
+    // what this account actually holds, and the live-suite job reads its logs.
+    // An annotation would land in the HTML report, which nothing in CI opens.
+    // eslint-disable-next-line no-console -- the OUTPUT is this check's deliverable
+    console.log(`A3: the owner can act as: ${roles.join(', ')}`);
+
+    // 🔴 THE ONE THE SLICE DEPENDS ON. Migration 085 created it and today's
+    // repair-audit-org-founders run put it on this account; if it is gone, the
+    // insurance screens below are unreachable and that is the finding.
+    expect(roles.join(' ').toLowerCase()).toContain('insurance');
+  });
+
+  /**
+   * ⚠️ SWITCHING ROLE ALSO NAVIGATES. `setActiveRoleAction` used to revalidate
+   * IN PLACE, which stranded the owner on a pack they no longer held the
+   * permission for — ADR-021's third instance, fixed on 2026-08-16 by routing
+   * through `homeWorkspaceFor()`. So after choosing a role the test waits for
+   * the destination rather than assuming the current page re-rendered.
+   */
+  async function actAs(page: import('@playwright/test').Page, match: RegExp) {
+    const switcher = page.getByLabel('Acting as role');
+    await switcher.waitFor({ state: 'visible', timeout: 60_000 });
+    const options = await switcher.locator('option').all();
+    for (const o of options) {
+      const label = (await o.textContent()) ?? '';
+      if (match.test(label)) {
+        await switcher.selectOption({ label });
+        // The switch navigates to that role's home workspace.
+        await page.waitForLoadState('networkidle', { timeout: 120_000 });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  test('an insurance owner reaches their own users screen', async ({ page }) => {
+    await signIn(page);
+    const switched = await actAs(page, /insurance/i);
+    expect(switched, 'the owner holds no insurance role — A3 cannot be answered').toBe(true);
+
+    await page.goto(`${APEX}/insurance/settings/users`, { timeout: 120_000 });
+
+    // 🔴 THE CATCH-ALL IS THE FAILURE MODE. An unbuilt route falls through to
+    // `[...slug]/page.tsx`, which renders a "not built yet" panel WITH A 200.
+    // Asserting the status code would pass over exactly the thing A3 exists to
+    // catch, so this asserts the screen's own heading and the absence of the
+    // placeholder.
+    await expect(page.getByRole('heading', { name: /Users/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/not built yet/i)).toHaveCount(0);
+  });
+
+  test('an insurance owner reaches My Products, with the enquiry inbox on it', async ({
+    page,
+  }) => {
+    await signIn(page);
+    const switched = await actAs(page, /insurance/i);
+    expect(switched, 'the owner holds no insurance role — A3 cannot be answered').toBe(true);
+
+    await page.goto(`${APEX}/insurance/sales/my-products`, { timeout: 120_000 });
+
+    await expect(page.getByRole('heading', { name: /My Products/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    // Slice 17's read half. Without this section the public enquiry form is a
+    // control that discards what a person types into it.
+    await expect(page.getByRole('heading', { name: /Enquiries/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/not built yet/i)).toHaveCount(0);
+  });
+
+  /**
+   * Slice 20, seen the same way. Conditional on the role existing, and it says
+   * so out loud when it is absent — a skip that looks like a pass is the thing
+   * this suite exists to prevent.
+   */
+  test('a fleet administrator reaches the fleet screens built in slice 20', async ({ page }) => {
+    await signIn(page);
+    const switched = await actAs(page, /fleet/i);
+    test.skip(
+      !switched,
+      'this account holds no fleet role, so slice 20 is UNSEEN by a signed-in ' +
+        'viewer. Not a pass — the screens are proven only by build and unit tests.',
+    );
+
+    await page.goto(`${APEX}/fleet/fleet-assets/vehicles`, { timeout: 120_000 });
+    await expect(page.getByRole('heading', { name: /Vehicles/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/not built yet/i)).toHaveCount(0);
+
+    await page.goto(`${APEX}/fleet/service-management/service-requests`, { timeout: 120_000 });
+    await expect(page.getByRole('heading', { name: /Service Requests/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/not built yet/i)).toHaveCount(0);
+  });
+});
