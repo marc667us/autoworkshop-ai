@@ -1,5 +1,97 @@
 # Session handover
 
+## ═══ 2026-08-19 (pt2) — slice 19: the fleet data layer, cross-tenant ═══
+
+**Tip `ef0510e`. Pushed, deployed, verified. Production migrations 85/85.**
+
+| | |
+|---|---|
+| CI · Release · deploy-api · apply-migrations | **all GREEN** on `ef0510e` |
+| **Live suite** | **73 passed · 0 failed · 1 SKIPPED** — baseline held |
+| `verify/087` | **11/11** |
+| Fleet API on PRODUCTION | all five routes **401** — deployed and gated, not 404 |
+| typecheck / lint / tests | 11/11 · 10/10 · **981 passed / 1 skipped** |
+
+🔴 **WHAT IS DONE IS SLICE 19, THE DATA LAYER. SLICE 20 IS NOT DONE.**
+Fleet screen coverage is **still 1 of 29 (28 dead ends)** and the overall figure
+is **unchanged at 274/385**. That is the honest state: a fleet operator signing
+in today sees the same one dashboard they saw yesterday. What changed is that
+there is now something real for those 28 screens to be built on.
+
+### The design came first, as the task list demanded
+
+**ADR-023** — `docs/02-architecture/adr/ADR-023-FLEET-CROSS-TENANT-SERVICE-CONTRACT.md`.
+
+The hard part was never volume. A fleet gets its **own tenant** (076), so a
+fleet asking an independent workshop to service a van is a **cross-tenant act**,
+and the whole isolation model exists to make that impossible. Get it wrong
+either way and you get the shape found four times in one day on 08-17: the
+request lives in the workshop's tenant and the FLEET cannot see it, or in the
+fleet's tenant and the WORKSHOP cannot.
+
+1. **No `fleet.vehicles`.** `core.vehicles` owns vehicle identity. Cost stated
+   rather than hidden: `customer_id` is NOT NULL, so a fleet is its own customer
+   of record.
+2. **The workshop is addressed through its PUBLIC DIRECTORY ROW**, never through
+   `identity.organizations` — the shape `catalogue.orders` already uses for
+   buyer↔supplier. A fleet can only address a workshop that **chose** to be
+   listed.
+3. **Snapshots cross the boundary; foreign keys do not.**
+4. **Two parties, two RLS predicates.** The workshop's is organisation-scoped
+   with **no tenant match** — the only such predicate in the product.
+
+⚠️ **`074_towing` had already created the exact 3-column key on `core.vehicles`
+that this needed**, for the identical reason. My first draft created it again
+and the apply failed; the measurement was wrong, not the schema
+(`pg_constraint` cannot see a bare unique INDEX).
+
+### 🔴 CODEX FOUND 2 HIGH ON THE FIRST DRAFT, AND BOTH WERE REAL
+
+1. **"Either party can perform the other party's lifecycle and content
+   updates."** Both sides connect as `autoworkshop_app`, so the column GRANT is
+   the **union**. A fleet could set `status='accepted'` and fabricate
+   `responded_at`; a workshop could rewrite the fleet's `summary` and
+   `priority`. My comment said the split was "enforced in the service layer" —
+   honest, and as Codex put it, *"not a reliable database security boundary,
+   especially for the only cross-tenant shared table"*.
+2. **"The claimed lifecycle is only an enum, not a lifecycle."**
+   `CHECK (status IN (...))` permitted `completed → draft`, `cancelled →
+   accepted`, and INSERT straight to `completed`. ADR-023 described a lifecycle
+   the schema did not implement.
+
+**Fixed with a party-aware trigger, not definer functions.** Codex proposed
+SECURITY DEFINER write functions with direct UPDATE revoked; that works and is
+heavier than needed here, because the missing ingredient is not privilege but
+**identity** — and the database has it. `current_organization_id()` says which
+party is acting and the row names both, so one BEFORE trigger decides who is
+calling and whether the move is theirs. Parties, vehicle, reference and
+snapshots immutable; what was ASKED belongs to the fleet and only until it is
+answered; transitions per party; **timestamps set by the database** so neither
+side can fabricate history.
+
+Three Mediums also fixed: the boundary trigger fired only on
+`UPDATE OF workshop_directory_id` (so a direct `workshop_organization_id` update
+never fired it — unexploitable today, silent tomorrow); the unpublished-directory
+refusal **behaved differently on Render**, where the definer's non-superuser
+owner cannot see an unpublished row at all; and **verify check 8 passed for the
+wrong reason** — it selected a foreign vehicle while running as the fleet, and
+RLS hides exactly those rows, so it recorded a refusal that never happened.
+
+### ⚠️ `pnpm test` HANDED ME A CACHED GREEN
+
+It reported **927 passed / 55 skipped** while direct vitest reported 981/1.
+Turbo was **replaying a cached log** from earlier in the session, when the fleet
+schema was dropped. `turbo run test --force` gives 981/1. **A cached green is
+not a run** — check `--force` before trusting a number that moved.
+
+### ▶ NEXT
+
+`.claude/TASK_LIST_2026-08-19.md`. **A5 is half done**: slice 19 shipped, slice
+20 — the 28 fleet screens — has not started, and now has a data layer and five
+live API routes to build on. A3 (sign in as an `insurance_owner` and LOOK) is
+still unmet and is now the oldest open item.
+
+
 ## ═══ 2026-08-19 — slice 17 is LIVE, after four separate things went wrong ═══
 
 **Tip `1b07eab`. Five commits, pushed. Tree clean. DEPLOYED AND VERIFIED.**
