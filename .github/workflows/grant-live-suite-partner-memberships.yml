@@ -1,24 +1,49 @@
-# Read-only: which identity does the live suite sign in as, and what can it act as?
+# Grant the live-suite identity its partner-workspace memberships — CLOSING A3.
 #
 # ══════════════════════════════════════════════════════════════════════════
-# Live-suite run 32290511884 found the role switcher ABSENT for the signed-in
-# account. `RoleSwitcher` renders nothing below two roles, so the conclusion was
-# that `LIVE_OWNER_EMAIL` is a CI identity holding ONE role — which makes the
-# signed-in half of the suite structurally unable to verify any partner-role
-# screen, and left four A3 checks skipping.
+# 🔴 WHAT THIS IS FOR. `diagnose-live-identity-roles.yml` run 32293446882 asked
+# production instead of inferring, and confirmed the inference: the account the
+# live suite signs in as holds ONE active role (`workshop_owner`). So four A3
+# checks SKIP, and four screens shipped in slices 17 and 20 are unverified by
+# any signed-in viewer.
 #
-# ⚠️ THAT CONCLUSION WAS INFERRED FROM A MISSING DOM NODE. Before writing
-# memberships into production on the back of it, ASK THE DATABASE. Reasoning
-# from source has been wrong twice this week.
+# This grants that account `insurance_owner`, `towing_owner` and
+# `fleet_administrator` in the three `[AUDIT]` organisations the operator
+# already uses. The ids were MEASURED, not inferred, and every write is guarded
+# by the full shape that was measured.
 #
-# 🔴 READ-ONLY. Every statement in the SQL is a SELECT. No confirm input, which
-# is the point: a diagnostic nobody can run without ceremony does not get run.
+# ⚠️ IT IS ONLY HALF THE FIX, AND THE SQL SAYS SO AT LENGTH. Roles are scoped to
+# the ACTIVE ORGANISATION (`rolesFromMemberships`), so these memberships are
+# reachable through the ORGANISATION switcher and never through the role
+# switcher. The harness half is in `apps/e2e/tests/live-signed-in.spec.ts`.
+# Running this workflow alone changes nothing any test can observe.
+#
+# ⚠️ THIS WRITES REAL PRODUCTION DATA — three membership rows on a live
+# database. It is idempotent through the natural key, so a re-run grants zero
+# and that is success, and the transaction ROLLS BACK unless the end state it
+# exists to produce is actually true.
+#
+# ⚠️ THE ACCOUNT IS NEVER NAMED HERE. It comes from `LIVE_OWNER_EMAIL`, the same
+# repository secret the live suite signs in with, so the account granted and the
+# account tested cannot drift apart.
+#
+# 🔴 `-f confirm=APPLY` OR THIS ONLY REPORTS. The firewall handling and the
+# shared concurrency group are copied verbatim from the workflows that already
+# open the production database — see the A6 note below.
 # ══════════════════════════════════════════════════════════════════════════
 
-name: Diagnose live identity roles
+name: Grant live-suite partner memberships
 
 on:
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY to grant the three memberships. Anything else reports and stops.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
 
 concurrency:
   # A6 — ALL of these open the production database firewall by PATCHing the
@@ -67,19 +92,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  diagnose:
+  grant:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       DB_NAME: autoworkshop-postgres
+      # The SAME secret the live suite signs in with. Reading it here is what
+      # stops the account granted and the account tested drifting apart.
+      LIVE_OWNER_EMAIL: ${{ secrets.LIVE_OWNER_EMAIL }}
     steps:
       - uses: actions/checkout@v4
+
+      # 🔴 THE GATE IS FIRST, AND IT EXITS RATHER THAN SKIPPING LATER STEPS.
+      # A workflow that opens the production firewall and only then decides it
+      # is not going to write has taken the risk for nothing.
+      - name: Refuse without an explicit APPLY
+        if: inputs.confirm != 'APPLY'
+        run: |
+          echo "::notice::confirm was '${{ inputs.confirm }}', not APPLY — nothing will be written."
+          echo "Re-run with -f confirm=APPLY to grant the three named memberships."
+          exit 1
 
       - name: Refuse without a key
         run: |
           set -euo pipefail
           [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+
+      # ⚠️ CHECKED BEFORE THE FIREWALL OPENS. An unset secret then costs nothing
+      # at all — no exposure window, no write. The SQL refuses a second time on
+      # its own, because this check is skippable by editing the workflow and
+      # that one is not.
+      - name: Refuse without the live-suite account
+        run: |
+          set -euo pipefail
+          [ -n "${LIVE_OWNER_EMAIL:-}" ] || {
+            echo "::error::LIVE_OWNER_EMAIL is not set. This workflow grants memberships to the account the live suite signs in as; without the secret it does not know which account that is, and it will not guess."
+            exit 1; }
 
       - name: Find the database and open the firewall for this runner
         run: |
@@ -110,7 +159,7 @@ jobs:
             | python3 -c "
           import sys, json
           d = json.load(sys.stdin)
-          # `or []`: Render returns the key PRESENT and null when the list is
+          # \`or []\`: Render returns the key PRESENT and null when the list is
           # empty, so a dict default would never fire.
           print(json.dumps(d.get('ipAllowList') or []))" > /tmp/ip_allow_original.json
 
@@ -133,37 +182,36 @@ jobs:
           printf '%s' "$CONN" > /tmp/dburl
           echo "firewall open"
 
-      - name: Ask production what the live-suite identity can act as
+      - name: Grant the three named partner memberships
         run: |
           set -euo pipefail
           export DATABASE_URL="$(cat /tmp/dburl)"
           PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
-          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL"             -f infrastructure/seed/diagnose_live_identity_roles.sql | tee /tmp/identity.txt
+          # -v, not shell interpolation into the SQL text: psql quotes the value
+          # where the script writes :'live_email', so an address containing a
+          # quote cannot alter the statement.
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL" \
+            -v live_email="${LIVE_OWNER_EMAIL}" \
+            -f infrastructure/seed/grant_live_suite_partner_memberships.sql | tee /tmp/grant.txt
 
       - name: Put it in the run summary
         if: always()
         run: |
           {
-            echo "## Live-suite identity roles — production"
+            echo "## Grant live-suite partner memberships — production"
             echo ""
-            echo "⚠️ This prose used to describe **is_earliest** and **is_self_created**,"
-            echo "columns this workflow's SQL has never emitted — it was copied from"
-            echo "\`repair-audit-org-founders.yml\` along with the firewall boilerplate."
-            echo "A summary naming columns that are not in the output below is the same"
-            echo "stale-artifact failure recorded on 08-19 for I7."
+            echo "Compare **BEFORE** and **AFTER**. AFTER must list four organisations:"
+            echo "the account's own workshop plus the three \`[AUDIT]\` partner ones."
             echo ""
-            echo "**Section 1 is the answer.** \`active_roles\` per candidate: 1 means that"
-            echo "account cannot verify a partner screen, because \`RoleSwitcher\` renders"
-            echo "nothing below two roles."
+            echo "\`0 granted\` with a passing gate is SUCCESS on a re-run — the writes"
+            echo "are idempotent through \`(organization_id, user_id, role_name)\`."
             echo ""
-            echo "**Section 2** lists the \`[AUDIT]\` partner organisations and their members —"
-            echo "the memberships a CI identity would need for the A3 checks to assert."
-            echo ""
-            echo "**Section 3**: if \`fleet_orgs = 0\`, slice 20's nine screens are unreachable"
-            echo "by any signed-in viewer, which is a larger finding than the switcher one."
+            echo "⚠️ This is half the fix. Roles are scoped to the ACTIVE organisation,"
+            echo "so these are reachable through the ORGANISATION switcher only. The"
+            echo "live suite must be re-run to turn the four A3 skips into passes."
             echo ""
             echo '```'
-            cat /tmp/identity.txt 2>/dev/null || echo "nothing was read"
+            cat /tmp/grant.txt 2>/dev/null || echo "nothing was written"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

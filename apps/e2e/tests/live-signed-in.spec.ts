@@ -396,7 +396,7 @@ test.describe('the live site, signed in as the workshop owner', () => {
  * is not a defect.
  * ══════════════════════════════════════════════════════════════════════════
  */
-test.describe('the live site, signed in and acting in another role', () => {
+test.describe('the live site, signed in and acting in another organisation', () => {
   test.beforeAll(() => {
     test.skip(
       !OWNER_EMAIL || !OWNER_PASSWORD,
@@ -412,30 +412,42 @@ test.describe('the live site, signed in and acting in another role', () => {
    * locator timeout.
    */
   /**
-   * 🔴 THIS CHECK ANSWERED A3, AND THE ANSWER WAS NOT THE ONE EXPECTED.
+   * 🔴 THIS CHECK ANSWERED A3 — AND THEN THE ANSWER TURNED OUT TO BE ABOUT THE
+   * WRONG CONTROL.
    *
    * Run 32290511884: `getByLabel('Acting as role')` — ELEMENT NOT FOUND.
    * `RoleSwitcher` returns `null` when the viewer holds fewer than two roles
-   * ("one role is not a choice"), so the control is absent, not broken.
+   * ("one role is not a choice"), so the control was absent, not broken. The
+   * conclusion drawn was that the CI identity holds one role, and
+   * `diagnose-live-identity-roles.yml` run 32293446882 asked production and
+   * CONFIRMED it: one active membership, `workshop_owner`.
    *
-   * ▶ THE CI IDENTITY HOLDS ONE ROLE. `LIVE_OWNER_EMAIL` is a dedicated test
-   *   account, not the operator's own `marc667us@yahoo.com`, which holds seven
-   *   roles in one tenant. **So the signed-in half of this suite STRUCTURALLY
-   *   CANNOT verify any partner-role screen** — insurance, towing or fleet — no
-   *   matter how many times it runs. A3 was not merely unmet; it was
-   *   unmeetable by this harness.
+   * ▶ BUT THE PRESCRIBED FIX — "give the CI identity memberships in the
+   *   `[AUDIT]` organisations" — WOULD HAVE LEFT THIS CHECK SKIPPING ANYWAY,
+   *   and that is the thing worth remembering:
    *
-   * ⚠️ THAT IS A FIXTURE GAP, NOT A PRODUCT DEFECT, so this is a SKIP and not a
-   * failure — and a LOUD one. A red would say something is broken when nothing
-   * is; a silent skip would hide that four screens are unverified. Passed,
-   * failed and SKIPPED are three states here, and a skip must be said out loud.
+   *     viewer-contract.ts:470   if (m.organizationId !== organizationId) continue;
    *
-   * ▶ WHAT WOULD CLOSE IT: give the CI identity memberships in the `[AUDIT]`
-   *   insurance, towing and fleet organisations — the same organisations the
-   *   operator already uses to reach those trees. Then this check and the three
-   *   below start asserting instead of skipping.
+   *   `rolesFromMemberships` is SCOPED TO THE ACTIVE ORGANISATION, on purpose.
+   *   Every request carries `x-organization-id` AND `x-role-name` and
+   *   `resolveTenantContext` requires ONE membership matching BOTH, so a role
+   *   held in a DIFFERENT organisation is never offered here — offering it
+   *   would offer a pair the API refuses. The `[AUDIT]` organisations are in
+   *   the operator's tenant; the live-suite account is in its own. So the role
+   *   switcher can never be the control that reaches them.
+   *
+   * ▶ THE CONTROL THAT CROSSES ORGANISATIONS IS THE ORGANISATION SWITCHER.
+   *   `organizationsFromMemberships` does NOT filter by tenant, and
+   *   `setActiveOrganizationAction` CLEARS the stored role on the way out so
+   *   the API re-defaults to the strongest role held in the organisation just
+   *   entered. That is why this check now drives that control instead.
+   *
+   * ⚠️ IT STILL SKIPS RATHER THAN FAILS WHEN THE MEMBERSHIPS ARE ABSENT. That
+   * is a fixture gap, not a product defect — a red would say something is
+   * broken when nothing is, and a silent skip would hide that four screens are
+   * unverified. Passed, failed and SKIPPED are three states here.
    */
-  test('the role switcher offers the partner roles', async ({ page }) => {
+  test('the organisation switcher offers the partner organisations', async ({ page }) => {
     await signIn(page);
 
     // Asserted first and separately: the shell DID resolve a viewer. Without
@@ -445,53 +457,65 @@ test.describe('the live site, signed in and acting in another role', () => {
       timeout: 60_000,
     });
 
-    const switcher = page.getByLabel('Acting as role');
+    // ⚠️ `Active organization` — the LABEL's spelling, which is American while
+    // the prose here is not. Matching the prose would silently find nothing.
+    const switcher = page.getByLabel('Active organization');
     const hasSwitcher = (await switcher.count()) > 0;
 
     test.skip(
       !hasSwitcher,
-      'A3 UNANSWERED: this CI identity holds ONE role, so the role switcher is ' +
-        'not rendered and the insurance, towing and fleet screens CANNOT be ' +
-        'verified by a signed-in viewer here. Not a product defect and not a ' +
-        'pass. Fix: give LIVE_OWNER_EMAIL memberships in the [AUDIT] partner ' +
-        'organisations.',
+      'A3 UNANSWERED: this CI identity belongs to ONE organisation, so the ' +
+        'organisation switcher is not rendered and the insurance, towing and ' +
+        'fleet screens CANNOT be reached by a signed-in viewer here. Not a ' +
+        'product defect and not a pass. Fix: run ' +
+        'grant-live-suite-partner-memberships.yml -f confirm=APPLY.',
     );
 
-    const roles = await switcher.locator('option').allTextContents();
+    const orgs = await switcher.locator('option').allTextContents();
     // Printed, not just asserted — the run log is where the next reader learns
     // what this account actually holds, and the live-suite job reads its logs.
     // An annotation would land in the HTML report, which nothing in CI opens.
     // eslint-disable-next-line no-console -- the OUTPUT is this check's deliverable
-    console.log(`A3: the owner can act as: ${roles.join(', ')}`);
+    console.log(`A3: the account belongs to: ${orgs.join(', ')}`);
 
-    expect(roles.join(' ').toLowerCase()).toContain('insurance');
+    expect(orgs.join(' ').toLowerCase()).toContain('insurance');
   });
 
   /**
-   * ⚠️ SWITCHING ROLE ALSO NAVIGATES. `setActiveRoleAction` used to revalidate
-   * IN PLACE, which stranded the owner on a pack they no longer held the
-   * permission for — ADR-021's third instance, fixed on 2026-08-16 by routing
-   * through `homeWorkspaceFor()`. So after choosing a role the test waits for
-   * the destination rather than assuming the current page re-rendered.
+   * Enter a partner workspace by switching ORGANISATION, and say whether it
+   * was possible.
+   *
+   * 🔴 WHY ORGANISATION AND NOT ROLE. `rolesFromMemberships` filters to the
+   * ACTIVE organisation, so a role held only in another organisation is never
+   * in the role switcher — the earlier `actAs` could not have reached the
+   * `[AUDIT]` organisations however many memberships were granted. The
+   * organisation switcher is unfiltered by tenant, and
+   * `setActiveOrganizationAction` deletes the stored role cookie before
+   * redirecting to `/`, so the API re-resolves the STRONGEST role held in the
+   * organisation just entered (`ROLE_PRECEDENCE`). Switching organisation is
+   * therefore sufficient on its own, and switching role afterwards would be
+   * both unnecessary and — inside a single-role organisation, where the
+   * switcher is absent — impossible.
+   *
+   * ⚠️ SWITCHING ALSO NAVIGATES, to `/`, which dispatches to the new role's
+   * home pack. The caller's own `page.goto` follows, so this only has to wait
+   * for the switch to settle rather than assert where it landed.
+   *
+   * 🔴 COUNT, DO NOT WAIT — kept from the fix on 2026-08-19. The first version
+   * of this helper called `waitFor({ state: 'visible' })` on a control whose
+   * ABSENCE is the expected case, which THROWS after 60s, so it could never
+   * return `false` and the callers' skip branch was unreachable. The suite went
+   * red twice for a fixture gap the checks were written to skip on. Absence
+   * must be a value this returns, never an exception it raises.
    */
-  async function actAs(page: import('@playwright/test').Page, match: RegExp) {
-    const switcher = page.getByLabel('Acting as role');
-    // 🔴 COUNT, DO NOT WAIT. The first version called
-    // `waitFor({ state: 'visible' })`, which THROWS after 60s when the control
-    // is absent — so this helper could never return `false`, and the callers'
-    // "skip when the role is missing" branch was unreachable. The suite went
-    // red for a fixture gap the checks were written to skip on.
-    //
-    // Absence is the EXPECTED case for a single-role identity (`RoleSwitcher`
-    // renders nothing below two roles), so it must be a value this function can
-    // return, not an exception it raises.
+  async function actInOrganization(page: import('@playwright/test').Page, match: RegExp) {
+    const switcher = page.getByLabel('Active organization');
     if ((await switcher.count()) === 0) return false;
     const options = await switcher.locator('option').all();
     for (const o of options) {
       const label = (await o.textContent()) ?? '';
       if (match.test(label)) {
         await switcher.selectOption({ label });
-        // The switch navigates to that role's home workspace.
         await page.waitForLoadState('networkidle', { timeout: 120_000 });
         return true;
       }
@@ -501,12 +525,12 @@ test.describe('the live site, signed in and acting in another role', () => {
 
   test('an insurance owner reaches their own users screen', async ({ page }) => {
     await signIn(page);
-    const switched = await actAs(page, /insurance/i);
+    const switched = await actInOrganization(page, /insurance/i);
     // Same fixture gap as the switcher check above — skipped loudly, never
     // silently, because "unverified" and "verified" must not look alike.
     test.skip(
       !switched,
-      'A3 UNANSWERED: this CI identity cannot act as an insurance owner, so ' +
+      'A3 UNANSWERED: this CI identity belongs to no insurance organisation, so ' +
         '/insurance/settings/users is UNVERIFIED by a signed-in viewer.',
     );
 
@@ -527,11 +551,11 @@ test.describe('the live site, signed in and acting in another role', () => {
     page,
   }) => {
     await signIn(page);
-    const switched = await actAs(page, /insurance/i);
+    const switched = await actInOrganization(page, /insurance/i);
     test.skip(
       !switched,
-      'A3 UNANSWERED: this CI identity cannot act as an insurance owner, so the ' +
-        'enquiry inbox on My Products is UNVERIFIED by a signed-in viewer.',
+      'A3 UNANSWERED: this CI identity belongs to no insurance organisation, so ' +
+        'the enquiry inbox on My Products is UNVERIFIED by a signed-in viewer.',
     );
 
     await page.goto(`${APEX}/insurance/sales/my-products`, { timeout: 120_000 });
@@ -554,11 +578,12 @@ test.describe('the live site, signed in and acting in another role', () => {
    */
   test('a fleet administrator reaches the fleet screens built in slice 20', async ({ page }) => {
     await signIn(page);
-    const switched = await actAs(page, /fleet/i);
+    const switched = await actInOrganization(page, /fleet/i);
     test.skip(
       !switched,
-      'this account holds no fleet role, so slice 20 is UNSEEN by a signed-in ' +
-        'viewer. Not a pass — the screens are proven only by build and unit tests.',
+      'this account belongs to no fleet organisation, so slice 20 is UNSEEN by a ' +
+        'signed-in viewer. Not a pass — the screens are proven only by build and ' +
+        'unit tests.',
     );
 
     await page.goto(`${APEX}/fleet/fleet-assets/vehicles`, { timeout: 120_000 });
