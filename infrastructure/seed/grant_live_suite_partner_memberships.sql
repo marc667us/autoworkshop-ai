@@ -44,7 +44,11 @@
 --
 -- ▶ The control that crosses organisations is the ORGANISATION switcher, and
 --   changing organisation CLEARS the stored role (`set-organization-action.ts`)
---   so the API re-defaults to the strongest role held in the new organisation.
+--   so the API re-resolves a role within the new organisation. (NOT reliably
+--   the strongest one: with a requested organisation `resolveTenantContext`
+--   takes `active.find(...)`, first row order, and only sorts by
+--   `ROLE_PRECEDENCE` when no organisation was requested. Harmless here because
+--   this account holds one role per `[AUDIT]` organisation.)
 --   The harness change is in `apps/e2e/tests/live-signed-in.spec.ts`, and
 --   WITHOUT IT this script changes nothing a test can observe.
 --
@@ -91,11 +95,27 @@ SELECT set_config('app.current_role', 'admin', true) AS platform_context;
 
 -- The e-mail, carried across the dollar-quoting boundary. `true` again: it must
 -- not outlive this transaction.
-SELECT set_config('live.email', :'live_email', true) AS live_email;
+--
+-- 🔴 AND THE VALUE IS NOT ECHOED. `set_config` RETURNS what it was given, so
+-- `SELECT set_config(...) AS live_email` printed the secret address on stdout —
+-- which is the stream the workflow `tee`s to a file and `cat`s into the job
+-- summary, where Actions masking does not reach. Redacting the two display
+-- queries was not enough on its own; this line was the actual disclosure.
+SELECT CASE WHEN set_config('live.email', :'live_email', true) = '' THEN 'EMPTY'
+            ELSE 'set' END AS live_email;
 
+-- ⚠️ THE ADDRESS IS NOT SELECTED, IN EITHER DISPLAY QUERY. `LIVE_OWNER_EMAIL`
+-- is a repository secret, and this output is `tee`d to a file which the
+-- workflow then `cat`s verbatim into `$GITHUB_STEP_SUMMARY`. Actions masking
+-- applies to LOG INGESTION, not to a file written and re-emitted, so selecting
+-- `u.email` here would render the secret in plain text on the run summary page
+-- for anyone with read access to the repository. Found by the Supervisor. The
+-- constant below keeps the rows attributable without disclosing anything, and
+-- the gate has already pinned exactly which account these rows belong to.
 \echo ''
 \echo '=== BEFORE — what the live-suite identity holds ==='
-SELECT u.email, o.name AS organization, o.org_type, m.role_name, m.status
+SELECT '(LIVE_OWNER_EMAIL)' AS account, o.name AS organization, o.org_type,
+       m.role_name, m.status
   FROM identity.users u
   LEFT JOIN identity.memberships m   ON m.user_id = u.id
   LEFT JOIN identity.organizations o ON o.id = m.organization_id
@@ -159,7 +179,13 @@ BEGIN
       FROM identity.users
      WHERE email = v_email AND status = 'active';
 
-    RAISE NOTICE 'granting partner memberships to % (%)', v_email, v_user;
+    -- The USER ID, not the address. A NOTICE goes to stderr rather than into
+    -- the summary file, so this is the lesser of the two exposures — but the id
+    -- identifies the row just as well for anyone debugging, and discloses
+    -- nothing. The refusal messages below still name the address deliberately:
+    -- they only fire when the transaction is aborting and the operator needs to
+    -- know WHICH address failed to resolve.
+    RAISE NOTICE 'granting partner memberships to user %', v_user;
 
     -- ── the three grants ─────────────────────────────────────────────────
     -- One statement per organisation rather than a loop over a VALUES list:
@@ -312,10 +338,19 @@ BEGIN
                         v_email, array_to_string(v_missing, '; ');
     END IF;
 
+    -- ⚠️ `u.status = 'active'` IS NOT DECORATION HERE. Every other predicate in
+    -- this script requires it; this one did not, and the Supervisor pointed out
+    -- what that costs given the script's own headline fact — `identity.users.email`
+    -- has NO UNIQUE constraint. A single INACTIVE duplicate row carrying an old
+    -- membership would push this count to 2 and let the `< 2` gate pass while
+    -- the LIVE account still belonged to one organisation: precisely the
+    -- "reports success, suite skips again twenty minutes later" outcome the gate
+    -- exists to prevent.
     SELECT count(DISTINCT m.organization_id) INTO v_orgs
       FROM identity.users u
       JOIN identity.memberships m ON m.user_id = u.id AND m.status = 'active'
-     WHERE u.email = v_email;
+     WHERE u.email = v_email
+       AND u.status = 'active';
 
     -- The organisation switcher renders nothing below two options, so this is
     -- the harness's actual precondition — not a restatement of the checks above.
@@ -331,7 +366,8 @@ $gate$;
 
 \echo ''
 \echo '=== AFTER — what the live-suite identity holds now ==='
-SELECT u.email, o.name AS organization, o.org_type, m.role_name, m.status
+SELECT '(LIVE_OWNER_EMAIL)' AS account, o.name AS organization, o.org_type,
+       m.role_name, m.status
   FROM identity.users u
   JOIN identity.memberships m   ON m.user_id = u.id
   JOIN identity.organizations o ON o.id = m.organization_id

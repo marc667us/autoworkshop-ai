@@ -107,10 +107,18 @@ jobs:
       # 🔴 THE GATE IS FIRST, AND IT EXITS RATHER THAN SKIPPING LATER STEPS.
       # A workflow that opens the production firewall and only then decides it
       # is not going to write has taken the risk for nothing.
+      # ⚠️ THE INPUT GOES THROUGH `env:`, NOT INTO THE SCRIPT BODY. Interpolating
+      # `${{ inputs.confirm }}` directly into a `run:` block is shell injection:
+      # this job holds RENDER_API_KEY and writes the production connection string
+      # to /tmp/dburl, so a dispatch value like `'; curl … ; echo '` would execute
+      # with both in reach. The model workflows do interpolate it; that is
+      # inherited, not a reason to propagate it.
       - name: Refuse without an explicit APPLY
         if: inputs.confirm != 'APPLY'
+        env:
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          echo "::notice::confirm was '${{ inputs.confirm }}', not APPLY — nothing will be written."
+          echo "::notice::confirm was '${CONFIRM}', not APPLY — nothing will be written."
           echo "Re-run with -f confirm=APPLY to grant the three named memberships."
           exit 1
 
@@ -168,7 +176,17 @@ jobs:
           import json, sys
           cur = json.load(open('/tmp/ip_allow_original.json')) or []
           cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
-          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'demo seeding'})
+          # 🔴 'ephemeral:' IS THE REAPABLE PREFIX, and the concurrency note above
+          # promises exactly that cleanup: the filtered-capture workflows
+          # (apply-migrations, backup-production-db, rehearse-migration) drop
+          # entries containing 'ephemeral:' when they snapshot. The model
+          # workflows all write 'demo seeding', which matches that filter NOWHERE
+          # — so a run killed between this PATCH and its restore leaves the
+          # runner's /32 on the production allow-list with nothing able to reap
+          # it, and the next unfiltered restore re-persists it. The header
+          # claimed the cleanup existed; this is what makes the claim true.
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32',
+                      'description': 'ephemeral: grant-live-suite-partner-memberships'})
           print(json.dumps({'ipAllowList': cur}))
           PY
           curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \

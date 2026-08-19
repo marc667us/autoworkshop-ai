@@ -491,11 +491,23 @@ test.describe('the live site, signed in and acting in another organisation', () 
    * `[AUDIT]` organisations however many memberships were granted. The
    * organisation switcher is unfiltered by tenant, and
    * `setActiveOrganizationAction` deletes the stored role cookie before
-   * redirecting to `/`, so the API re-resolves the STRONGEST role held in the
-   * organisation just entered (`ROLE_PRECEDENCE`). Switching organisation is
+   * redirecting to `/`, so the API re-resolves a role within the organisation
+   * just entered. Switching organisation is
    * therefore sufficient on its own, and switching role afterwards would be
    * both unnecessary and — inside a single-role organisation, where the
    * switcher is absent — impossible.
+   *
+   * ⚠️ AND IT IS *A* ROLE, NOT RELIABLY THE STRONGEST ONE. This comment used to
+   * say `ROLE_PRECEDENCE` picks the strongest role in the organisation just
+   * entered, and `set-organization-action.ts` says so too. It is not what the
+   * code does: with a requested organisation, `resolveTenantContext` takes
+   * `active.find(m => m.organizationId === requestedOrganizationId)` — FIRST
+   * ROW ORDER. The precedence sort is only reached in the branch where NO
+   * organisation was requested. Harmless today because this account holds
+   * exactly one role in each `[AUDIT]` organisation, so there is nothing to
+   * choose between; the moment a second role is granted there, these tests
+   * would act as an arbitrary one of them with no failure signal. Found by the
+   * Supervisor.
    *
    * ⚠️ SWITCHING ALSO NAVIGATES, to `/`, which dispatches to the new role's
    * home pack. The caller's own `page.goto` follows, so this only has to wait
@@ -515,26 +527,44 @@ test.describe('the live site, signed in and acting in another organisation', () 
     for (const o of options) {
       const label = (await o.textContent()) ?? '';
       if (match.test(label)) {
-        // The option's VALUE is the organisation id, and it is what the server
-        // echoes back once the switch has actually taken effect.
+        // The option's VALUE is the organisation id — the same id the server
+        // action stores in its cookie.
         const organizationId = (await o.getAttribute('value')) ?? '';
         await switcher.selectOption({ label });
 
-        // 🔴 `networkidle` ALONE IS NOT A SYNCHRONISATION SIGNAL HERE, and
-        // Codex was right to flag it. The page may ALREADY be idle at the
-        // moment it is asked, so the wait can resolve before the server action
-        // has even begun navigating — and the caller's `page.goto` would then
-        // race the cookie write and its redirect, silently testing the OLD
-        // organisation while appearing to pass.
+        // 🔴 WAIT FOR THE COOKIE, WHICH ONLY THE SERVER CAN WRITE.
         //
-        // So wait for an OBSERVABLE POST-SWITCH STATE instead: `RoleSwitcher`
-        // and `OrganizationSwitcher` are both re-keyed on the id the server
-        // resolved, precisely so the control can never display one organisation
-        // while the layout shows another. When this select reads the new id,
-        // the switch is a fact rather than a request.
-        await expect(page.getByLabel('Active organization')).toHaveValue(organizationId, {
-          timeout: 120_000,
-        });
+        // Two wrong answers preceded this one, and the second is the
+        // instructive one.
+        //
+        // `waitForLoadState('networkidle')` alone was wrong because the page
+        // may ALREADY be idle when asked, so it can resolve before the server
+        // action has begun navigating (Codex).
+        //
+        // Asserting `toHaveValue(organizationId)` on the switcher was WORSE —
+        // it looked like synchronisation and was a no-op (the Supervisor
+        // falsified it). `OrganizationSwitcher` is an UNCONTROLLED `<select>`
+        // (`defaultValue` + `key`), and Playwright's `selectOption` sets
+        // `select.value` in the DOM immediately, client-side. So the assertion
+        // was already true on its first poll and never observed the server at
+        // all — and it would have passed just as happily if the server had
+        // REFUSED the switch. A check that cannot fail is the exact shape this
+        // file has been bitten by twice already.
+        //
+        // `aw.activeOrganization` is set by `setActiveOrganizationAction` in
+        // its response. `selectOption` cannot fabricate it, so reading it back
+        // is proof the switch is a FACT rather than a request.
+        await expect
+          .poll(
+            async () => {
+              const jar = await page.context().cookies();
+              return jar.find((c) => c.name === 'aw.activeOrganization')?.value ?? '';
+            },
+            { timeout: 120_000 },
+          )
+          .toBe(organizationId);
+
+        // Then let the redirect to `/` and its dispatch to the new pack settle.
         await page.waitForLoadState('networkidle', { timeout: 120_000 });
         return true;
       }
@@ -544,7 +574,7 @@ test.describe('the live site, signed in and acting in another organisation', () 
 
   test('an insurance owner reaches their own users screen', async ({ page }) => {
     await signIn(page);
-    const switched = await actInOrganization(page, /insurance/i);
+    const switched = await actInOrganization(page, /^\[AUDIT\].*insurance/i);
     // Same fixture gap as the switcher check above — skipped loudly, never
     // silently, because "unverified" and "verified" must not look alike.
     test.skip(
@@ -570,7 +600,7 @@ test.describe('the live site, signed in and acting in another organisation', () 
     page,
   }) => {
     await signIn(page);
-    const switched = await actInOrganization(page, /insurance/i);
+    const switched = await actInOrganization(page, /^\[AUDIT\].*insurance/i);
     test.skip(
       !switched,
       'A3 UNANSWERED: this CI identity belongs to no insurance organisation, so ' +
@@ -597,7 +627,7 @@ test.describe('the live site, signed in and acting in another organisation', () 
    */
   test('a fleet administrator reaches the fleet screens built in slice 20', async ({ page }) => {
     await signIn(page);
-    const switched = await actInOrganization(page, /fleet/i);
+    const switched = await actInOrganization(page, /^\[AUDIT\].*fleet/i);
     test.skip(
       !switched,
       'this account belongs to no fleet organisation, so slice 20 is UNSEEN by a ' +
@@ -637,7 +667,7 @@ test.describe('the live site, signed in and acting in another organisation', () 
     page,
   }) => {
     await signIn(page);
-    const switched = await actInOrganization(page, /towing/i);
+    const switched = await actInOrganization(page, /^\[AUDIT\].*towing/i);
     test.skip(
       !switched,
       'A3 UNANSWERED: this CI identity belongs to no towing organisation, so ' +
