@@ -1,0 +1,179 @@
+# Read-only: which identity does the live suite sign in as, and what can it act as?
+#
+# ══════════════════════════════════════════════════════════════════════════
+# Live-suite run 32290511884 found the role switcher ABSENT for the signed-in
+# account. `RoleSwitcher` renders nothing below two roles, so the conclusion was
+# that `LIVE_OWNER_EMAIL` is a CI identity holding ONE role — which makes the
+# signed-in half of the suite structurally unable to verify any partner-role
+# screen, and left four A3 checks skipping.
+#
+# ⚠️ THAT CONCLUSION WAS INFERRED FROM A MISSING DOM NODE. Before writing
+# memberships into production on the back of it, ASK THE DATABASE. Reasoning
+# from source has been wrong twice this week.
+#
+# 🔴 READ-ONLY. Every statement in the SQL is a SELECT. No confirm input, which
+# is the point: a diagnostic nobody can run without ceremony does not get run.
+# ══════════════════════════════════════════════════════════════════════════
+
+name: Diagnose live identity roles
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  # A6 — ALL of these open the production database firewall by PATCHing the
+  # WHOLE ipAllowList, so they must never overlap. Render has no atomic
+  # per-entry operation, so every capture/add/restore is a read-modify-write on
+  # one shared resource. It races at least THREE ways:
+  #   1. FILTERED CAPTURE (apply-migrations, backup-production-db,
+  #      rehearse-migration) drops every entry containing 'ephemeral:' when
+  #      building its snapshot. It cannot tell a dead run's entry from a LIVE
+  #      one's, so it deletes a running job's entry the moment it starts.
+  #   2. UNFILTERED RESTORE (the other twelve) restores a snapshot taken before
+  #      another run added its entry, deleting it on the way out.
+  #   3. CONCURRENT ADD (any two unfiltered runs) — both GET the same original
+  #      list, then both PATCH 'original + mine'. The second add deletes the
+  #      first run's entry before either restore happens.
+  #   (and mixed order can RESURRECT a stale entry: an unfiltered run snapshots
+  #    a foreign ephemeral entry and restores it after its owner removed it.)
+  # The victim fails with 'SSL connection has been closed unexpectedly', which
+  # is a LIE about the cause and reads as a database outage. At least six failed
+  # runs on 2026-08-14 were this.
+  #
+  # ⚠️ A RETRY IS NOT A FIX — five retries failed identically, because the entry
+  # stays deleted. And "remove only MY entry" is still racy: the API takes the
+  # whole list.
+  #
+  # 🔴 THE COST OF THIS MUTEX, STATED PLAINLY — GITHUB'S WAITING ROOM HOLDS ONE.
+  # A concurrency group is NOT a fifteen-deep FIFO queue. GitHub keeps at most
+  # ONE pending run per group and REPLACES it when a newer one arrives, with no
+  # ordering guarantee. So a pending deploy-api, migration APPLY, seed or backup
+  # can be silently discarded by a newer arrival — and apply-migrations runs
+  # automatically after EVERY Release, so automatic inspections compete with
+  # deliberate operator requests. A cancelled PENDING run is firewall-safe (it
+  # never opened anything) but the REQUEST IS LOST, not merely delayed.
+  # ▶ THEREFORE: after dispatching any of these, capture the run id and confirm
+  #   it actually STARTED. `gh run list --workflow=<wf> -L 3 --json databaseId,status`
+  #   A 'cancelled' run you did not cancel is an evicted request — re-dispatch it.
+  #
+  # ⚠️ cancel-in-progress MUST stay false: cancelling a run mid-window would
+  # leave its ephemeral entry live on the production firewall. But it does NOT
+  # close every such path — a job timeout, a manual/API cancellation or runner
+  # loss can still kill a run between its add PATCH and its restore step, and an
+  # `if: always()` restore is not a reliable finally block against those. The
+  # filtered-capture workflows clean up a stale entry on their next run; until
+  # then the exposure is real.
+  group: production-db-firewall
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse without a key
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+
+      - name: Find the database and open the firewall for this runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres?name=${DB_NAME}&limit=20" > /tmp/pg_list.json || true
+          DB_ID="$(python3 -c "
+          import json, os
+          try:
+              rows = json.load(open('/tmp/pg_list.json'))
+          except Exception:
+              rows = None
+          if isinstance(rows, dict):
+              rows = rows.get('postgres') or rows.get('items') or []
+          for r in (rows or []):
+              d = r.get('postgres', r) if isinstance(r, dict) else {}
+              if d.get('name') == os.environ['DB_NAME']:
+                  print(d.get('id','')); break
+          ")"
+          [ -n "$DB_ID" ] || {
+            echo "::group::what /v1/postgres returned"; head -c 500 /tmp/pg_list.json; echo "::endgroup::"
+            echo "::error::could not find ${DB_NAME}"; exit 1; }
+          echo "$DB_ID" > /tmp/db_id
+
+          curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}" \
+            | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          # `or []`: Render returns the key PRESENT and null when the list is
+          # empty, so a dict default would never fire.
+          print(json.dumps(d.get('ipAllowList') or []))" > /tmp/ip_allow_original.json
+
+          RUNNER_IP="$(curl -fsS --max-time 30 https://api.ipify.org)"
+          python3 - "$RUNNER_IP" > /tmp/allow.json <<'PY'
+          import json, sys
+          cur = json.load(open('/tmp/ip_allow_original.json')) or []
+          cur = [e for e in cur if e.get('cidrBlock') != f'{sys.argv[1]}/32']
+          cur.append({'cidrBlock': f'{sys.argv[1]}/32', 'description': 'demo seeding'})
+          print(json.dumps({'ipAllowList': cur}))
+          PY
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/allow.json \
+            "https://api.render.com/v1/postgres/${DB_ID}" >/dev/null
+
+          CONN="$(curl -fsS -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${DB_ID}/connection-info" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['externalConnectionString'])")"
+          echo "::add-mask::$CONN"
+          printf '%s' "$CONN" > /tmp/dburl
+          echo "firewall open"
+
+      - name: Ask production what the live-suite identity can act as
+        run: |
+          set -euo pipefail
+          export DATABASE_URL="$(cat /tmp/dburl)"
+          PSQL="$(ls /usr/lib/postgresql/*/bin/psql | head -1)"
+          "$PSQL" -v ON_ERROR_STOP=1 "$DATABASE_URL"             -f infrastructure/seed/diagnose_live_identity_roles.sql | tee /tmp/identity.txt
+
+      - name: Put it in the run summary
+        if: always()
+        run: |
+          {
+            echo "## Live-suite identity roles — production"
+            echo ""
+            echo "Read section 2. A membership with **is_earliest = t** and"
+            echo "**is_self_created = f** means the organisation's FIRST member was"
+            echo "created by somebody else, so 085 correctly refuses to promote a"
+            echo "later self-created assessor into an administrator."
+            echo ""
+            echo "Section 3 separates a real registration from a hand-seeded fixture:"
+            echo "a fixture can be corrected or removed, a real customer cannot."
+            echo ""
+            echo '```'
+            cat /tmp/identity.txt 2>/dev/null || echo "nothing was read"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Always restore the database firewall
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] && [ -f /tmp/ip_allow_original.json ] || { echo "nothing to restore"; exit 0; }
+          ID="$(cat /tmp/db_id)"
+          python3 -c "
+          import json
+          json.dump({'ipAllowList': json.load(open('/tmp/ip_allow_original.json')) or []},
+                    open('/tmp/restore.json','w'))"
+          curl -fsS -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}" >/dev/null
+          echo "firewall restored"
+
+      - name: Always remove the credentials from the runner
+        if: always()
+        run: rm -f /tmp/dburl || true

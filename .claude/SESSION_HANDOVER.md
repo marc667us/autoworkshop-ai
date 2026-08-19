@@ -1,5 +1,93 @@
 # Session handover
 
+## ▶▶ RESUME HERE — 2026-08-19 close. You are ONE DISPATCH from the next step. ◀◀
+
+**Tip `6556194` + this commit. Tree clean, everything pushed. CI green.
+Production migrations 85/85. Live suite 73 passed / 0 failed / 5 SKIPPED.**
+
+```bash
+bash scripts/start-session.sh          # ALWAYS first
+```
+
+### THE EXACT NEXT ACTION
+
+**Close A3 for real: turn its four SKIPS into four assertions.** The work is
+half done and the next step is a single command.
+
+```bash
+gh workflow run diagnose-live-identity-roles.yml     # read-only, no confirm needed
+```
+
+That workflow and its SQL are **written, YAML-validated, committed, and NOT YET
+RUN**. It answers the one question that blocks the rest:
+
+> Which identity does `LIVE_OWNER_EMAIL` resolve to, and how many ACTIVE roles
+> does it hold?
+
+**Why it exists.** Live-suite run 32290511884 found `getByLabel('Acting as
+role')` absent. `RoleSwitcher` renders nothing below two roles, so the account
+holds one — which is why four A3 checks skip. ⚠️ **That is an inference from a
+missing DOM node.** It matches `RoleSwitcher`'s source and the recorded
+`live-*@aiappinvent.com` identities, and it is still an inference. Reasoning
+from source has been wrong twice this week, so measure before writing
+memberships into production.
+
+### THEN, IN ORDER
+
+1. **Read section 1 of the output** — `active_roles` per candidate identity.
+   Any account showing **1** cannot verify a partner-role screen, ever.
+2. **Read section 3** — if `fleet_orgs = 0` on production, slice 20's nine fleet
+   screens are unreachable by ANY signed-in viewer, which is a separate and
+   larger finding than the switcher one.
+3. **Grant the CI identity memberships** in the `[AUDIT]` insurance, towing and
+   fleet organisations (section 2 lists their ids). Model it on
+   `repair-audit-org-founders.yml`: name the ids explicitly, guard every write
+   with the full measured shape, and gate on `-f confirm=APPLY`. **Do not infer
+   a rule** — that is the mistake 085's widening made, which Codex falsified.
+4. **Re-run `live-suite.yml`.** The four A3 checks should move from SKIPPED to
+   PASSED. **Report passed / failed / SKIPPED as three numbers** — the target is
+   73/0/1, not 73/0/5.
+
+⚠️ **A skip is not a pass.** The suite is GREEN at 73/0/5 today, and five things
+are unverified. Do not read the green as done.
+
+### WHAT IS ALREADY DONE AND NEEDS NO REVISITING
+
+| | |
+|---|---|
+| Slice 17 — insurance marketplace, shopper's half | **LIVE**, verified end to end on production |
+| Slice 19 — fleet data layer + API (ADR-023, migration 087) | **LIVE**, `verify/087` 11/11 |
+| Slice 20 — fleet workspace | **LIVE**, fleet **1 → 9 of 29** screens, overall **282/385** |
+| Migrations on production | **85 / 85** |
+| I4 · I7 · I11 · I13 | closed |
+
+### OPEN, WITH THE REASON RECORDED
+
+- **A3** — the fixture gap above. Four checks skip until it is closed.
+- **20 fleet dead ends** — maintenance plans, vehicle documents, quotations,
+  parts installed, warranties, downtime, vehicle costs, reports. Each needs a
+  data layer that does not exist. **Not stubbed, deliberately.**
+- **I14** no rate limiting on the anonymous enquiry POST · **I15** `z.string().url()`
+  is not a scheme check anywhere else in the repo (unaudited) · **I16** enquiries
+  have no nav entry · **I17** `Release` deploys WEB ONLY · **I18** no test that
+  every top-level `app/` route is routable · **I19** 085's guard counts owners
+  globally.
+- **Two follow-ups from slice 20**: fleet work deserves its own workshop menu
+  entry (owner decision), and a real appointment needs a workshop-confirmed date.
+
+### THE TRAPS THAT COST TIME TODAY — READ BEFORE TRUSTING A NUMBER
+
+1. **`pnpm test` and `pnpm lint` REPLAY CACHED LOGS.** `pnpm test` reported
+   927/55 while vitest reported 981/1. **Use `turbo run <task> --force`.**
+2. **`Release` DEPLOYS WEB ONLY** — `deploy-api.yml -f confirm=APPLY` is separate,
+   and new API routes 404 on production until it runs.
+3. **A route can build, deploy and be UNREACHABLE** — `middleware.ts` redirects
+   any first path segment no pack claims.
+4. **A guard that cannot reach its own else-branch** — `actAs` threw where it
+   should have returned false; the suite went red twice for a gap it was written
+   to skip on.
+
+
 ## ═══ 2026-08-19 (pt4) — A3 answered: the harness cannot answer A3 ═══
 
 **Tip `8b7a7f4`. Pushed. CI green. Live suite GREEN.**
