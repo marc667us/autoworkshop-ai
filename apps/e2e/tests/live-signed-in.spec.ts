@@ -515,7 +515,26 @@ test.describe('the live site, signed in and acting in another organisation', () 
     for (const o of options) {
       const label = (await o.textContent()) ?? '';
       if (match.test(label)) {
+        // The option's VALUE is the organisation id, and it is what the server
+        // echoes back once the switch has actually taken effect.
+        const organizationId = (await o.getAttribute('value')) ?? '';
         await switcher.selectOption({ label });
+
+        // 🔴 `networkidle` ALONE IS NOT A SYNCHRONISATION SIGNAL HERE, and
+        // Codex was right to flag it. The page may ALREADY be idle at the
+        // moment it is asked, so the wait can resolve before the server action
+        // has even begun navigating — and the caller's `page.goto` would then
+        // race the cookie write and its redirect, silently testing the OLD
+        // organisation while appearing to pass.
+        //
+        // So wait for an OBSERVABLE POST-SWITCH STATE instead: `RoleSwitcher`
+        // and `OrganizationSwitcher` are both re-keyed on the id the server
+        // resolved, precisely so the control can never display one organisation
+        // while the layout shows another. When this select reads the new id,
+        // the switch is a fact rather than a request.
+        await expect(page.getByLabel('Active organization')).toHaveValue(organizationId, {
+          timeout: 120_000,
+        });
         await page.waitForLoadState('networkidle', { timeout: 120_000 });
         return true;
       }
@@ -594,6 +613,45 @@ test.describe('the live site, signed in and acting in another organisation', () 
 
     await page.goto(`${APEX}/fleet/service-management/service-requests`, { timeout: 120_000 });
     await expect(page.getByRole('heading', { name: /Service Requests/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByText(/not built yet/i)).toHaveCount(0);
+  });
+
+  /**
+   * 🔴 THE THIRD GRANT, EXERCISED. `grant-live-suite-partner-memberships.yml`
+   * writes THREE memberships — insurance, fleet AND towing — and until this
+   * existed only two of them were ever used. Codex found the gap: a production
+   * fixture mutation with nothing asserting against it means towing can regress
+   * while A3 stays green and claims all three partner areas are verified.
+   *
+   * Either the grant is exercised or it should not be made. It is exercised.
+   *
+   * `/towing/operations/settings` is the route A3 named from the start (task
+   * list A3-old), and it is the towing half of what migration 085 unblocked:
+   * before 085 a towing company had one member and no way to appoint a second.
+   * The People section is what that migration bought, so it is asserted
+   * alongside the page's own heading rather than instead of it.
+   */
+  test('a towing owner reaches their own settings screen, with the People section', async ({
+    page,
+  }) => {
+    await signIn(page);
+    const switched = await actInOrganization(page, /towing/i);
+    test.skip(
+      !switched,
+      'A3 UNANSWERED: this CI identity belongs to no towing organisation, so ' +
+        '/towing/operations/settings is UNVERIFIED by a signed-in viewer.',
+    );
+
+    await page.goto(`${APEX}/towing/operations/settings`, { timeout: 120_000 });
+
+    await expect(page.getByRole('heading', { name: /Settings/i }).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    // The 085 half. Without it this route is the rates screen it has always
+    // been, and the org-admin work it was extended for is unproven.
+    await expect(page.getByRole('heading', { name: /People/i }).first()).toBeVisible({
       timeout: 60_000,
     });
     await expect(page.getByText(/not built yet/i)).toHaveCount(0);

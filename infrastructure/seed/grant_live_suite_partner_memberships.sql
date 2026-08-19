@@ -111,6 +111,7 @@ DECLARE
     v_fleet_org uuid := 'f9dc95da-d225-49b2-a4ed-adae414e2b2d';
     v_email     text := current_setting('live.email', true);
     v_user      uuid;
+    v_matches   int;
     v_changed   int;
     v_total     int := 0;
 BEGIN
@@ -121,20 +122,42 @@ BEGIN
     END IF;
 
     -- ── resolve the account, and REFUSE on anything but exactly one ───────
-    -- A LIKE or a "first match" here could grant partner authority to the
-    -- wrong person. `identity.users` is not tenant-scoped, so an e-mail is the
-    -- only handle — it must therefore resolve to exactly one active row or
-    -- this stops.
-    SELECT id INTO v_user
+    --
+    -- 🔴 COUNT FIRST. `identity.users.email` carries NO UNIQUE CONSTRAINT —
+    -- migration 001 declares only `keycloak_subject TEXT NOT NULL UNIQUE`,
+    -- because one human may hold several Keycloak identities. So a bare
+    -- `SELECT ... INTO` here would take an ARBITRARY row of however many match
+    -- and grant production partner authority to whichever one the planner
+    -- happened to return, while the comment above it claimed exactly one.
+    --
+    -- Codex found that on this file: the promise was in the prose and not in
+    -- the code. Counting first is what makes the refusal real. `INTO STRICT`
+    -- would also raise, but its `TOO_MANY_ROWS` says nothing about WHICH
+    -- e-mail is duplicated or how many rows there are, and this is a message
+    -- somebody will read at speed while a production write is half-done.
+    SELECT count(*) INTO v_matches
       FROM identity.users
      WHERE email = v_email AND status = 'active';
 
-    IF v_user IS NULL THEN
+    IF v_matches = 0 THEN
         RAISE EXCEPTION 'no ACTIVE identity.users row with e-mail %. LIVE_OWNER_EMAIL '
                         'names an account that does not exist on production — run '
                         'provision-live-suite-account.yml first, or the secret is wrong.',
                         v_email;
     END IF;
+
+    IF v_matches > 1 THEN
+        RAISE EXCEPTION 'e-mail % matches % ACTIVE identity.users rows. That column has '
+                        'no UNIQUE constraint (only keycloak_subject does), so this '
+                        'script cannot tell which account the live suite signs in as — '
+                        'and guessing would grant partner authority to the wrong one. '
+                        'Resolve the duplicate, or re-key this script on keycloak_subject.',
+                        v_email, v_matches;
+    END IF;
+
+    SELECT id INTO v_user
+      FROM identity.users
+     WHERE email = v_email AND status = 'active';
 
     RAISE NOTICE 'granting partner memberships to % (%)', v_email, v_user;
 
@@ -146,6 +169,23 @@ BEGIN
     --
     -- `ON CONFLICT` on the natural key `(organization_id, user_id, role_name)`
     -- makes a re-run a no-op, so `0 granted` on the second run is SUCCESS.
+    --
+    -- 🔴 DO UPDATE, NOT DO NOTHING, AND THE DIFFERENCE IS NOT COSMETIC.
+    -- `status` is NOT part of that key. With `DO NOTHING`, an existing
+    -- `suspended` or `revoked` row would swallow the insert, leave the account
+    -- without an ACTIVE membership, and send the gate below into a "the grants
+    -- did not take" message blaming the [AUDIT] organisations — pointing the
+    -- next reader at the wrong thing entirely. Codex found it; nothing on
+    -- production is in that state today, which is exactly why it would have
+    -- sat here unnoticed until it mattered.
+    --
+    -- ⚠️ REACTIVATING IS A DECISION, TAKEN DELIBERATELY. The target is never a
+    -- real person: it is the dedicated live-suite fixture named by
+    -- `LIVE_OWNER_EMAIL`, which `provision-live-suite-account.yml` creates for
+    -- this purpose and documents as "never the owner's own". Reactivating a
+    -- withdrawn membership on a REAL account would be a privilege decision this
+    -- script has no standing to make. The `WHERE` clause keeps it honest: an
+    -- already-active row is untouched, so `updated_at` still means something.
     --
     -- `created_by` is left NULL, deliberately. Naming a grantor would write a
     -- claim about history this script cannot establish — the same reasoning
@@ -163,7 +203,9 @@ BEGIN
        AND o.tenant_id = v_tenant
        AND o.org_type  = 'insurance_company'
        AND o.status    = 'active'
-    ON CONFLICT (organization_id, user_id, role_name) DO NOTHING;
+    ON CONFLICT (organization_id, user_id, role_name) DO UPDATE
+       SET status = 'active', updated_at = now()
+     WHERE identity.memberships.status <> 'active';
     GET DIAGNOSTICS v_changed = ROW_COUNT;
     RAISE NOTICE 'insurance: % membership(s) granted', v_changed;
     v_total := v_total + v_changed;
@@ -175,7 +217,9 @@ BEGIN
        AND o.tenant_id = v_tenant
        AND o.org_type  = 'towing_company'
        AND o.status    = 'active'
-    ON CONFLICT (organization_id, user_id, role_name) DO NOTHING;
+    ON CONFLICT (organization_id, user_id, role_name) DO UPDATE
+       SET status = 'active', updated_at = now()
+     WHERE identity.memberships.status <> 'active';
     GET DIAGNOSTICS v_changed = ROW_COUNT;
     RAISE NOTICE 'towing: % membership(s) granted', v_changed;
     v_total := v_total + v_changed;
@@ -187,7 +231,9 @@ BEGIN
        AND o.tenant_id = v_tenant
        AND o.org_type  = 'fleet_operator'
        AND o.status    = 'active'
-    ON CONFLICT (organization_id, user_id, role_name) DO NOTHING;
+    ON CONFLICT (organization_id, user_id, role_name) DO UPDATE
+       SET status = 'active', updated_at = now()
+     WHERE identity.memberships.status <> 'active';
     GET DIAGNOSTICS v_changed = ROW_COUNT;
     RAISE NOTICE 'fleet: % membership(s) granted', v_changed;
     v_total := v_total + v_changed;
@@ -204,45 +250,82 @@ $grant$;
 -- if it is not true — rather than reporting success and leaving the live suite
 -- to skip again twenty minutes later.
 --
--- It asserts the ORGANISATION count as well as the roles, because the
+-- It asserts the ORGANISATION count as well as the memberships, because the
 -- organisation switcher is the control the harness actually drives and it too
 -- renders nothing below two options.
+--
+-- 🔴 EACH TARGET IS ASSERTED BY ITS OWN ORGANISATION ID, NOT BY ROLE NAME.
+-- The first version of this gate asked "does the account hold these three role
+-- NAMES anywhere?", which Codex showed can pass while a target grant failed:
+-- the live-suite account may hold `fleet_administrator` in its own Live Suite
+-- Fleet organisation, so a silently-skipped insert into `[AUDIT] Fleet
+-- Operator` would have been masked by a role held somewhere else entirely. The
+-- transaction would then COMMIT and report success while one named
+-- organisation stayed unreachable — the exact failure this gate exists to
+-- prevent, wearing the badge of the thing that prevents it.
+--
+-- So each check names the organisation id, its tenant, its type, and requires
+-- an ACTIVE membership for THIS user with THAT role in THAT organisation.
 DO $gate$
 DECLARE
     v_email   text := current_setting('live.email', true);
     v_orgs    int;
-    v_roles   text[];
-    v_missing text[];
+    v_missing text[] := ARRAY[]::text[];
+    v_target  record;
 BEGIN
     PERFORM set_config('app.current_role', 'admin', true);
 
-    SELECT count(DISTINCT m.organization_id),
-           array_agg(DISTINCT m.role_name)
-      INTO v_orgs, v_roles
+    -- Named pairs, measured — the same three the grant block writes. Kept as a
+    -- literal list so the gate cannot be satisfied by anything the grant block
+    -- did not actually target.
+    FOR v_target IN
+        SELECT * FROM (VALUES
+            ('d7d30afd-a615-4c0b-a8d2-fa61c44570bb'::uuid, 'insurance_company', 'insurance_owner',     '[AUDIT] Insurance Company'),
+            ('c5c43056-8920-47c9-8735-2d52e8ee3115'::uuid, 'towing_company',    'towing_owner',        '[AUDIT] Towing Company'),
+            ('f9dc95da-d225-49b2-a4ed-adae414e2b2d'::uuid, 'fleet_operator',    'fleet_administrator', '[AUDIT] Fleet Operator')
+        ) AS t(org_id, org_type, role_name, label)
+    LOOP
+        IF NOT EXISTS (
+            SELECT 1
+              FROM identity.users u
+              JOIN identity.memberships m   ON m.user_id = u.id
+              JOIN identity.organizations o ON o.id = m.organization_id
+                                           AND o.tenant_id = m.tenant_id
+             WHERE u.email          = v_email
+               AND u.status         = 'active'
+               AND m.organization_id = v_target.org_id
+               AND m.role_name      = v_target.role_name
+               AND m.status         = 'active'
+               AND o.org_type       = v_target.org_type
+               AND o.status         = 'active'
+        ) THEN
+            v_missing := v_missing || format('%s (%s in %s)',
+                                             v_target.label, v_target.role_name, v_target.org_id);
+        END IF;
+    END LOOP;
+
+    IF array_length(v_missing, 1) > 0 THEN
+        RAISE EXCEPTION 'the grants did not take for %: %. Each is named by ORGANISATION '
+                        'ID, so this is not a missing role name somewhere — one of the '
+                        '[AUDIT] organisations has changed shape since run 32293446882. '
+                        'Re-run diagnose-live-identity-roles.yml and re-measure the ids.',
+                        v_email, array_to_string(v_missing, '; ');
+    END IF;
+
+    SELECT count(DISTINCT m.organization_id) INTO v_orgs
       FROM identity.users u
       JOIN identity.memberships m ON m.user_id = u.id AND m.status = 'active'
      WHERE u.email = v_email;
 
-    SELECT array_agg(r) INTO v_missing
-      FROM unnest(ARRAY['insurance_owner','towing_owner','fleet_administrator']) AS r
-     WHERE NOT (r = ANY(COALESCE(v_roles, ARRAY[]::text[])));
-
-    IF v_missing IS NOT NULL THEN
-        RAISE EXCEPTION 'the grants did not take: % still missing for %. The [AUDIT] '
-                        'organisations have changed shape since run 32293446882 — '
-                        're-run diagnose-live-identity-roles.yml and re-measure the ids.',
-                        v_missing, v_email;
-    END IF;
-
     -- The organisation switcher renders nothing below two options, so this is
-    -- the harness's actual precondition — not a restatement of the roles check.
+    -- the harness's actual precondition — not a restatement of the checks above.
     IF v_orgs < 2 THEN
         RAISE EXCEPTION 'the account holds % organisation(s); the organisation switcher '
                         'renders nothing below two, so the harness still could not reach '
                         'a partner workspace.', v_orgs;
     END IF;
 
-    RAISE NOTICE 'gate passed: % organisations, roles %', v_orgs, v_roles;
+    RAISE NOTICE 'gate passed: all three named [AUDIT] memberships active, % organisations total', v_orgs;
 END;
 $gate$;
 
