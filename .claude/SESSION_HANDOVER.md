@@ -1,5 +1,126 @@
 # Session handover
 
+## ▶▶ RESUME HERE — 2026-08-19 pt5 close. A3 IS STILL OPEN, AND NOW WE KNOW WHY. ◀◀
+
+**Tip `0be23f1`. Tree clean, all pushed. CI + Security CI green.
+Production migrations 85/85.
+Live suite **73 passed / 0 failed / 6 SKIPPED** (run 32299154508).**
+
+```bash
+bash scripts/start-session.sh          # ALWAYS first
+```
+
+### 🔴 READ THIS BEFORE ANYTHING ELSE — THE SKIP COUNT WENT UP AGAIN
+
+Last session closed at 73/0/5 saying "one dispatch from closing A3". That
+dispatch was made. **The grant landed on production and A3 still did not
+close.** 73/0/**6** — one more skip than before, because a fifth A3 check
+(towing) was added alongside.
+
+**This is not a regression and not a failed deploy. It is the third scoping
+rule in a row, found one layer at a time, and the third one blocks the whole
+approach.**
+
+| Layer | Scoped to | Found |
+|---|---|---|
+| `RoleSwitcher` / `rolesFromMemberships` | the active **ORGANISATION** | 08-19 pt4 → pt5 |
+| `OrganizationSwitcher` / `/me` memberships | the active **TENANT** | **pt5, after the grant** |
+
+▶ **`apps/api/src/identity/me.service.ts:81` — `AND m.tenant_id = $2`.** The
+`/me` membership list is scoped to the active tenant, and its own comment says
+this is deliberate:
+
+> *"a user's memberships in other tenants are deliberately not listed here,
+> because switching tenant is a re-authentication concern, not a dropdown."*
+
+The three `[AUDIT]` organisations live in the OPERATOR's tenant
+(`7adce423-…`); the live-suite account lives in its own. **So no switcher in
+the product will ever offer them to that account, and no amount of granting
+changes that.** The organisation switcher never rendered, so all five A3
+checks skipped — correctly and loudly.
+
+### ⚠️ THE GRANTS ARE ON PRODUCTION AND THEY ARE **NOT** INERT
+
+`grant-live-suite-partner-memberships.yml` run **32299005872** committed three
+memberships for `LIVE_OWNER_EMAIL`: `insurance_owner` in `[AUDIT] Insurance
+Company`, `towing_owner` in `[AUDIT] Towing Company`, `fleet_administrator` in
+`[AUDIT] Fleet Operator`. Gate passed, 4 organisations total.
+
+**Do not assume they do nothing just because the dropdown does not show them.**
+`TenantGuard` resolves through `identity.memberships_for_subject`, which is
+**not** tenant-filtered (nor is its RLS policy `membership_lookup_select`) — so
+a client sending `x-organization-id` for an `[AUDIT]` org resolves that tenant
+and acts there. Only the `/me` *listing* is tenant-scoped.
+
+▶ **Both `insurance_owner` and `towing_owner` carry `organizationAdmin` +
+`financeRead`** (`permission-matrix.ts:121,125`) — member appointment/withdrawal,
+rates, invoices — inside organisations the operator actually uses. A CI secret
+account now holds that. The Supervisor raised this as a blast-radius finding
+BEFORE the run and it was deliberately deferred; it now needs deciding.
+
+### ▶ THE NEXT SESSION, IN ORDER
+
+| # | Do this | Why |
+|---|---|---|
+| **B1** | **Decide the fixture shape (owner decision, one question).** Then build it. | Two routes below. Both close A3 AND the blast-radius finding — they converge. |
+| **B2** | **Revoke the three cross-tenant grants** once B1's replacement exists. | They are live authority in the operator's tenant serving no purpose the product can surface. |
+| **B3** | Re-run `live-suite.yml`. Target **78/0/1**. | 69 anonymous + 4 owner + 5 A3 = 78 passed, 1 anonymous skip, 79 checks. |
+
+**Route (a) — dedicated `[LIVE SUITE]` partner orgs in the live-suite
+account's OWN tenant.** The switcher then offers them because they are
+same-tenant, and nothing touches the operator's data. Needs three orgs + three
+memberships in the existing live-suite tenant.
+
+**Route (b) — one identity per role, which is the pattern already in use.**
+`live-fleet@` and `live-supplier@` already exist, each in its own tenant, and
+`provision-live-suite-account.yml` already has a `kind` input
+(`workshop|supplier|fleet`) that creates tenant + org + membership. Add
+`insurance` and `towing` kinds, set `LIVE_INSURANCE_*` / `LIVE_TOWING_*`
+secrets, and have the spec sign in as the right identity per screen instead of
+switching organisation at all. ▶ **Recommended** — it needs no new mechanism,
+matches what is already there, and sidesteps tenant switching entirely.
+
+⚠️ Route (b) needs the owner to set (or approve generating) two new secret
+pairs. That is the one question B1 is.
+
+### WHAT WAS ACHIEVED THIS SESSION
+
+- **A3's blocking question is ANSWERED against production, not inferred.**
+  `diagnose-live-identity-roles.yml` run 32293446882: `live-owner@` holds ONE
+  active role. Section 3 also cleared the larger fear — `fleet_orgs = 6`, so
+  slice 20's screens are reachable in principle.
+- **Two scoping rules discovered and documented**, each of which silently
+  defeats the "just grant memberships" plan.
+- A fully guarded, idempotent, rehearsed production-write workflow that
+  **refuses correctly** — proven against four scenarios on local `aw-postgres`.
+- A fifth A3 check (towing), so all three grants are exercised rather than two.
+- 13 review findings fixed across both gates.
+
+### 🔴 TRAPS THIS SESSION ADDED
+
+1. **A "fix" can be a check that CANNOT FAIL.** I replaced a real race
+   (`networkidle`) with `toHaveValue()` on an UNCONTROLLED `<select>` —
+   Playwright's `selectOption` sets `.value` client-side, so it passed on the
+   first poll, never observed the server, and would have passed had the server
+   REFUSED. **The Supervisor falsified it; Codex had missed it.** Now waits on
+   the `aw.activeOrganization` cookie, which only the server can write.
+2. **`set_config` RETURNS its argument.** Redacting the display queries was not
+   enough — `SELECT set_config('live.email', :'live_email', true)` printed the
+   SECRET on stdout, and stdout is what the workflow `tee`s and `cat`s into
+   `$GITHUB_STEP_SUMMARY`, where Actions masking does not reach.
+3. **Reasoning stopped one layer too early, twice.** `resolveTenantContext` was
+   read and cleared; `me.service.ts` — which BUILDS the list it consumes — was
+   not. The rule that blocked everything was in the layer not read.
+4. **A comment can state a rule the code does not implement.** Three files
+   claim org-switching re-defaults to the STRONGEST role via `ROLE_PRECEDENCE`.
+   It does not: with a requested organisation `resolveTenantContext` takes
+   `active.find(...)`, first row order. `set-organization-action.ts:64,77`
+   still carries the wrong claim (left as pre-existing).
+5. **`scripts/codex-review.sh` reviews `HEAD~1..HEAD`, never the working tree.**
+   The first Codex run reviewed the PREVIOUS commit. Commit first, then review —
+   this is the mechanical cause of "Codex drifts onto stale artifacts".
+
+
 ## ▶▶ RESUME HERE — 2026-08-19 close. You are ONE DISPATCH from the next step. ◀◀
 
 **Tip `6556194` + this commit. Tree clean, everything pushed. CI green.
