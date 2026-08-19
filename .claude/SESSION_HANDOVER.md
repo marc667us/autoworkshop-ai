@@ -1,5 +1,80 @@
 # Session handover
 
+## ═══ 2026-08-19 (pt4) — A3 answered: the harness cannot answer A3 ═══
+
+**Tip `8b7a7f4`. Pushed. CI green. Live suite GREEN.**
+
+| | |
+|---|---|
+| **Live suite** | **73 passed · 0 failed · 5 SKIPPED** (69+4 anon/signed-in, 1+4 skips) |
+
+⚠️ **THE SKIP COUNT WENT UP BY FOUR AND THAT IS THE RESULT, NOT A REGRESSION.**
+Four checks that did not exist yesterday now skip, loudly, naming what they
+cannot prove. Report it as **73 / 0 / 5**, never as 73/0/1.
+
+### 🔴 A3 IS ANSWERED. THE ANSWER IS THAT THIS HARNESS CANNOT ANSWER IT.
+
+A3 — *"sign in as an `insurance_owner` and LOOK"* — has been open since
+2026-08-17. Turned into four live checks rather than a manual glance, because a
+check nobody can re-run is not a gate.
+
+The first one found this, on run 32290511884:
+
+```
+Locator: getByLabel('Acting as role')   —  element(s) not found
+```
+
+`RoleSwitcher` returns `null` below two roles ("one role is not a choice"), so
+the control is **absent, not broken**. **`LIVE_OWNER_EMAIL` is a dedicated CI
+test identity holding ONE role** — not the operator's own
+`marc667us@yahoo.com`, which holds seven in one tenant.
+
+▶ **So the signed-in half of the live suite STRUCTURALLY CANNOT verify any
+partner-role screen — insurance, towing or fleet.** A3 was not merely unmet
+since 08-17; it was **unmeetable by this harness**, and every previous "still
+open" note understated it.
+
+**Fixture gap, not a product defect** → the checks SKIP, loudly. A red would say
+something is broken when nothing is; a silent skip would hide that four screens
+are unverified by any signed-in viewer.
+
+▶ **WHAT WOULD CLOSE IT:** give `LIVE_OWNER_EMAIL` memberships in the `[AUDIT]`
+insurance, towing and fleet organisations — the ones the operator already uses
+to reach those trees. Then all four checks start asserting instead of skipping.
+
+### 🔴 TWO OF MY OWN GUARDS COULD NOT REACH THEIR ELSE-BRANCH
+
+1. `actAs` called `waitFor({ state: 'visible' })` on the switcher, which THROWS
+   after 60s when it is absent — so it could never return `false` and the
+   callers' skip branch was **dead code**. The suite went red twice for a gap
+   the checks were written to skip on. Counted instead of waited.
+2. Earlier the same day: the sign-out assertion allowed 60s against Keycloak
+   while the sign-in helper already allowed 180s. **Both fixed; sign-out now
+   passes in 2.0s** (it was a 60s timeout).
+
+**A guard that cannot reach its own else-branch is the same shape as a check
+that cannot fail.**
+
+### The UI/UX skill, used on what it actually found
+
+`ui-ux-pro-max` (MIT, installed this session) was run against the fleet screens.
+Two findings were **already satisfied** by our shared components — `DataTable`
+wraps in `overflowX:auto` with `tabIndex`/`role=group`, and `FormShell` already
+shows loading→success/error. One was a real gap: **Required Indicators**. Fixed
+in the **shared `Field`**, so every form in the product gets it; the marker is
+`aria-hidden` because the input's own `required` is what assistive tech
+announces, and the word carries the meaning rather than the colour.
+
+⚠️ The skill could not be invoked via the Skill tool — plugin skills load at
+session start and it was installed mid-session — so its search script was run
+from disk.
+
+### ▶ NEXT
+
+`.claude/TASK_LIST_2026-08-19.md`. **A3 is now a named fixture gap with a stated
+fix**, not an open question. 20 fleet dead ends remain and need data layers.
+
+
 ## ═══ 2026-08-19 (pt3) — slice 20: the fleet workspace, 1 screen → 9 ═══
 
 **Tip `634d2e4` + the live-suite timeout fix. Pushed, deployed, verified.**
