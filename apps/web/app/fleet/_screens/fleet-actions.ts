@@ -88,8 +88,14 @@ export async function raiseServiceRequestAction(formData: FormData): Promise<Act
   // reads like a server fault to the person who typed a correct mileage.
   const odometerRaw = read('odometerKm');
   const odometerKm = odometerRaw === undefined ? undefined : Number(odometerRaw);
-  if (odometerKm !== undefined && (!Number.isInteger(odometerKm) || odometerKm < 0)) {
-    return { error: 'Enter the odometer reading in whole kilometres, or leave it blank.' };
+  // ⚠️ THE UPPER BOUND IS THE API's, NOT AN INVENTED ONE. `z.number().max(9999999)`
+  // — without it an eight-digit reading passed here and was refused there, and
+  // two validators that disagree produce a 400 that reads like a server fault.
+  if (
+    odometerKm !== undefined &&
+    (!Number.isInteger(odometerKm) || odometerKm < 0 || odometerKm > 9_999_999)
+  ) {
+    return { error: 'Enter the odometer reading in whole kilometres, up to 9,999,999 — or leave it blank.' };
   }
 
   const result = await apiPost('fleet', '/fleet/service-requests', {

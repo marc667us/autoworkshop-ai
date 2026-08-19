@@ -215,8 +215,26 @@ export function FormShell({
   // at the moment of the first press.
   const [reviewing, setReviewing] = React.useState<FormData | null>(null);
 
+  /**
+   * A SYNCHRONOUS lock, distinct from `pending`.
+   *
+   * 🔴 `pending` IS STATE, AND STATE IS ASYNCHRONOUS. Two submit events
+   * dispatched before React commits the re-render both read `pending === false`,
+   * both pass the guard, and both call the action — so the disabled button and
+   * the pending flag close the window only AFTER the commit, which is exactly
+   * the interval that matters. A ref mutates immediately, so the second event
+   * sees the lock the first set.
+   *
+   * Found by Codex on 2026-08-19 in this shared component, having been found
+   * and fixed the same day in the public enquiry form, which had hand-rolled
+   * the identical guard. Fixing it here fixes every form in the product.
+   */
+  const inFlight = React.useRef(false);
+
   /** Actually call the action. Shared by the plain path and the confirm path. */
   async function send(formData: FormData) {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setPending(true);
     setResult(null);
     try {
@@ -232,6 +250,7 @@ export function FormShell({
     } catch {
       setResult({ error: 'The request could not be completed. Nothing has been saved.' });
     } finally {
+      inFlight.current = false;
       setPending(false);
     }
   }

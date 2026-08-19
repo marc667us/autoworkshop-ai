@@ -1,4 +1,5 @@
 import { Suspense } from 'react';
+import Link from 'next/link';
 import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import {
   DataTable,
@@ -146,10 +147,14 @@ async function VehicleRows() {
     return (
       <EmptyState
         title="No vehicles yet"
-        // 🔴 NAMES WHERE VEHICLES COME FROM. An empty state that does not say
-        // what to do next is a dead end, which is the defect class this
-        // repository has recorded most expensively.
-        description="Vehicles are added from Fleet Assets once your depot records them. A vehicle must exist here before you can send it to a workshop."
+        // 🔴 THIS USED TO SAY "vehicles are added from Fleet Assets", WHICH WAS
+        // A CONTROL THAT DOES NOT EXIST. Codex caught it: this slice ships a
+        // vehicle LIST and no create route, so the sentence sent a reader
+        // looking for a button that is not there — an empty state that invents
+        // its own way out is worse than one that admits there is none.
+        //
+        // Said plainly instead, with the thing that IS reachable named.
+        description="Adding a vehicle is not built in this workspace yet — vehicle records are created by the workshop that takes the vehicle in. Once a vehicle is on file here you can raise service requests against it."
       />
     );
   }
@@ -344,7 +349,9 @@ async function RaiseRequestForm() {
           title="You cannot raise a request yet"
           description={
             vehicles.data.length === 0
-              ? 'Add a vehicle to your fleet first — there is nothing to send.'
+              ? // ⚠️ NOT "add a vehicle first" — there is no create route in this
+                // slice, so that would name an unreachable action. Codex, LOW.
+                'Your fleet has no vehicles on file yet, so there is nothing to send. Vehicle records are created by the workshop that takes a vehicle in.'
               : 'No workshop has published a directory entry yet, so there is nobody to send a vehicle to.'
           }
         />
@@ -412,7 +419,18 @@ async function RaiseRequestForm() {
           <input id="preferredDate" name="preferredDate" type="date" />
         </Field>
         <Field label="Odometer, km (optional)" htmlFor="odometerKm">
-          <input id="odometerKm" name="odometerKm" inputMode="numeric" maxLength={8} />
+          {/* ⚠️ `max` MATCHES THE API's `z.number().max(9999999)`. An eight-digit
+              reading used to pass this form's own validation and then be
+              refused by the API — two validators disagreeing, which reads to
+              the person who typed a correct number as a server fault. */}
+          <input
+            id="odometerKm"
+            name="odometerKm"
+            type="number"
+            min={0}
+            max={9999999}
+            step={1}
+          />
         </Field>
         <SubmitButton>Send to the workshop</SubmitButton>
       </FormShell>
@@ -422,17 +440,48 @@ async function RaiseRequestForm() {
 
 export type RequestFilter = 'all' | 'appointments' | 'in_progress' | 'completed';
 
+/**
+ * 🔴 ONE STATUS PER VIEW, AND THAT IS A CORRECTION.
+ *
+ * The first version defined an appointment as "a request with a preferred date
+ * that has not finished", which included a **submitted** request — one the
+ * workshop has not even seen yet. Codex, 2026-08-19: *"turning a fleet
+ * preference into a booking."* Exactly right. `preferredDate` is what the FLEET
+ * asked for; nothing in this model is a date a workshop CONFIRMED, so no filter
+ * over it can honestly be called an appointment.
+ *
+ * It also put `accepted` under "Repairs in Progress", where a job nobody has
+ * started yet does not belong.
+ *
+ * So each view is now exactly one status, and the title means what it says:
+ *   · accepted    — the workshop has agreed to do it. Booked in.
+ *   · in_progress — they have started.
+ *   · completed   — they have finished.
+ *
+ * ⚠️ AND NOTHING IS LOST. `submitted`, `declined` and `cancelled` appear in
+ * Service Requests, which shows everything — so no request is invisible in all
+ * four screens.
+ *
+ * ▶ A REAL appointment needs a workshop-CONFIRMED date, which the schema does
+ *   not carry. That is a follow-up, not something to fake with a filter.
+ */
 const FILTERS: Record<RequestFilter, (r: ServiceRequest) => boolean> = {
   all: () => true,
-  // An appointment is a request with a date the fleet asked for, that has not
-  // finished. A completed job with a past preferred date is not an appointment.
-  appointments: (r) =>
-    r.preferredDate !== null && !['completed', 'cancelled', 'declined'].includes(r.status),
-  in_progress: (r) => ['accepted', 'in_progress'].includes(r.status),
+  appointments: (r) => r.status === 'accepted',
+  in_progress: (r) => r.status === 'in_progress',
   completed: (r) => r.status === 'completed',
 };
 
-const EMPTY: Record<RequestFilter, { title: string; description: string }> = {
+/**
+ * ⚠️ EVERY ONE OF THESE NAMES SOMETHING THE READER CAN ACTUALLY REACH.
+ *
+ * Codex found three that did not: they described how rows eventually appear and
+ * left the person on an empty screen with nowhere to go. A refusal or an empty
+ * state with no reachable next action is the most expensive defect class
+ * recorded in this repository, and an empty state is where it is easiest to
+ * commit by accident.
+ */
+const EMPTY: Record<RequestFilter, { title: string; description: string; href?: string; hrefLabel?: string }> = {
   all: {
     title: 'No service requests yet',
     description: 'Use the form above to ask a workshop to look at one of your vehicles.',
@@ -440,16 +489,22 @@ const EMPTY: Record<RequestFilter, { title: string; description: string }> = {
   appointments: {
     title: 'Nothing is booked in',
     description:
-      'An appointment appears here when you raise a request with a preferred date and the workshop has not finished it.',
+      'A request appears here once a workshop ACCEPTS it. Raise one and they will accept or decline.',
+    href: '/fleet/service-management/service-requests',
+    hrefLabel: 'Go to Service Requests',
   },
   in_progress: {
     title: 'Nothing is in the workshop',
     description:
-      'A request appears here once a workshop has accepted it, and stays until they mark it completed.',
+      'A request appears here once a workshop has started the work, and stays until they mark it completed.',
+    href: '/fleet/service-management/service-requests',
+    hrefLabel: 'Go to Service Requests',
   },
   completed: {
     title: 'No completed repairs yet',
     description: 'Work a workshop has marked completed appears here, with what was asked.',
+    href: '/fleet/service-management/service-requests',
+    hrefLabel: 'Go to Service Requests',
   },
 };
 
@@ -460,7 +515,16 @@ export async function RequestRows({ filter }: { filter: RequestFilter }) {
   const rows = result.data.filter(FILTERS[filter]);
   if (rows.length === 0) {
     const e = EMPTY[filter];
-    return <EmptyState title={e.title} description={e.description} />;
+    return (
+      <>
+        <EmptyState title={e.title} description={e.description} />
+        {e.href ? (
+          <p style={{ marginTop: primitive.space[4] }}>
+            <Link href={e.href}>{e.hrefLabel}</Link>
+          </p>
+        ) : null}
+      </>
+    );
   }
 
   return (

@@ -3,6 +3,7 @@ import { ApiFailure, apiGet } from '@autoworkshop/next-shell';
 import { PageHeader, LoadingState, EmptyState, StatusBadge } from '@autoworkshop/ui';
 import { themeVar, primitive } from '@autoworkshop/design-tokens';
 import { decideServiceRequestAction, convertServiceRequestAction } from './service-request-actions';
+import { FleetRequestsPanel } from './fleet-requests-panel';
 
 /**
  * Reception's inbox — the owner's value chain, step 7: "his form is received at
@@ -68,6 +69,12 @@ export function ServiceRequestsScreen() {
       <Suspense fallback={<LoadingState label="Loading incoming requests…" />}>
         <Inbox />
       </Suspense>
+      {/* 🔴 THE WORKSHOP'S SIDE OF ADR-023. Without it a fleet's requests
+          arrive and nobody ever sees them — the write half opened and the read
+          half left shut, four times in one day on 2026-08-17. It sits here
+          rather than on a new menu entry because changing approved navigation
+          needs review; see the panel's own header. */}
+      <FleetRequestsPanel />
     </>
   );
 }
