@@ -44,6 +44,9 @@ DECLARE
     rt          record;
     n           int;
     v_role      TEXT;
+    v_solo_org  uuid;
+    v_solo_ten  uuid;
+    v_solo_mem  uuid;
     passed      int := 0;
 BEGIN
     PERFORM set_config('app.current_role', 'admin', true);
@@ -203,6 +206,92 @@ BEGIN
                         '(one each). More than that is the signature of a '
                         'backfill promoting by role name rather than by founder.', n;
     END IF;
+    passed := passed + 1;
+
+    -- ── 6. 🔴 A SOLE SURVIVING ASSESSOR IS **NOT** PROMOTED ──────────────
+    --
+    -- THIS CHECK EXISTS BECAUSE A PROPOSED FIX TO THIS MIGRATION WAS UNSOUND,
+    -- AND CODEX FALSIFIED IT ON 2026-08-19.
+    --
+    -- Context. `apply-migrations` run 32252947622 aborted on production: two
+    -- HAND-SEEDED `[AUDIT]` organisations had one active member each with
+    -- `created_by IS NULL`, so `created_by = user_id` was NULL rather than
+    -- false and the founder rule matched nobody. The proposed fix widened the
+    -- rule with `OR active_members = 1` — "a single-member organisation has
+    -- nobody to escalate past".
+    --
+    -- That reasoning was wrong, and the hole is reachable:
+    --
+    --   1. the real founder's membership is suspended or revoked;
+    --   2. one assessor/operator is still active;
+    --   3. `ranked` FILTERS TO `status = 'active'`, so `rn = 1` means "earliest
+    --      ACTIVE membership", NOT "the organisation's first member";
+    --   4. that assessor therefore satisfies both `rn = 1` and
+    --      `active_members = 1`, and is permanently promoted.
+    --
+    -- And it is not only appointment authority. Measured against the permission
+    -- matrix: `towing_operator` holds NO permissions while `towing_owner` holds
+    -- `finance.read` + `organization.admin`. The claim that promotion "changes
+    -- who may APPOINT, not who may ACT" was simply false.
+    --
+    -- ▶ THE WIDENING WAS REVERTED. The two production organisations are fixed
+    --   by an explicit, reviewed one-off that names them by id
+    --   (`repair-audit-org-founders.yml`) — Codex's own recommendation: do not
+    --   infer founder status from the surviving population.
+    --
+    -- This check is the net that keeps it reverted. It builds exactly the shape
+    -- above and asserts the founder rule matches NOTHING.
+    INSERT INTO identity.tenants (name, slug)
+    VALUES ('verify-085-solo', 'verify-085-solo-' || replace(gen_random_uuid()::text,'-',''))
+    RETURNING id INTO v_solo_ten;
+
+    INSERT INTO identity.organizations (tenant_id, name, org_type, status)
+    VALUES (v_solo_ten, 'Verify 085 Succession Insurer', 'insurance_company', 'active')
+    RETURNING id INTO v_solo_org;
+
+    -- The real founder, self-created and EARLIEST — but no longer active.
+    INSERT INTO identity.memberships
+        (id, tenant_id, organization_id, branch_id, user_id, role_name, status, created_by)
+    VALUES (gen_random_uuid(), v_solo_ten, v_solo_org, NULL,
+            v_user_i, 'insurance_owner', 'revoked', v_user_i);
+
+    -- The sole surviving member: an ordinary assessor, appointed by the founder.
+    INSERT INTO identity.memberships
+        (id, tenant_id, organization_id, branch_id, user_id, role_name, status, created_by,
+         created_at)
+    VALUES (gen_random_uuid(), v_solo_ten, v_solo_org, NULL,
+            v_staff, 'insurance_assessor', 'active', v_user_i, now() + interval '1 second')
+    RETURNING id INTO v_solo_mem;
+
+    -- The migration's founder rule, as it actually stands.
+    WITH ranked AS (
+        SELECT m.id, m.created_by, m.user_id,
+               row_number() OVER (PARTITION BY m.organization_id
+                                      ORDER BY m.created_at ASC, m.id ASC) AS rn
+          FROM identity.memberships m
+          JOIN identity.organizations o
+            ON o.id = m.organization_id AND o.tenant_id = m.tenant_id
+         WHERE o.org_type IN ('insurance_company','towing_company')
+           AND m.status = 'active'
+           AND o.id = v_solo_org
+    )
+    SELECT count(*) INTO n
+      FROM ranked
+     WHERE rn = 1
+       AND created_by = user_id;
+
+    IF n <> 0 THEN
+        RAISE EXCEPTION 'verify/085 #6: the sole surviving ASSESSOR of an organisation '
+                        'whose founder was revoked matched the founder rule and would be '
+                        'promoted to insurance_owner — gaining organization.admin and '
+                        'finance.read. `rn = 1` means EARLIEST ACTIVE, not FIRST EVER. '
+                        'Do not widen this rule on the surviving population; name the '
+                        'organisations explicitly instead.';
+    END IF;
+
+    DELETE FROM identity.memberships   WHERE tenant_id = v_solo_ten;
+    DELETE FROM identity.organizations WHERE tenant_id = v_solo_ten;
+    DELETE FROM identity.tenants       WHERE id = v_solo_ten;
     passed := passed + 1;
 
     -- ── CLEANUP ───────────────────────────────────────────────────────────

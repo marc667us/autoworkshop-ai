@@ -3,7 +3,6 @@
 import { useRef, useState } from 'react';
 import { primitive } from '@autoworkshop/design-tokens';
 import { SOLAR } from './solar-theme';
-import { submitInsuranceEnquiry } from './public-api';
 
 /**
  * THE ENQUIRY FORM — the only write on the public surface.
@@ -17,16 +16,46 @@ import { submitInsuranceEnquiry } from './public-api';
  * the five roles that shipped with no production path that wrote them. The
  * order was table → policy → function → endpoint → THIS.
  *
- * ── A CLIENT COMPONENT RATHER THAN A SERVER ACTION, AND WHY ───────────────
+ * ── 🔴 IT TAKES A SERVER ACTION AS A PROP. THE FIRST VERSION CALLED THE API
+ *    FROM THE BROWSER AND WAS WRONG TWICE OVER. ───────────────────────────
  *
- * A server action would run this POST from the Next.js server, which would put
- * the request on the internal network with no session — and the API route it
- * calls is deliberately anonymous, so nothing is gained. Meanwhile the four
- * states below (idle / submitting / sent / failed) are exactly what a form
- * needs and what "Required per module" lists: loading, empty, error, and the
- * success that tells a person their message went somewhere.
+ * The original comment here argued a server action gained nothing, because the
+ * endpoint is anonymous. That reasoning missed the thing that decides it: the
+ * BASE URL. `apiBaseUrl()` reads `process.env.API_BASE_URL` — a SERVER-only
+ * variable with no `NEXT_PUBLIC_` prefix — so in the browser it is `undefined`
+ * and falls back to `http://localhost:4000`. Every enquiry a real visitor sent
+ * would have gone to their own machine.
+ *
+ * It also would not build. `public-api.ts` imports `@autoworkshop/auth`, whose
+ * index re-exports modules that use `next/headers`; pulling that into a
+ * `'use client'` bundle fails `next build` with *"You're importing a component
+ * that needs next/headers"*. This module was the FIRST client component ever to
+ * import `public-api.ts` — every previous caller was a server component, which
+ * is why the import had always been safe.
+ *
+ * ⚠️ NEITHER FAULT WAS VISIBLE TO `tsc` OR `eslint`. Both were green over it;
+ * only the `Next — production build` CI job caught them. That job exists for
+ * exactly this, and this file is now the second entry in that ledger.
+ *
+ * So the POST runs on the server, where `API_BASE_URL` exists, and is handed in
+ * as a prop — the same shape `insurance/layout.tsx` uses for `signOutAction`.
+ * The four states below (idle / submitting / sent / failed) stay here, because
+ * they are presentation and are what "Required per module" asks for: loading,
+ * error, success, and a control that cannot be double-submitted.
  * ══════════════════════════════════════════════════════════════════════════
  */
+
+/** What the server action must accept and return. Structural, so the action can
+ *  live in the app (where `API_BASE_URL` is readable) without this package
+ *  importing anything server-only. */
+export type SubmitEnquiry = (input: {
+  productId: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone?: string;
+  vehicleRegistration?: string;
+  message?: string;
+}) => Promise<{ ok: true } | { ok: false; reason: string }>;
 
 type State =
   | { kind: 'idle' }
@@ -57,9 +86,11 @@ const label: React.CSSProperties = {
 export function EnquiryForm({
   productId,
   insurer,
+  action,
 }: {
   productId: string;
   insurer: string;
+  action: SubmitEnquiry;
 }) {
   const [state, setState] = useState<State>({ kind: 'idle' });
   /**
@@ -111,7 +142,7 @@ export function EnquiryForm({
         setState({ kind: 'submitting' });
         const data = new FormData(e.currentTarget);
         const read = (k: string) => String(data.get(k) ?? '').trim();
-        const result = await submitInsuranceEnquiry({
+        const result = await action({
           productId,
           contactName: read('contactName'),
           contactEmail: read('contactEmail'),

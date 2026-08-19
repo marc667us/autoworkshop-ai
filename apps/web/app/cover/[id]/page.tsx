@@ -6,6 +6,7 @@ import {
   InsuranceCoverUnavailable,
   fetchInsuranceProduct,
 } from '@autoworkshop/marketplace-ui';
+import { submitEnquiryAction } from './enquiry-action';
 
 /**
  * `/cover/[id]` — one insurance product, and the enquiry that reaches its
@@ -67,7 +68,15 @@ export default async function CoverDetailPage({
   return (
     <InsuranceCoverDetail
       product={result.data}
-      enquiryForm={<EnquiryForm productId={result.data.id} insurer={result.data.insurer} />}
+      enquiryForm={
+        <EnquiryForm
+          productId={result.data.id}
+          insurer={result.data.insurer}
+          // The POST runs on the server — see `enquiry-action.ts` for the two
+          // separate faults that made a browser-side fetch wrong here.
+          action={submitEnquiryAction}
+        />
+      }
     />
   );
 }
