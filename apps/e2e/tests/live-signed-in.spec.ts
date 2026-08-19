@@ -476,7 +476,16 @@ test.describe('the live site, signed in and acting in another role', () => {
    */
   async function actAs(page: import('@playwright/test').Page, match: RegExp) {
     const switcher = page.getByLabel('Acting as role');
-    await switcher.waitFor({ state: 'visible', timeout: 60_000 });
+    // 🔴 COUNT, DO NOT WAIT. The first version called
+    // `waitFor({ state: 'visible' })`, which THROWS after 60s when the control
+    // is absent — so this helper could never return `false`, and the callers'
+    // "skip when the role is missing" branch was unreachable. The suite went
+    // red for a fixture gap the checks were written to skip on.
+    //
+    // Absence is the EXPECTED case for a single-role identity (`RoleSwitcher`
+    // renders nothing below two roles), so it must be a value this function can
+    // return, not an exception it raises.
+    if ((await switcher.count()) === 0) return false;
     const options = await switcher.locator('option').all();
     for (const o of options) {
       const label = (await o.textContent()) ?? '';
