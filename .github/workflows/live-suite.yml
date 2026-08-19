@@ -619,6 +619,60 @@ jobs:
               return total > 0, f'{total} part(s) listed'
           check('public parts marketplace returns stock', marketplace_has_parts)
 
+          # ── SLICE 17: THE INSURANCE MARKETPLACE A SHOPPER CAN ACTUALLY SEE ──
+          #
+          # 🔴 THESE ARE CONTENT CHECKS, NOT STATUS CHECKS, AND THAT IS THE
+          # WHOLE POINT. Slice 17 deployed on 2026-08-19 with `next build`
+          # green, `/cover` and `/cover/[id]` both in the build output — and the
+          # live site answered **307 to `/`**, because `middleware.ts` redirects
+          # any first path segment no pack claims. The page existed, built,
+          # type-checked, and could not be opened.
+          #
+          # `fetch` FOLLOWS REDIRECTS, so `s == 200` would have passed happily
+          # against the landing page it was bounced to. Only a marker unique to
+          # the cover page can tell "the shopper sees cover" from "the shopper
+          # sees something else with a 200 on it".
+          def cover_browse_renders():
+              s, body = fetch(f'{APEX}/cover')
+              if s != 200:
+                  return False, f'HTTP {s}'
+              if 'Compare vehicle cover' not in body:
+                  # Name the most likely cause rather than just the symptom: a
+                  # redirect to the landing page is what this looked like.
+                  landed = 'Abossey Okai' in body
+                  return False, (
+                      'the cover page did not render'
+                      + (' — served the PARTS LANDING instead, so middleware is '
+                         'redirecting /cover away' if landed else '')
+                  )
+              return True, 'public insurance browse renders for an anonymous visitor'
+          check('public insurance cover page renders', cover_browse_renders)
+
+          def cover_lists_a_product():
+              # The data behind the page. A 200 with an empty list is the shape
+              # migration 083 records as the worst way this can fail: every
+              # health check passes and the marketplace is silently empty.
+              s, body = fetch(f'{API}/api/v1/public/insurance-products')
+              if s != 200:
+                  return False, f'HTTP {s}'
+              try:
+                  d = json.loads(body)
+              except Exception:
+                  return False, 'response was not JSON'
+              return len(d) > 0, f'{len(d)} verified product(s) listed'
+          check('public insurance listing returns verified products', cover_lists_a_product)
+
+          def enquiry_endpoint_is_deployed():
+              # 🔴 DELIBERATELY NOT A REAL ENQUIRY. Posting a valid body would
+              # write a row into a live insurer's inbox on every suite run.
+              # An INVALID body proves the route is deployed and validating:
+              # 400 means it parsed and refused, which is exactly what a
+              # deployed, working endpoint does. A 404 would mean not deployed.
+              s, _ = post(f'{API}/api/v1/public/insurance-enquiries', {'productId': 'not-a-uuid'})
+              return s == 400, f'HTTP {s} (400 = deployed and validating)'
+          check('public enquiry endpoint is deployed and validates',
+                enquiry_endpoint_is_deployed)
+
           # ── MY OWN CHANGE, VERIFIED ON LIVE ────────────────────────────────
           def robots_protects_private_areas():
               # 🔴 ADR-021: THE ARTIFACT ROOT, NOT THE CUSTOMER PACK. `robots.ts`

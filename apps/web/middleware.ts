@@ -88,7 +88,42 @@ const PACKS = new Set([
  * access token, which the page needs in order to ask the API what the viewer
  * belongs to.
  */
-const ROOT_OWNED = new Set(['api', 'auth', 'onboarding', '_next', 'robots.txt', 'favicon.ico']);
+const ROOT_OWNED = new Set([
+  'api', 'auth', 'onboarding', '_next', 'robots.txt', 'favicon.ico',
+  // 🔴 `cover` IS HERE OR SLICE 17 IS UNREACHABLE — and it WAS unreachable.
+  // Deployed 2026-08-19, `next build` green, `/cover` and `/cover/[id]` both
+  // listed in the build output, and the live site answered **307 to `/`**: no
+  // pack claims `cover`, so the redirector below sent it to the landing page.
+  // The page existed, built, type-checked, and could not be opened — the exact
+  // failure this set's `onboarding` note predicts, reproduced one route later.
+  'cover',
+]);
+
+/**
+ * Sections the ARTIFACT serves to ANONYMOUS visitors, matched on the FIRST
+ * SEGMENT so a dynamic child is covered too.
+ *
+ * 🔴 WHY A SECTION AND NOT MORE ENTRIES IN `PUBLIC_PATHS`. That set is exact-
+ * match by design, and `/cover/[id]` is a product id — there is no finite list
+ * of paths to enumerate. Without this, a shopper opening a product detail page
+ * is handed to the Auth.js handler and bounced to sign-in, which defeats the
+ * entire premise: the marketplace exists to be browsed WITHOUT an account, and
+ * `assertInsuranceOperator`'s refusal message promises exactly that in
+ * production code.
+ *
+ * ⚠️ THIS IS NOT THE PREFIX TEST THE COMMENT ABOVE FORBIDS. The danger named
+ * there is `startsWith('/')`, which matches every path in the application and
+ * would disable authentication everywhere. This compares the FIRST PATH SEGMENT
+ * against a named set — `/cover` and `/cover/<id>` match; `/coverage`,
+ * `/customer`, `/admin` and everything else do not. Exact, greppable, and
+ * bounded to one word.
+ *
+ * The token-refresh cost is the same bounded one `PUBLIC_PATHS` documents: a
+ * signed-in visitor browsing cover gets no refreshed token persisted on that
+ * request, and these pages need none — they read the PUBLIC API server-side
+ * with no session at all.
+ */
+const PUBLIC_SECTIONS: ReadonlySet<string> = new Set(['cover']);
 
 export default function middleware(req: NextRequest, event: unknown) {
   const { pathname } = req.nextUrl;
@@ -118,7 +153,7 @@ export default function middleware(req: NextRequest, event: unknown) {
     return NextResponse.redirect(url);
   }
 
-  if (PUBLIC_PATHS.has(pathname)) {
+  if (PUBLIC_PATHS.has(pathname) || PUBLIC_SECTIONS.has(first)) {
     return NextResponse.next();
   }
   // Auth.js's `auth` IS a middleware function — this is the same invocation
