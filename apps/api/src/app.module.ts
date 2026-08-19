@@ -27,6 +27,7 @@ import { AgentsModule } from './agents/agents.module';
 import { CrmModule } from './crm/crm.module';
 import { OperationsModule } from './operations/operations.module';
 import { TowingModule } from './towing/towing.module';
+import { FleetModule } from './fleet/fleet.module';
 import { InsuranceModule } from './insurance/insurance.module';
 
 /**
@@ -64,6 +65,7 @@ import { InsuranceModule } from './insurance/insurance.module';
     SecurityModule,
     OperationsModule,
     TowingModule,
+    FleetModule,
     InsuranceModule,
     // The agent layer: triage, supplier discovery, lead discovery.
     // Runs with no agent host configured — see AgentsModule's header.

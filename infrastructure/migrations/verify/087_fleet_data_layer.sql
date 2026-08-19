@@ -46,6 +46,7 @@ DECLARE
     v_vehicle   uuid;
     v_make      uuid;
     v_req       uuid;
+    v_foreign_veh uuid;
     n           int;
     v_refused   boolean;
     v_forced    boolean;
@@ -121,6 +122,18 @@ BEGIN
         (tenant_id, organization_id, customer_id, registration_number, make_id, status)
     VALUES (rf.o_tenant_id, rf.o_organization_id, v_cust, 'V087-FLEET-1', v_make, 'active')
     RETURNING id INTO v_vehicle;
+
+    -- 🔴 A VEHICLE BELONGING TO SOMEBODY ELSE, CREATED HERE AS THE OWNER AND
+    -- ITS ID KEPT. Check 8 needs a real foreign vehicle id to name, and it must
+    -- be captured BEFORE `SET ROLE` — see the note on that check for why the
+    -- first version proved nothing.
+    INSERT INTO core.customers (tenant_id, organization_id, display_name)
+    VALUES (v_ws_ten, v_ws_org, 'Verify 087 Motors House Account')
+    RETURNING id INTO v_cust;
+    INSERT INTO core.vehicles
+        (tenant_id, organization_id, customer_id, registration_number, make_id, status)
+    VALUES (v_ws_ten, v_ws_org, v_cust, 'V087-NOTMINE', v_make, 'active')
+    RETURNING id INTO v_foreign_veh;
     passed := passed + 1;
 
     -- ══════════════════════════════════════════════════════════════════════
@@ -254,8 +267,20 @@ BEGIN
     passed := passed + 1;
 
     -- ── 8. THE FLEET CANNOT NAME ANOTHER ORGANISATION'S VEHICLE ───────────
-    -- Referential integrity bypasses RLS, so this is the 3-column FK's job, not
-    -- the policy's. Proven with a vehicle that exists and is not the fleet's.
+    --
+    -- 🔴 THE FIRST VERSION OF THIS CHECK PASSED FOR THE WRONG REASON, AND CODEX
+    -- CAUGHT IT. It selected a foreign vehicle with
+    -- `SELECT ... FROM core.vehicles WHERE organization_id <> ours` **while
+    -- running as the fleet** — and RLS hides exactly those rows, so the SELECT
+    -- returned nothing, `FOUND` was false, and the check recorded a refusal
+    -- that never happened. It would have passed with the three-column foreign
+    -- key deleted.
+    --
+    -- The id is now captured as the OWNER before `SET ROLE` and named as a
+    -- literal, so the INSERT really is attempted and only
+    -- `foreign_key_violation` counts. Referential integrity BYPASSES RLS, which
+    -- is precisely why the FK — not the policy — has to be the thing that
+    -- refuses.
     PERFORM set_config('app.tenant_id',        rf.o_tenant_id::text,       true);
     PERFORM set_config('app.organization_ids', rf.o_organization_id::text, true);
 
@@ -265,14 +290,9 @@ BEGIN
             (reference, fleet_tenant_id, fleet_organization_id, vehicle_id,
              workshop_directory_id, workshop_organization_id, fleet_name, workshop_name,
              vehicle_registration, request_type, summary)
-        SELECT 'V087-OTHERVEH', rf.o_tenant_id, rf.o_organization_id, v.id,
-               v_ws_dir, v_ws_org, 'Verify 087 Haulage', 'Verify 087 Motors',
-               'NOT-MINE', 'service', 'someone else''s van'
-          FROM core.vehicles v
-         WHERE v.organization_id <> rf.o_organization_id
-         LIMIT 1;
-        -- No row to insert means the fixture could not express the case.
-        IF NOT FOUND THEN v_refused := true; END IF;
+        VALUES ('V087-OTHERVEH', rf.o_tenant_id, rf.o_organization_id, v_foreign_veh,
+                v_ws_dir, v_ws_org, 'Verify 087 Haulage', 'x',
+                'NOT-MINE', 'service', 'someone else''s van');
     EXCEPTION WHEN foreign_key_violation THEN
         v_refused := true;
     END;
@@ -281,6 +301,86 @@ BEGIN
                         'belonging to another organisation. fk_request_vehicle_same_org '
                         'is not doing its job — referential integrity bypasses RLS, so '
                         'all three columns are required.';
+    END IF;
+    passed := passed + 1;
+
+    -- ── 8b. 🔴 THE LIFECYCLE IS A LIFECYCLE, NOT AN ENUM ─────────────────
+    --
+    -- Codex on the first version: "The claimed lifecycle is only an enum, not a
+    -- lifecycle" — `CHECK (status IN (...))` permitted `completed -> draft`,
+    -- `cancelled -> accepted`, and an INSERT straight to `completed`. ADR-023
+    -- described a lifecycle the schema did not implement.
+    --
+    -- `trg_enforce_request_lifecycle` implements it. These assert the three
+    -- shapes that matter, each from the party that would attempt it.
+    v_refused := false;
+    BEGIN
+        INSERT INTO fleet.service_requests
+            (reference, fleet_tenant_id, fleet_organization_id, vehicle_id,
+             workshop_directory_id, workshop_organization_id, fleet_name, workshop_name,
+             vehicle_registration, request_type, summary, status)
+        VALUES ('V087-BORNDONE', rf.o_tenant_id, rf.o_organization_id, v_vehicle,
+                v_ws_dir, v_ws_org, 'Verify 087 Haulage', 'x',
+                'V087-FLEET-1', 'service', 'a job that never happened', 'completed');
+    EXCEPTION WHEN check_violation THEN
+        v_refused := true;
+    END;
+    IF NOT v_refused THEN
+        RAISE EXCEPTION 'verify/087 #8b: a service request was CREATED as completed — '
+                        'a finished job no workshop ever saw.';
+    END IF;
+
+    -- 🔴 THE FLEET CANNOT ACCEPT ON THE WORKSHOP'S BEHALF. This is the one
+    -- Codex called out first: both parties share the database role and the
+    -- column grant, so nothing but this trigger separates them.
+    v_refused := false;
+    BEGIN
+        UPDATE fleet.service_requests SET status = 'accepted' WHERE id = v_req;
+    EXCEPTION WHEN check_violation THEN
+        v_refused := true;
+    END;
+    IF NOT v_refused THEN
+        RAISE EXCEPTION 'verify/087 #8b: the FLEET accepted its own service request. '
+                        'Both parties share one database role, so the party-aware '
+                        'trigger is the only thing that can refuse this.';
+    END IF;
+    passed := passed + 1;
+
+    -- ── 8c. THE WORKSHOP CANNOT REWRITE WHAT WAS ASKED ───────────────────
+    PERFORM set_config('app.tenant_id',        v_ws_ten::text, true);
+    PERFORM set_config('app.organization_ids', v_ws_org::text, true);
+
+    v_refused := false;
+    BEGIN
+        UPDATE fleet.service_requests SET summary = 'something else entirely'
+         WHERE id = v_req;
+    EXCEPTION WHEN insufficient_privilege THEN
+        v_refused := true;
+    END;
+    IF NOT v_refused THEN
+        RAISE EXCEPTION 'verify/087 #8c: the WORKSHOP rewrote the fleet''s own summary.';
+    END IF;
+
+    -- And the snapshots are immutable to it as well.
+    v_refused := false;
+    BEGIN
+        UPDATE fleet.service_requests SET vehicle_registration = 'FORGED'
+         WHERE id = v_req;
+    EXCEPTION WHEN insufficient_privilege THEN
+        v_refused := true;
+    END;
+    IF NOT v_refused THEN
+        RAISE EXCEPTION 'verify/087 #8c: the WORKSHOP rewrote a snapshot — the record '
+                        'of what it was actually asked to work on.';
+    END IF;
+
+    -- What it CAN do is answer, and the timestamp is the database's.
+    UPDATE fleet.service_requests SET status = 'accepted' WHERE id = v_req;
+    SELECT count(*) INTO n FROM fleet.service_requests
+     WHERE id = v_req AND status = 'accepted' AND responded_at IS NOT NULL;
+    IF n <> 1 THEN
+        RAISE EXCEPTION 'verify/087 #8c: the workshop could not accept the request, or '
+                        'responded_at was not set by the trigger.';
     END IF;
     passed := passed + 1;
 
@@ -316,6 +416,11 @@ BEGIN
         VALUES ('V087-UNPUB', rf.o_tenant_id, rf.o_organization_id, v_vehicle,
                 v_ws_dir, v_ws_org, 'Verify 087 Haulage', 'x',
                 'V087-FLEET-1', 'service', 'to a withdrawn workshop');
+    -- ⚠️ ONE SQLSTATE FOR "NOT THERE" AND "NOT PUBLISHED". The trigger
+    -- collapses them because on Render its SECURITY DEFINER owner is bound by
+    -- FORCE RLS and simply cannot SEE an unpublished directory row — so
+    -- distinguishing the two would behave differently in production than here.
+    -- Codex, 2026-08-19.
     EXCEPTION WHEN check_violation THEN
         v_refused := true;
     END;
@@ -334,8 +439,8 @@ BEGIN
     -- read — and this one would leave a workshop in the PUBLIC directory.
     DELETE FROM fleet.service_requests WHERE fleet_tenant_id = rf.o_tenant_id;
     DELETE FROM fleet.drivers          WHERE tenant_id = rf.o_tenant_id;
-    DELETE FROM core.vehicles          WHERE tenant_id = rf.o_tenant_id;
-    DELETE FROM core.customers         WHERE tenant_id = rf.o_tenant_id;
+    DELETE FROM core.vehicles          WHERE tenant_id IN (rf.o_tenant_id, v_ws_ten);
+    DELETE FROM core.customers         WHERE tenant_id IN (rf.o_tenant_id, v_ws_ten);
     DELETE FROM catalogue.mechanic_directory WHERE id = v_ws_dir;
     DELETE FROM comms.notifications
      WHERE resource_type = 'organization_registration'

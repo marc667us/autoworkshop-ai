@@ -97,6 +97,7 @@ CREATE TABLE fleet.drivers (
     updated_by       uuid REFERENCES identity.users(id),
 
     CHECK (length(btrim(full_name)) > 0),
+    CHECK (licence_number IS NULL OR length(btrim(licence_number)) > 0),
     -- The two-column FK that keeps a driver inside a real organisation of the
     -- named tenant. ADR-023 19c tier 2: "the organisation itself = 2 columns".
     CONSTRAINT fk_driver_org FOREIGN KEY (organization_id, tenant_id)
@@ -104,9 +105,12 @@ CREATE TABLE fleet.drivers (
 );
 
 CREATE INDEX idx_fleet_drivers_org ON fleet.drivers (organization_id, status);
+-- ⚠️ `btrim` AND A BLANK GUARD. `upper(licence_number)` alone treats 'ABC123',
+-- ' ABC123' and 'ABC123 ' as three different licences, and accepts '' as a
+-- licence number. Codex, 2026-08-19.
 CREATE UNIQUE INDEX uq_fleet_driver_licence_per_org
-    ON fleet.drivers (organization_id, upper(licence_number))
-    WHERE licence_number IS NOT NULL;
+    ON fleet.drivers (organization_id, upper(btrim(licence_number)))
+    WHERE licence_number IS NOT NULL AND btrim(licence_number) <> '';
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- 3. 🔴 THE CONTRACT. THE ONLY TABLE IN THIS SCHEMA TWO ORGANISATIONS SEE.
@@ -260,17 +264,25 @@ BEGIN
       FROM catalogue.mechanic_directory d
      WHERE d.id = NEW.workshop_directory_id;
 
-    IF v_org IS NULL THEN
-        RAISE EXCEPTION 'that workshop is not in the public directory'
-            USING ERRCODE = 'foreign_key_violation';
-    END IF;
-
-    -- 🔴 PUBLISHED, CHECKED AT WRITE TIME. The FK proves the directory row
-    -- exists; only this proves the workshop still WANTS to be addressable. A
-    -- workshop that has withdrawn from the directory should not receive new
-    -- requests, and the fleet's own session cannot see `is_published` for an
-    -- unpublished row to check it itself.
-    IF NOT v_pub THEN
+    -- 🔴 ONE ANSWER FOR "NOT THERE" AND "NOT PUBLISHED", AND THE REASON IS
+    -- PRODUCTION BEHAVIOUR, NOT TIDINESS.
+    --
+    -- This function is SECURITY DEFINER, so it runs as the table owner — and on
+    -- Render that owner is NOT a superuser, so FORCE RLS binds it.
+    -- `catalogue.mechanic_directory`'s only broadly-applicable policy is
+    -- `public_read USING (is_published)`, which means an UNPUBLISHED row is
+    -- invisible to this lookup on production while being perfectly visible
+    -- locally, where the owner is a superuser.
+    --
+    -- The first version raised `foreign_key_violation` for "no row" and
+    -- `check_violation` for "not published". Locally that produced the second;
+    -- on Render the same input would have produced the FIRST, and `verify/087`
+    -- accepted only `check_violation` — a check that would have passed here and
+    -- behaved differently in production. Codex caught it, 2026-08-19.
+    --
+    -- Collapsing them is also better information hygiene: a fleet has no
+    -- business learning that an unpublished workshop exists.
+    IF v_org IS NULL OR NOT coalesce(v_pub, false) THEN
         RAISE EXCEPTION 'that workshop is not currently accepting requests through the directory; choose another from the published list'
             USING ERRCODE = 'check_violation';
     END IF;
@@ -291,9 +303,182 @@ BEGIN
 END;
 $fn$;
 
+--:warning: `UPDATE OF` LISTS BOTH COLUMNS. Naming only `workshop_directory_id`
+-- meant an UPDATE touching `workshop_organization_id` alone never fired this
+-- trigger, so the column the RLS predicate reads was "trigger-maintained" only
+-- for the paths somebody remembered. Not exploitable by `autoworkshop_app`,
+-- whose column grant excludes both — but any future grant would silently
+-- desynchronise the boundary from the directory. Codex, 2026-08-19.
 CREATE TRIGGER trg_set_workshop_from_directory
-    BEFORE INSERT OR UPDATE OF workshop_directory_id ON fleet.service_requests
+    BEFORE INSERT OR UPDATE OF workshop_directory_id, workshop_organization_id
+    ON fleet.service_requests
     FOR EACH ROW EXECUTE FUNCTION fleet.set_workshop_from_directory();
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- 🔴 THE LIFECYCLE, ENFORCED BY THE DATABASE — AND WHY THE FIRST DRAFT'S
+-- "ENFORCED IN THE SERVICE LAYER" WAS NOT GOOD ENOUGH.
+--
+-- Codex, 2026-08-19, on the first version of this migration:
+--
+--   · "Either party can perform the other party's lifecycle and content
+--      updates." Both sides connect as `autoworkshop_app`, so the column GRANT
+--      is the UNION of what either may change. RLS cannot tell them apart. A
+--      fleet could set `status = 'accepted'` and fabricate `responded_at`; a
+--      workshop could rewrite the fleet's `summary`, `priority` and `odometer`.
+--   · "The claimed lifecycle is only an enum, not a lifecycle." `CHECK (status
+--      IN (...))` permits `completed -> draft`, `cancelled -> accepted`, and an
+--      INSERT straight to `completed`. ADR-023 described a lifecycle the schema
+--      did not implement — a comment asserting a rule that does not exist,
+--      which this repository treats as a defect in its own right.
+--
+-- Both were correct. "Service-layer validation is not a reliable database
+-- security boundary, especially for the only cross-tenant shared table."
+--
+-- ── WHY A TRIGGER RATHER THAN DEFINER FUNCTIONS ──────────────────────────
+--
+-- Codex proposed party-specific SECURITY DEFINER write functions with direct
+-- UPDATE revoked. That works, and it is heavier than it needs to be here:
+-- the missing ingredient is not privilege, it is IDENTITY — and the database
+-- already has it. `identity.current_organization_id()` says which party is
+-- acting and the row names both, so a trigger can decide, for every UPDATE,
+-- WHO is calling and WHETHER THIS MOVE IS THEIRS TO MAKE — without a second
+-- API surface for the service layer to drift from.
+--
+-- ⚠️ NOT SECURITY DEFINER, DELIBERATELY. It reads only the row and the session
+-- context, never another table, so it needs no privilege beyond the caller's.
+-- ══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION fleet.enforce_request_lifecycle()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+    v_actor TEXT;
+    v_ok    boolean := false;
+BEGIN
+    -- Which party is this? The platform administrator is a third actor and is
+    -- deliberately unconstrained: support has to be able to correct a stuck
+    -- contract, and that is what the audit log is for.
+    IF identity.is_platform_admin() THEN
+        v_actor := 'platform';
+    ELSIF identity.current_organization_id() = NEW.fleet_organization_id THEN
+        v_actor := 'fleet';
+    ELSIF identity.current_organization_id() = NEW.workshop_organization_id THEN
+        v_actor := 'workshop';
+    ELSE
+        -- Unreachable through RLS, which admits only these three. Belt and
+        -- braces, because this trigger is what stands between the two tenants
+        -- and must not assume the policy above it is intact.
+        RAISE EXCEPTION 'only the fleet or the workshop named on a service request may change it'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+        -- 🔴 A REQUEST IS BORN AT THE BEGINNING. Without this, an INSERT with
+        -- status = completed fabricates a finished job no workshop ever saw.
+        IF NEW.status NOT IN ('draft', 'submitted') THEN
+            RAISE EXCEPTION 'a new service request starts as draft or submitted, not %', NEW.status
+                USING ERRCODE = 'check_violation';
+        END IF;
+        IF v_actor NOT IN ('fleet', 'platform') THEN
+            RAISE EXCEPTION 'only the fleet may raise a service request'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF v_actor = 'platform' THEN
+        RETURN NEW;
+    END IF;
+
+    -- ── the parties, the vehicle and the reference never change ───────────
+    -- These identify the contract. A row whose counterparty can be edited is
+    -- not a contract — and `workshop_organization_id` is what the workshop-side
+    -- RLS predicate reads, so moving it would move the boundary itself.
+    IF NEW.fleet_tenant_id          IS DISTINCT FROM OLD.fleet_tenant_id
+    OR NEW.fleet_organization_id    IS DISTINCT FROM OLD.fleet_organization_id
+    OR NEW.workshop_directory_id    IS DISTINCT FROM OLD.workshop_directory_id
+    OR NEW.workshop_organization_id IS DISTINCT FROM OLD.workshop_organization_id
+    OR NEW.vehicle_id               IS DISTINCT FROM OLD.vehicle_id
+    OR NEW.reference                IS DISTINCT FROM OLD.reference THEN
+        RAISE EXCEPTION 'the parties, the vehicle and the reference of a service request are immutable'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- ── the snapshots never change ────────────────────────────────────────
+    -- They record what was advertised and asked AT THE TIME. The reason
+    -- catalogue.orders gives for supplier_name: a rename must not silently
+    -- rewrite a placed order.
+    IF NEW.fleet_name           IS DISTINCT FROM OLD.fleet_name
+    OR NEW.workshop_name        IS DISTINCT FROM OLD.workshop_name
+    OR NEW.vehicle_registration IS DISTINCT FROM OLD.vehicle_registration THEN
+        RAISE EXCEPTION 'the snapshots on a service request are immutable'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    -- ── what was ASKED belongs to the fleet, and only until it is answered ─
+    IF NEW.summary        IS DISTINCT FROM OLD.summary
+    OR NEW.detail         IS DISTINCT FROM OLD.detail
+    OR NEW.priority       IS DISTINCT FROM OLD.priority
+    OR NEW.preferred_date IS DISTINCT FROM OLD.preferred_date
+    OR NEW.odometer_km    IS DISTINCT FROM OLD.odometer_km
+    OR NEW.request_type   IS DISTINCT FROM OLD.request_type THEN
+        IF v_actor <> 'fleet' THEN
+            RAISE EXCEPTION 'a workshop may respond to a request but may not rewrite what was asked'
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+        IF OLD.status NOT IN ('draft', 'submitted') THEN
+            RAISE EXCEPTION 'this request has already been answered; raise a new one rather than changing it'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+
+    -- ── the status transitions, per party ─────────────────────────────────
+    IF NEW.status IS DISTINCT FROM OLD.status THEN
+        IF v_actor = 'fleet' THEN
+            -- The fleet submits, and may withdraw until work starts. It can
+            -- never accept, decline or complete on the workshop's behalf.
+            v_ok := (OLD.status = 'draft'     AND NEW.status IN ('submitted','cancelled'))
+                 OR (OLD.status = 'submitted' AND NEW.status = 'cancelled')
+                 OR (OLD.status = 'accepted'  AND NEW.status = 'cancelled');
+        ELSE
+            -- The workshop answers. It can never submit or cancel for the fleet.
+            v_ok := (OLD.status = 'submitted'   AND NEW.status IN ('accepted','declined'))
+                 OR (OLD.status = 'accepted'    AND NEW.status = 'in_progress')
+                 OR (OLD.status = 'in_progress' AND NEW.status = 'completed');
+        END IF;
+
+        IF NOT v_ok THEN
+            RAISE EXCEPTION 'the % cannot move a service request from % to %',
+                            v_actor, OLD.status, NEW.status
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+
+    -- ── timestamps are the database's, not the caller's ───────────────────
+    -- 🔴 OTHERWISE EITHER PARTY FABRICATES THE HISTORY. Codex listed exactly
+    -- this. They are derived from the transition that just happened, so a
+    -- caller-supplied value is ignored rather than validated.
+    NEW.submitted_at := CASE WHEN OLD.status = 'draft' AND NEW.status = 'submitted'
+                             THEN now() ELSE OLD.submitted_at END;
+    NEW.responded_at := CASE WHEN OLD.status = 'submitted'
+                              AND NEW.status IN ('accepted','declined')
+                             THEN now() ELSE OLD.responded_at END;
+    NEW.completed_at := CASE WHEN NEW.status = 'completed' AND OLD.status <> 'completed'
+                             THEN now() ELSE OLD.completed_at END;
+
+    -- A decline reason belongs to the decline. Clearing it would leave a
+    -- declined request with no explanation, which the table CHECK forbids.
+    IF NEW.status <> 'declined' AND OLD.status = 'declined' THEN
+        NEW.decline_reason := OLD.decline_reason;
+    END IF;
+
+    RETURN NEW;
+END;
+$fn$;
+
+CREATE TRIGGER trg_enforce_request_lifecycle
+    BEFORE INSERT OR UPDATE ON fleet.service_requests
+    FOR EACH ROW EXECUTE FUNCTION fleet.enforce_request_lifecycle();
 
 CREATE OR REPLACE FUNCTION fleet.touch_row()
 RETURNS trigger
