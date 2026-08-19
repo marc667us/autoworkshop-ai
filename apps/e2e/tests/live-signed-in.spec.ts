@@ -346,8 +346,26 @@ test.describe('the live site, signed in as the workshop owner', () => {
   test('signing out ends the session', async ({ page }) => {
     await signIn(page);
     await page.getByRole('button', { name: /Sign out/ }).click();
+    // 🔴 180s, MATCHING THE SIGN-IN PATH — AND THIS ASSERTION PRODUCED A FALSE
+    // RED BEFORE IT DID.
+    //
+    // Sign-out navigates to Keycloak's `openid-connect/logout`, so it waits on
+    // the same cold-startable free-tier service the sign-in helper already
+    // budgets 180s for at lines 197 and 203. This one fell back to the default
+    // 60s, so the two halves of one journey disagreed about how long Keycloak
+    // may take.
+    //
+    // Measured 2026-08-19, run 32273311688: the suite went RED with
+    // "waiting for .../openid-connect/logout navigation to finish" after 60s.
+    // Keycloak answered in 0.79s and 0.51s once warm, and the SAME COMMIT
+    // passed on re-run (32273878248, 73/0/1). It was a cold start, not a
+    // regression — and this repository has already recorded that "a 90s timeout
+    // is not proof of an outage; Keycloak measured at ~127s cold".
+    //
+    // A check that goes red when nothing is broken teaches people to ignore it,
+    // which costs more than the check is worth.
     await expect(
       page.getByLabel('Global actions').getByRole('link', { name: 'Sign in' }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 180_000 });
   });
 });

@@ -1,5 +1,69 @@
 # Session handover
 
+## ═══ 2026-08-19 (pt3) — slice 20: the fleet workspace, 1 screen → 9 ═══
+
+**Tip `634d2e4` + the live-suite timeout fix. Pushed, deployed, verified.**
+
+| | |
+|---|---|
+| **Fleet screens** | **1 of 29 → 9 of 29 (3% → 31%)**, dead ends 28 → 20 |
+| **Overall coverage** | **274 → 282 of 385 (71% → 73%)**, dead ends 109 → 101 |
+| CI · Release | green on `634d2e4` |
+| **Live suite** | **73 passed · 0 failed · 1 SKIPPED** |
+| typecheck / lint / tests / build | 11/11 · 10/10 · 981+1 · `next build` exit 0 |
+
+Eight fleet screens, all over real data: vehicles, drivers (create form on the
+list), approved workshops, service requests (raise form), three filtered views,
+and the users roster — **`OrgStaffScreen` reused, its third consumer**.
+
+**And the workshop's side.** `GET/PATCH /fleet/incoming-requests` had no screen,
+so a fleet's requests arrived where nobody could see them. A panel now sits
+below reception's Service Requests screen — one component, all three role-tree
+mounts. No navigation change; that needs owner review.
+
+### 🔴 CODEX'S SHARPEST FINDING WAS ABOUT A WORD
+
+**"Appointments" turned a fleet preference into a booking.** The filter was
+"has a preferred date and has not finished", which included a **submitted**
+request the workshop had not seen. `preferredDate` is what the FLEET asked for;
+nothing in the schema is a date a workshop **confirmed**, so no filter over it
+can honestly be called an appointment. Each view is now exactly one status.
+
+Also: three empty states named controls that do not exist ("vehicles are added
+from Fleet Assets" — there is no create route); the odometer bound disagreed
+with the API's `max(9999999)`; and **`FormShell`'s double-submit guard read
+asynchronous state**, fixed with a ref in the shared component — the identical
+defect was found the same day in the public enquiry form.
+
+### ⚠️ THE LIVE SUITE WENT RED, AND IT WAS NOT A REGRESSION
+
+`signing out ends the session` failed on run 32273311688: 60s timeout waiting
+for the navigation to Keycloak's `openid-connect/logout`. Measured rather than
+assumed — Keycloak answers in **0.79s and 0.51s warm**, the check passed on the
+two previous commits, nothing in this slice touches sign-out, and the **same
+commit passed on re-run** (32273878248, 73/0/1). A cold start.
+
+**The real defect is that the two halves of one journey disagreed about how long
+Keycloak may take**: the sign-in helper already budgets 180s (lines 197, 203)
+and this assertion fell back to the default 60s. Aligned. A check that goes red
+when nothing is broken teaches people to ignore it.
+
+### ⚠️ TURBO SERVED ME A CACHED GREEN, TWICE
+
+`pnpm test` reported 927/55 while vitest reported 981/1, and `pnpm lint` reported
+`FULL TURBO` from cache. **Both were re-run with `--force` before anything was
+believed.** A cached green is not a run.
+
+### ▶ NEXT
+
+`.claude/TASK_LIST_2026-08-19.md`. **20 fleet dead ends remain** — maintenance
+plans, vehicle documents, quotations, parts installed, warranties, downtime,
+vehicle costs and reports all need data layers that do not exist. **A3 (sign in
+as an `insurance_owner` and LOOK) is still unmet and is now the oldest open
+item.** Two follow-ups recorded: fleet work deserves its own workshop menu
+entry, and a real appointment needs a workshop-confirmed date.
+
+
 ## ═══ 2026-08-19 (pt2) — slice 19: the fleet data layer, cross-tenant ═══
 
 **Tip `ef0510e`. Pushed, deployed, verified. Production migrations 85/85.**
