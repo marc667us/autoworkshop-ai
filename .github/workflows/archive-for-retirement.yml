@@ -268,6 +268,9 @@ jobs:
         run: |
           set -euo pipefail
           SRC="$(cat /tmp/src_url)"
+
+          # Record WHICH tables, so the restore is exact rather than a blanket
+          # re-FORCE of everything that happens to have RLS.
           "$PGBIN/psql" -tA -o /tmp/forced_tables.txt -c "
             SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname)
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -276,11 +279,29 @@ jobs:
           COUNT="$(grep -c . /tmp/forced_tables.txt || true)"
           echo "tables with FORCE RLS owned by this role: $COUNT"
           [ "$COUNT" -gt 0 ] || { echo "::error::no FORCE tables found - diagnosis wrong, refusing"; exit 1; }
-          while read -r t; do
-            [ -n "$t" ] || continue
-            "$PGBIN/psql" -q -c "ALTER TABLE $t NO FORCE ROW LEVEL SECURITY" "$SRC"
-          done < /tmp/forced_tables.txt
-          echo "FORCE lifted on $COUNT tables (owner-only effect)"
+
+          # 🔴 ONE SERVER-SIDE STATEMENT, NOT A LOOP OF psql CALLS.
+          # The first version looped, and each iteration was a fresh
+          # connection. One of them dropped mid-run, leaving three tables
+          # altered and the restore step unable to finish -- measured, and
+          # repaired by `repair-rls-force.yml`. A DO block is one connection
+          # and one transaction: it either does all of them or none.
+          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$SRC" <<'SQL'
+          DO $$
+          DECLARE t record; n int := 0;
+          BEGIN
+            FOR t IN
+              SELECT n.nspname AS s, c.relname AS r
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.relkind = 'r' AND c.relforcerowsecurity
+                AND pg_get_userbyid(c.relowner) = current_user
+            LOOP
+              EXECUTE format('ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY', t.s, t.r);
+              n := n + 1;
+            END LOOP;
+            RAISE NOTICE 'FORCE lifted on % table(s) (owner-only effect)', n;
+          END $$;
+          SQL
 
       - name: Dump the application schemas
         if: inputs.confirm == 'ARCHIVE'
@@ -406,18 +427,43 @@ jobs:
           [ -f /tmp/forced_tables.txt ] || { echo "nothing to restore"; exit 0; }
           [ -f /tmp/src_url ] || exit 0
           SRC="$(cat /tmp/src_url)"
-          N=0
-          while read -r t; do
-            [ -n "$t" ] || continue
-            "$PGBIN/psql" -q -c "ALTER TABLE $t FORCE ROW LEVEL SECURITY" "$SRC" && N=$((N+1))
-          done < /tmp/forced_tables.txt
-          echo "FORCE restored on $N tables"
-          REMAINING="$("$PGBIN/psql" -tA -c "
-            SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE c.relkind='r' AND NOT c.relforcerowsecurity AND c.relrowsecurity
-              AND pg_get_userbyid(c.relowner)=current_user" "$SRC")"
+
+          # 🔴 WAIT FOR THE CONNECTION FIRST. The previous restore step reused
+          # the connection whose failure had triggered it, so it failed for the
+          # same reason and left production weakened. A restore that depends on
+          # the thing it is compensating for is not a restore.
+          for i in $(seq 1 30); do
+            "$PGBIN/psql" -tAc 'SELECT 1' "$SRC" >/dev/null 2>&1 && break
+            [ "$i" -lt 30 ] || { echo "::error::cannot reach the database to restore FORCE - RUN repair-rls-force.yml"; exit 1; }
+            sleep 5
+          done
+
+          # Blanket re-FORCE: anything with RLS and no FORCE gets it back. This
+          # is deliberately broader than the recorded list, because the failure
+          # mode being repaired is a PARTIAL lift, and the recorded list is the
+          # thing a partial lift disagrees with.
+          "$PGBIN/psql" -v ON_ERROR_STOP=1 "$SRC" <<'SQL'
+          DO $$
+          DECLARE t record; n int := 0;
+          BEGIN
+            FOR t IN
+              SELECT n.nspname AS s, c.relname AS r
+              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE c.relkind = 'r' AND c.relrowsecurity AND NOT c.relforcerowsecurity
+            LOOP
+              EXECUTE format('ALTER TABLE %I.%I FORCE ROW LEVEL SECURITY', t.s, t.r);
+              n := n + 1;
+            END LOOP;
+            RAISE NOTICE 'FORCE restored on % table(s)', n;
+          END $$;
+          SQL
+
+          REMAINING="$("$PGBIN/psql" -tAc "
+            SELECT count(*) FROM pg_class c
+            WHERE c.relkind='r' AND c.relrowsecurity AND NOT c.relforcerowsecurity" "$SRC")"
+          echo "rls_without_force after restore: $REMAINING"
           [ "$REMAINING" = "0" ] \
-            || echo "::error::$REMAINING table(s) still lack FORCE - CHECK THIS MANUALLY"
+            || { echo "::error::$REMAINING table(s) still lack FORCE - RUN repair-rls-force.yml"; exit 1; }
 
       # `always()`: the allowlist entry must go even when the dump failed.
       - name: Remove the ephemeral firewall entry
