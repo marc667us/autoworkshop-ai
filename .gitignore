@@ -151,3 +151,17 @@ infrastructure/docker/mailpit-tls/
 # SCRIPT is the artifact worth reviewing; its output is a measurement of one
 # afternoon and would otherwise land in every future diff.
 tmp/
+
+# 🔴 THE ARCHIVE PRIVATE KEY MUST NEVER BE COMMITTED.
+# This repository is PUBLIC. The archive is encrypted to the matching public
+# key (infrastructure/backup/archive-public.pem, which IS safe to publish);
+# committing the private half would make every encrypted artifact readable by
+# anyone. It lives at C:/Users/USER/Documents/autoworkshop-archive/keys/.
+*private*.pem
+# The PUBLIC half is required by the archive workflow and is safe to publish --
+# it can only encrypt. Negated explicitly because a broader *.pem rule above
+# would otherwise silently exclude it and the workflow would fail its guard.
+!infrastructure/backup/archive-public.pem
+*.key
+*.dump
+*.dump.enc

@@ -1,0 +1,341 @@
+# Complete, encrypted archive of AutoWorkshop — for retirement from Render.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS AND WHY `backup-production-db.yml` IS NOT ENOUGH
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# 🔴 THE DAILY BACKUP DOES NOT CONTAIN A SINGLE USER ACCOUNT.
+#
+# It selects schemas owned by the connecting role and then explicitly excludes
+# `keycloak`, on the stated grounds that "that data belongs to the identity
+# server, has its own realm export under infrastructure/backup".
+#
+# THERE IS NO SUCH EXPORT. `infrastructure/keycloak/realm-autoworkshop.json`
+# is a CONFIGURATION template: 9 clients, 30 roles, ZERO users. And Keycloak
+# stores its data inside `autoworkshop-postgres` (deploy-keycloak.yml sets
+# KC_DB_URL to it).
+#
+# So every account, password hash and role assignment lives only in the
+# `keycloak` schema of the database being retired, and nothing copies it.
+# Restoring from the daily backup would bring the application back with all
+# its business data and NOBODY ABLE TO LOG IN. Password hashes cannot be
+# reconstructed.
+#
+# 🔴 AND THE DAILY BACKUP PUBLISHES PRODUCTION DATA ON A PUBLIC REPOSITORY.
+# It uploads the dump as a plain GitHub Actions artifact. `autoworkshop-ai` is
+# PUBLIC, so anyone who can read the repository can download it. This workflow
+# encrypts everything to an RSA public key whose private half never leaves the
+# owner's machine, so the artifact is inert to everyone else.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# WHAT IT CAPTURES
+# ═══════════════════════════════════════════════════════════════════════════
+#
+#   db-app.dump.enc        every schema the app role owns
+#   db-keycloak.dump.enc   THE keycloak SCHEMA — the gap above
+#   render-config.json.enc every service: plan, region, env vars, domains,
+#                          health-check path, repo, branch; and the database's
+#                          plan, version and region
+#   *.key.enc              the AES key for each, RSA-encrypted to the public key
+#   MANIFEST.txt           sizes, checksums, row counts — readable without
+#                          decrypting anything
+#
+# The `keycloak` schema needs ITS OWN CONNECTION. The app role owns the schema
+# but not the tables inside it — which is what produced "permission denied for
+# table databasechangeloglock", the error libpq reports as "SSL connection has
+# been closed unexpectedly" and which cost three wrong diagnoses. So this
+# reads KC_DB_PASSWORD from the Keycloak service's own environment through the
+# Render API and connects as `keycloak_app`, which owns those tables.
+#
+# READ-ONLY AGAINST PRODUCTION. `pg_dump` and `GET` only. The single write is
+# the ephemeral firewall allowlist entry, which is removed in `always()`.
+
+name: Archive for retirement (encrypted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type ARCHIVE to run. Anything else is a dry inventory."
+        required: false
+        default: ""
+
+concurrency:
+  group: render-db-firewall
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      KC_SERVICE: autoworkshop-keycloak
+      PGSSLMODE: require
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard
+        run: |
+          set -euo pipefail
+          [ -n "${RENDER_API_KEY:-}" ] || { echo "::error::RENDER_API_KEY is not set"; exit 1; }
+          test -f infrastructure/backup/archive-public.pem \
+            || { echo "::error::archive-public.pem is missing; the archive would be unreadable"; exit 1; }
+          echo "public key fingerprint:"
+          openssl rsa -in infrastructure/backup/archive-public.pem -pubin -outform DER \
+            | openssl dgst -sha256
+
+      - name: Install a matching client
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null
+          echo "PGBIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------------
+      # Everything Render knows, captured BEFORE anything is deleted. The
+      # deploy workflows can rebuild the services; they cannot invent the
+      # environment variables, the plans or the custom domains.
+      # ---------------------------------------------------------------------
+      - name: Capture the Render configuration
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, urllib.request
+
+          KEY = os.environ['RENDER_API_KEY']
+
+          def api(path):
+              req = urllib.request.Request(
+                  f"https://api.render.com/v1{path}",
+                  headers={"Authorization": f"Bearer {KEY}", "Accept": "application/json"})
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return json.loads(r.read().decode() or "null")
+
+          def unwrap(rows, key):
+              return [(r.get(key, r) if isinstance(r, dict) else r) for r in (rows or [])]
+
+          out = {"services": [], "databases": []}
+
+          for s in unwrap(api("/services?limit=100"), "service"):
+              if not (s.get("name") or "").startswith("autoworkshop"):
+                  continue
+              sid = s["id"]
+              entry = dict(s)
+              # 🔴 THE ENVIRONMENT IS THE PART NOTHING ELSE HOLDS. Secrets are
+              # in here. This is exactly why the artifact is encrypted.
+              entry["envVars"] = unwrap(api(f"/services/{sid}/env-vars?limit=100"), "envVar")
+              entry["customDomains"] = unwrap(
+                  api(f"/services/{sid}/custom-domains?limit=50"), "customDomain")
+              out["services"].append(entry)
+              print(f"captured service {s.get('name')}  "
+                    f"env={len(entry['envVars'])} domains={len(entry['customDomains'])}")
+
+          for d in unwrap(api("/postgres?limit=50"), "postgres"):
+              if not (d.get("name") or "").startswith("autoworkshop"):
+                  continue
+              out["databases"].append(d)
+              print(f"captured database {d.get('name')}  plan={d.get('plan')} "
+                    f"expires={d.get('expiresAt')}")
+
+          if not out["services"]:
+              raise SystemExit("::error::no autoworkshop services found - refusing to write an empty config")
+
+          json.dump(out, open('/tmp/render-config.json', 'w'), indent=2, default=str)
+
+          # The Keycloak database password, so the keycloak schema can be read.
+          kc = next((s for s in out["services"] if s["name"] == os.environ["KC_SERVICE"]), None)
+          pw = ""
+          if kc:
+              pw = next((v.get("value", "") for v in kc["envVars"]
+                         if v.get("key") == "KC_DB_PASSWORD"), "")
+          open('/tmp/kc_db_password', 'w').write(pw)
+          print("KC_DB_PASSWORD found" if pw else
+                "::warning::KC_DB_PASSWORD not found - the keycloak dump will be skipped")
+          PY
+          echo "::add-mask::$(cat /tmp/kc_db_password)"
+
+      - name: Find the database and take its connection string
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/postgres?limit=50" > /tmp/pg.json
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          rows = json.load(open('/tmp/pg.json'))
+          want = os.environ['DB_NAME']
+          found = None
+          for r in rows:
+              d = r.get('postgres', r)
+              if d.get('name') == want:
+                  found = d
+          if not found:
+              sys.exit(f"::error::no database named {want}")
+          print(f"database : {found.get('name')} id={found.get('id')}")
+          print(f"EXPIRES  : {found.get('expiresAt')}")
+          open('/tmp/db_id', 'w').write(found['id'])
+          req = urllib.request.Request(
+              f"https://api.render.com/v1/postgres/{found['id']}/connection-info",
+              headers={"Authorization": f"Bearer {os.environ['RENDER_API_KEY']}"})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              info = json.load(r)
+          url = info.get('externalConnectionString') or info.get('internalConnectionString')
+          if not url:
+              sys.exit('::error::no connection string in the response')
+          open('/tmp/src_url', 'w').write(url)
+          PY
+          echo "::add-mask::$(cat /tmp/src_url)"
+
+      - name: Allow this runner through the database firewall
+        run: |
+          set -euo pipefail
+          ID="$(cat /tmp/db_id)"
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          echo "$IP" | grep -Eq '^[0-9.]+$' || { echo "::error::could not read runner IP"; exit 1; }
+          curl -sS -o /tmp/pg_one.json \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Accept: application/json' \
+            "https://api.render.com/v1/postgres/${ID}"
+          python3 - "$IP" <<'PY'
+          import json, sys
+          ip = sys.argv[1]
+          d = json.load(open('/tmp/pg_one.json'))
+          d = d.get('postgres', d)
+          raw = d.get('ipAllowList') or []
+          original = [e for e in raw if 'ephemeral:' not in (e.get('description') or '')]
+          json.dump(original, open('/tmp/ip_allow_original.json', 'w'))
+          merged = list(original) + [{'cidrBlock': f'{ip}/32',
+                                      'description': 'ephemeral: archive-for-retirement run'}]
+          json.dump({'ipAllowList': merged}, open('/tmp/ip_allow_patch.json', 'w'))
+          PY
+          curl -sS -o /dev/null -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Content-Type: application/json' \
+            --data @/tmp/ip_allow_patch.json \
+            "https://api.render.com/v1/postgres/${ID}"
+          sleep 20
+
+      - name: Dump the application schemas
+        if: inputs.confirm == 'ARCHIVE'
+        run: |
+          set -euo pipefail
+          SRC="$(cat /tmp/src_url)"
+          cat > /tmp/schemas.sql <<'SQL'
+          SELECT string_agg('--schema=' || quote_ident(nspname), ' ')
+          FROM pg_namespace n
+          WHERE nspname NOT LIKE 'pg\_%'
+            AND nspname <> 'information_schema'
+            AND pg_catalog.pg_get_userbyid(n.nspowner) = current_user
+            AND nspname <> 'keycloak';
+          SQL
+          SCHEMAS="$("$PGBIN/psql" -tA -f /tmp/schemas.sql "$SRC")"
+          [ -n "$SCHEMAS" ] || { echo "::error::no owned schemas - refusing an empty archive"; exit 1; }
+          echo "dumping: $SCHEMAS"
+          "$PGBIN/pg_dump" --format=custom --no-owner --no-acl --enable-row-security \
+            $SCHEMAS \
+            --exclude-table='public.databasechangelog' \
+            --exclude-table='public.databasechangeloglock' \
+            --file=/tmp/db-app.dump "$SRC"
+          ls -l /tmp/db-app.dump
+
+      # ---------------------------------------------------------------------
+      # 🔴 THE GAP. Connects as `keycloak_app`, which OWNS these tables — the
+      # app role owns the schema and cannot read inside it.
+      # ---------------------------------------------------------------------
+      - name: Dump the keycloak schema — every user account
+        if: inputs.confirm == 'ARCHIVE'
+        run: |
+          set -euo pipefail
+          PW="$(cat /tmp/kc_db_password)"
+          if [ -z "$PW" ]; then
+            echo "::error::no KC_DB_PASSWORD - cannot read the keycloak schema, and"
+            echo "::error::an archive without it cannot restore a single login. Refusing."
+            exit 1
+          fi
+          SRC="$(cat /tmp/src_url)"
+          KCURL="$(python3 - "$SRC" "$PW" <<'PY'
+          import sys, urllib.parse as up
+          u = up.urlparse(sys.argv[1])
+          print(up.urlunparse(u._replace(
+              netloc=f"keycloak_app:{up.quote(sys.argv[2], safe='')}@{u.hostname}:{u.port or 5432}")))
+          PY
+          )"
+          echo "::add-mask::$KCURL"
+          COUNT="$("$PGBIN/psql" -tA -c 'SELECT count(*) FROM keycloak.user_entity' "$KCURL")"
+          echo "user accounts in production: $COUNT"
+          echo "$COUNT" > /tmp/kc_user_count
+          [ "$COUNT" -ge 0 ] 2>/dev/null || { echo "::error::could not count users"; exit 1; }
+          "$PGBIN/pg_dump" --format=custom --no-owner --no-acl \
+            --schema=keycloak --file=/tmp/db-keycloak.dump "$KCURL"
+          ls -l /tmp/db-keycloak.dump
+
+      - name: Encrypt everything to the archive public key
+        if: inputs.confirm == 'ARCHIVE'
+        run: |
+          set -euo pipefail
+          PUB=infrastructure/backup/archive-public.pem
+          STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          mkdir -p /tmp/out
+
+          # Hybrid encryption: a random AES key per file, itself RSA-encrypted
+          # to the public key. RSA cannot encrypt a multi-megabyte dump, and a
+          # passphrase either of us could type would defeat the point.
+          for f in db-app.dump db-keycloak.dump render-config.json; do
+            [ -f "/tmp/$f" ] || { echo "skipping $f (absent)"; continue; }
+            openssl rand -out "/tmp/$f.key" 32
+            openssl enc -aes-256-cbc -pbkdf2 -salt \
+              -in "/tmp/$f" -out "/tmp/out/$f.enc" -pass "file:/tmp/$f.key"
+            openssl pkeyutl -encrypt -pubin -inkey "$PUB" \
+              -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 \
+              -in "/tmp/$f.key" -out "/tmp/out/$f.key.enc"
+            shred -u "/tmp/$f.key" 2>/dev/null || rm -f "/tmp/$f.key"
+          done
+
+          {
+            echo "AutoWorkshop retirement archive"
+            echo "taken:           $STAMP"
+            echo "database:        $DB_NAME"
+            echo "user accounts:   $(cat /tmp/kc_user_count 2>/dev/null || echo 'NOT CAPTURED')"
+            echo "app dump bytes:  $(stat -c%s /tmp/db-app.dump 2>/dev/null || echo 0)"
+            echo "kc  dump bytes:  $(stat -c%s /tmp/db-keycloak.dump 2>/dev/null || echo 0)"
+            echo
+            echo "sha256 of the PLAINTEXT files, for verification after decrypting:"
+            sha256sum /tmp/db-app.dump /tmp/db-keycloak.dump /tmp/render-config.json 2>/dev/null \
+              | sed 's#/tmp/##'
+          } > /tmp/out/MANIFEST.txt
+          cat /tmp/out/MANIFEST.txt
+          ls -l /tmp/out
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.confirm == 'ARCHIVE'
+        with:
+          name: autoworkshop-archive-${{ env.STAMP }}
+          path: /tmp/out/**
+          retention-days: 90
+          if-no-files-found: error
+
+      # `always()`: the allowlist entry must go even when the dump failed.
+      - name: Remove the ephemeral firewall entry
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] || exit 0
+          [ -f /tmp/ip_allow_original.json ] || exit 0
+          ID="$(cat /tmp/db_id)"
+          python3 -c "import json;json.dump({'ipAllowList':json.load(open('/tmp/ip_allow_original.json'))},open('/tmp/restore.json','w'))"
+          curl -sS -o /dev/null -X PATCH \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Content-Type: application/json' \
+            --data @/tmp/restore.json \
+            "https://api.render.com/v1/postgres/${ID}"
+          echo "allow list restored"
