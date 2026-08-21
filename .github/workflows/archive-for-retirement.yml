@@ -225,6 +225,29 @@ jobs:
             "https://api.render.com/v1/postgres/${ID}"
           sleep 20
 
+      # ---------------------------------------------------------------------
+      # 🔴 CAN THIS ROLE SEE EVERY ROW? The previous archive said yes and was
+      # wrong: `--enable-row-security` makes pg_dump EVALUATE the policies and
+      # dump only what the connecting role can see. `identity.organizations`
+      # came out EMPTY and pg_dump exited 0.
+      #
+      # This step establishes, before dumping, which of three routes gives a
+      # complete read: the role bypasses RLS, or it owns the tables and RLS is
+      # not FORCEd (so `row_security = off` is permitted), or neither.
+      # ---------------------------------------------------------------------
+      - name: Diagnose row visibility
+        run: |
+          set -euo pipefail
+          SRC="$(cat /tmp/src_url)"
+          echo "--- who am I ---"
+          "$PGBIN/psql" -tA -c "SELECT 'user='||current_user||' super='||rolsuper||' bypassrls='||rolbypassrls FROM pg_roles WHERE rolname=current_user" "$SRC"
+          echo "--- RLS on the tenant root ---"
+          "$PGBIN/psql" -tA -c "SELECT n.nspname||'.'||c.relname||' rls='||c.relrowsecurity||' force='||c.relforcerowsecurity||' owner='||pg_get_userbyid(c.relowner) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname IN ('organizations','users','parts','suppliers') AND c.relkind='r'" "$SRC"
+          echo "--- visible row counts AS THE DUMP ROLE SEES THEM ---"
+          "$PGBIN/psql" -tA -c "SELECT 'organizations(default)='||count(*) FROM identity.organizations" "$SRC" || true
+          echo "--- with row_security = off ---"
+          "$PGBIN/psql" -tA -c "SET row_security = off; SELECT 'organizations(rls off)='||count(*) FROM identity.organizations" "$SRC"             || echo "row_security=off REFUSED for this role"
+
       - name: Dump the application schemas
         if: inputs.confirm == 'ARCHIVE'
         run: |
