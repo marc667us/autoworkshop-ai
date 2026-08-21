@@ -223,30 +223,23 @@ jobs:
             -H "Authorization: Bearer ${RENDER_API_KEY}" -H 'Content-Type: application/json' \
             --data @/tmp/ip_allow_patch.json \
             "https://api.render.com/v1/postgres/${ID}"
-          sleep 20
 
-      # ---------------------------------------------------------------------
-      # 🔴 CAN THIS ROLE SEE EVERY ROW? The previous archive said yes and was
-      # wrong: `--enable-row-security` makes pg_dump EVALUATE the policies and
-      # dump only what the connecting role can see. `identity.organizations`
-      # came out EMPTY and pg_dump exited 0.
-      #
-      # This step establishes, before dumping, which of three routes gives a
-      # complete read: the role bypasses RLS, or it owns the tables and RLS is
-      # not FORCEd (so `row_security = off` is permitted), or neither.
-      # ---------------------------------------------------------------------
-      - name: Diagnose row visibility
-        run: |
-          set -euo pipefail
+          # 🔴 POLL, DO NOT SLEEP. The allow-list change takes an unpredictable
+          # moment to propagate, and until it does the server closes the
+          # connection mid-handshake -- which libpq reports as "SSL connection
+          # has been closed unexpectedly", NOT as a firewall refusal. A fixed
+          # `sleep 20` was enough on one run and not on the next, and the
+          # failure looks like a TLS fault rather than a timing one, which is
+          # how it cost three wrong diagnoses before.
           SRC="$(cat /tmp/src_url)"
-          echo "--- who am I ---"
-          "$PGBIN/psql" -tA -c "SELECT 'user='||current_user||' super='||rolsuper||' bypassrls='||rolbypassrls FROM pg_roles WHERE rolname=current_user" "$SRC"
-          echo "--- RLS on the tenant root ---"
-          "$PGBIN/psql" -tA -c "SELECT n.nspname||'.'||c.relname||' rls='||c.relrowsecurity||' force='||c.relforcerowsecurity||' owner='||pg_get_userbyid(c.relowner) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relname IN ('organizations','users','parts','suppliers') AND c.relkind='r'" "$SRC"
-          echo "--- visible row counts AS THE DUMP ROLE SEES THEM ---"
-          "$PGBIN/psql" -tA -c "SELECT 'organizations(default)='||count(*) FROM identity.organizations" "$SRC" || true
-          echo "--- with row_security = off ---"
-          "$PGBIN/psql" -tA -c "SET row_security = off; SELECT 'organizations(rls off)='||count(*) FROM identity.organizations" "$SRC"             || echo "row_security=off REFUSED for this role"
+          for i in $(seq 1 30); do
+            if "$PGBIN/psql" -tAc 'SELECT 1' "$SRC" >/dev/null 2>&1; then
+              echo "database reachable after $((i * 5))s"
+              break
+            fi
+            [ "$i" -lt 30 ] || { echo "::error::database still unreachable after 150s"; exit 1; }
+            sleep 5
+          done
 
       # ---------------------------------------------------------------------
       # 🔴 LIFT `FORCE` SO THE OWNER CAN READ ITS OWN ROWS.
