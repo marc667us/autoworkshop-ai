@@ -1,0 +1,120 @@
+# Is FORCE ROW LEVEL SECURITY on, right now? READ-ONLY.
+#
+# WHY THIS EXISTS. `archive-for-retirement.yml` briefly lifts FORCE so the
+# table owner can read its own rows, and restores it in `always()`. On
+# 2026-08-21 a run failed inside the lift step and the restore step also
+# failed, which leaves exactly one question worth answering and no safe way to
+# infer it from a log: is production sitting without FORCE?
+#
+# A workflow that can only READ is the right instrument for that question. It
+# issues SELECTs. There is no ALTER in this file.
+
+name: Check RLS FORCE state (read-only)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: render-db-firewall
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      DB_NAME: autoworkshop-postgres
+      PGSSLMODE: require
+
+    steps:
+      - name: Install a client
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          echo "PGBIN=$(dirname "$(which psql)")" >> "$GITHUB_ENV"
+
+      - name: Find the database
+        run: |
+          set -euo pipefail
+          curl -fsS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/postgres?limit=50" > /tmp/pg.json
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          rows = json.load(open('/tmp/pg.json'))
+          found = next((r.get('postgres', r) for r in rows
+                        if (r.get('postgres', r) or {}).get('name') == os.environ['DB_NAME']), None)
+          if not found:
+              sys.exit("::error::database not found")
+          open('/tmp/db_id', 'w').write(found['id'])
+          req = urllib.request.Request(
+              f"https://api.render.com/v1/postgres/{found['id']}/connection-info",
+              headers={"Authorization": f"Bearer {os.environ['RENDER_API_KEY']}"})
+          with urllib.request.urlopen(req, timeout=30) as r:
+              info = json.load(r)
+          open('/tmp/src_url', 'w').write(
+              info.get('externalConnectionString') or info['internalConnectionString'])
+          PY
+          echo "::add-mask::$(cat /tmp/src_url)"
+
+      - name: Allow this runner through the firewall
+        run: |
+          set -euo pipefail
+          ID="$(cat /tmp/db_id)"
+          IP="$(curl -sS --max-time 20 https://api.ipify.org)"
+          curl -sS -o /tmp/pg_one.json -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            "https://api.render.com/v1/postgres/${ID}"
+          python3 - "$IP" <<'PY'
+          import json, sys
+          d = json.load(open('/tmp/pg_one.json'))
+          d = d.get('postgres', d)
+          raw = d.get('ipAllowList') or []
+          original = [e for e in raw if 'ephemeral:' not in (e.get('description') or '')]
+          json.dump(original, open('/tmp/ip_allow_original.json', 'w'))
+          json.dump({'ipAllowList': original + [{'cidrBlock': f'{sys.argv[1]}/32',
+                     'description': 'ephemeral: check-rls-force run'}]},
+                    open('/tmp/patch.json', 'w'))
+          PY
+          curl -sS -o /dev/null -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/patch.json \
+            "https://api.render.com/v1/postgres/${ID}"
+          SRC="$(cat /tmp/src_url)"
+          for i in $(seq 1 30); do
+            "$PGBIN/psql" -tAc 'SELECT 1' "$SRC" >/dev/null 2>&1 && break
+            [ "$i" -lt 30 ] || { echo "::error::unreachable"; exit 1; }
+            sleep 5
+          done
+
+      - name: THE ANSWER
+        run: |
+          set -euo pipefail
+          SRC="$(cat /tmp/src_url)"
+          echo "=== tables with RLS enabled but FORCE OFF (should be ZERO) ==="
+          "$PGBIN/psql" -tA -c "
+            SELECT n.nspname||'.'||c.relname
+            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE c.relkind='r' AND c.relrowsecurity AND NOT c.relforcerowsecurity
+            ORDER BY 1" "$SRC"
+          UNFORCED="$("$PGBIN/psql" -tAc "
+            SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE c.relkind='r' AND c.relrowsecurity AND NOT c.relforcerowsecurity" "$SRC")"
+          FORCED="$("$PGBIN/psql" -tAc "
+            SELECT count(*) FROM pg_class c WHERE c.relkind='r' AND c.relforcerowsecurity" "$SRC")"
+          echo "RESULT: forced=$FORCED  rls_without_force=$UNFORCED"
+          [ "$UNFORCED" = "0" ] \
+            && echo "✅ FORCE is intact on every RLS table" \
+            || { echo "::error::$UNFORCED table(s) have RLS WITHOUT FORCE - production is weakened"; exit 1; }
+
+      - name: Remove the ephemeral firewall entry
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/db_id ] || exit 0
+          python3 -c "import json;json.dump({'ipAllowList':json.load(open('/tmp/ip_allow_original.json'))},open('/tmp/r.json','w'))"
+          curl -sS -o /dev/null -X PATCH -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H 'Content-Type: application/json' --data @/tmp/r.json \
+            "https://api.render.com/v1/postgres/$(cat /tmp/db_id)"
