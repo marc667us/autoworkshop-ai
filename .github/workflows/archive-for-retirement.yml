@@ -248,6 +248,47 @@ jobs:
           echo "--- with row_security = off ---"
           "$PGBIN/psql" -tA -c "SET row_security = off; SELECT 'organizations(rls off)='||count(*) FROM identity.organizations" "$SRC"             || echo "row_security=off REFUSED for this role"
 
+      # ---------------------------------------------------------------------
+      # 🔴 LIFT `FORCE` SO THE OWNER CAN READ ITS OWN ROWS.
+      #
+      # Measured: the dump role OWNS these tables, but `FORCE ROW LEVEL
+      # SECURITY` subjects even the owner to the policies -- so it saw ZERO
+      # organizations, and `row_security = off` was REFUSED outright:
+      #
+      #   ERROR: query would be affected by row-level security policy
+      #   HINT:  To disable the policy for the table's owner, use
+      #          ALTER TABLE NO FORCE ROW LEVEL SECURITY.
+      #
+      # That hint is the supported route and there is no other here: the role
+      # is not superuser and cannot be granted BYPASSRLS without one.
+      #
+      # ⚠️ THIS IS THE ONLY SCHEMA WRITE THIS WORKFLOW MAKES, and it is
+      # reversed in `always()` below:
+      #   * NO FORCE exempts the TABLE OWNER only. Every other role -- which is
+      #     every role the application connects as -- stays subject to RLS for
+      #     the whole window.
+      #   * The exact table list is recorded FIRST, so restoration puts FORCE
+      #     back on precisely those tables and nothing else.
+      # ---------------------------------------------------------------------
+      - name: Lift FORCE row level security (reversed in always())
+        if: inputs.confirm == 'ARCHIVE'
+        run: |
+          set -euo pipefail
+          SRC="$(cat /tmp/src_url)"
+          "$PGBIN/psql" -tA -o /tmp/forced_tables.txt -c "
+            SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname)
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relkind = 'r' AND c.relforcerowsecurity
+              AND pg_get_userbyid(c.relowner) = current_user" "$SRC"
+          COUNT="$(grep -c . /tmp/forced_tables.txt || true)"
+          echo "tables with FORCE RLS owned by this role: $COUNT"
+          [ "$COUNT" -gt 0 ] || { echo "::error::no FORCE tables found - diagnosis wrong, refusing"; exit 1; }
+          while read -r t; do
+            [ -n "$t" ] || continue
+            "$PGBIN/psql" -q -c "ALTER TABLE $t NO FORCE ROW LEVEL SECURITY" "$SRC"
+          done < /tmp/forced_tables.txt
+          echo "FORCE lifted on $COUNT tables (owner-only effect)"
+
       - name: Dump the application schemas
         if: inputs.confirm == 'ARCHIVE'
         run: |
@@ -264,12 +305,25 @@ jobs:
           SCHEMAS="$("$PGBIN/psql" -tA -f /tmp/schemas.sql "$SRC")"
           [ -n "$SCHEMAS" ] || { echo "::error::no owned schemas - refusing an empty archive"; exit 1; }
           echo "dumping: $SCHEMAS"
-          "$PGBIN/pg_dump" --format=custom --no-owner --no-acl --enable-row-security \
+          # 🔴 NO `--enable-row-security`. That flag is exactly what made the
+          # previous archive silently incomplete: it tells pg_dump to EVALUATE
+          # the policies and dump only visible rows. With FORCE lifted the owner
+          # sees everything -- and its ABSENCE means pg_dump ERRORS rather than
+          # silently filtering, if that ever stops being true.
+          "$PGBIN/pg_dump" --format=custom --no-owner --no-acl \
             $SCHEMAS \
             --exclude-table='public.databasechangelog' \
             --exclude-table='public.databasechangeloglock' \
             --file=/tmp/db-app.dump "$SRC"
           ls -l /tmp/db-app.dump
+
+          # 🔴 PROVE IT IS COMPLETE. The previous archive exited 0 with an
+          # EMPTY tenant root table. A dump is not a backup until something
+          # has counted what is in it.
+          LIVE="$("$PGBIN/psql" -tA -c 'SELECT count(*) FROM identity.organizations' "$SRC")"
+          echo "organizations now visible: $LIVE"
+          echo "$LIVE" > /tmp/org_count
+          [ "$LIVE" -gt 0 ] || { echo "::error::organizations STILL empty - dump would be incomplete again"; exit 1; }
 
       # ---------------------------------------------------------------------
       # 🔴 THE GAP. Connects as `keycloak_app`, which OWNS these tables — the
@@ -330,6 +384,7 @@ jobs:
             echo "taken:           $STAMP"
             echo "database:        $DB_NAME"
             echo "user accounts:   $(cat /tmp/kc_user_count 2>/dev/null || echo 'NOT CAPTURED')"
+            echo "organizations:   $(cat /tmp/org_count 2>/dev/null || echo 'NOT CAPTURED')"
             echo "app dump bytes:  $(stat -c%s /tmp/db-app.dump 2>/dev/null || echo 0)"
             echo "kc  dump bytes:  $(stat -c%s /tmp/db-keycloak.dump 2>/dev/null || echo 0)"
             echo
@@ -347,6 +402,29 @@ jobs:
           path: /tmp/out/**
           retention-days: 90
           if-no-files-found: error
+
+      # `always()`: FORCE must go back on even when the dump failed. A workflow
+      # that weakened a security control and exited without restoring it is a
+      # worse outcome than having no backup at all.
+      - name: Restore FORCE row level security
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f /tmp/forced_tables.txt ] || { echo "nothing to restore"; exit 0; }
+          [ -f /tmp/src_url ] || exit 0
+          SRC="$(cat /tmp/src_url)"
+          N=0
+          while read -r t; do
+            [ -n "$t" ] || continue
+            "$PGBIN/psql" -q -c "ALTER TABLE $t FORCE ROW LEVEL SECURITY" "$SRC" && N=$((N+1))
+          done < /tmp/forced_tables.txt
+          echo "FORCE restored on $N tables"
+          REMAINING="$("$PGBIN/psql" -tA -c "
+            SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE c.relkind='r' AND NOT c.relforcerowsecurity AND c.relrowsecurity
+              AND pg_get_userbyid(c.relowner)=current_user" "$SRC")"
+          [ "$REMAINING" = "0" ] \
+            || echo "::error::$REMAINING table(s) still lack FORCE - CHECK THIS MANUALLY"
 
       # `always()`: the allowlist entry must go even when the dump failed.
       - name: Remove the ephemeral firewall entry
