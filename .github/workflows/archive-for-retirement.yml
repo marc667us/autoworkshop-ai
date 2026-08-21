@@ -432,11 +432,26 @@ jobs:
           # the connection whose failure had triggered it, so it failed for the
           # same reason and left production weakened. A restore that depends on
           # the thing it is compensating for is not a restore.
-          for i in $(seq 1 30); do
-            "$PGBIN/psql" -tAc 'SELECT 1' "$SRC" >/dev/null 2>&1 && break
-            [ "$i" -lt 30 ] || { echo "::error::cannot reach the database to restore FORCE - RUN repair-rls-force.yml"; exit 1; }
+          # 🔴 TRY FOR TEN MINUTES, NOT 150 SECONDS. This database drops
+          # connections repeatedly -- three runs in a row died on an ordinary
+          # follow-up query -- and every second FORCE stays off is a second a
+          # Severity-1 control is weakened. Giving up quickly is the wrong
+          # failure mode here; the right one is to keep trying and to shout if
+          # it never works.
+          RESTORED=0
+          for i in $(seq 1 120); do
+            if "$PGBIN/psql" -tAc 'SELECT 1' "$SRC" >/dev/null 2>&1; then
+              RESTORED=1
+              break
+            fi
             sleep 5
           done
+          if [ "$RESTORED" = "0" ]; then
+            echo "::error::COULD NOT REACH THE DATABASE FOR 10 MINUTES."
+            echo "::error::FORCE ROW LEVEL SECURITY IS STILL LIFTED ON THIS DATABASE."
+            echo "::error::RUN repair-rls-force.yml NOW - this is not optional."
+            exit 1
+          fi
 
           # Blanket re-FORCE: anything with RLS and no FORCE gets it back. This
           # is deliberately broader than the recorded list, because the failure
